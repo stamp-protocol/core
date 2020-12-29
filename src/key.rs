@@ -1,3 +1,15 @@
+//! The key model wraps a set of algorithms for encryption and decryption (both
+//! symmetric and asymmetric) as well as cryptographic signing of data.
+//!
+//! The idea here is that specific algorithms are wrapped in descriptive
+//! interfaces that allow high-level use of the encapsulated cryptographic
+//! algorithms without needing to know the details of those algorithms.
+//!
+//! For instance, you have a `SignKeypair` which has a standard interface, but
+//! can describe any number of signing algorithms. This allows expansion of the
+//! cryptographic primitives used without needing to build new interfaces around
+//! them.
+
 use crate::{
     error::{Error, Result},
     private::{Private},

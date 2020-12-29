@@ -1,3 +1,16 @@
+//! The identity module defines the data types and operations that define a
+//! Stamp identity.
+//!
+//! An identity is essentially a master set of keys (signing and encryption),
+//! a set of claims made by the identity owner (including the identity itself),
+//! any number of signatures that verify those claims, and a set of "forwards"
+//! that can point to other locations (for instance, your canonical email
+//! address, your personal domain, etc).
+//!
+//! This system relies heavily on the [key](crate::key) module, which provides
+//! all the mechanisms necessary for encryption, decryption, signing, and
+//! verification of data.
+
 use chrono::{DateTime, Utc};
 use crate::{
     error::Result,
@@ -103,6 +116,27 @@ impl Keyset {
     }
 }
 
+/// A keyset that only stores public keys. Useful for allowing others to verify
+/// stamps based on old public keys, but keeps us from signing new things with
+/// old keys.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub")]
+pub struct KeysetPublic {
+    /// Signs our claims and others' claims
+    sign: SignKeypair,
+    /// Lets others send us encrypted messages, and us them.
+    crypto: CryptoKeypair,
+}
+
+impl From<Keyset> for KeysetPublic {
+    fn from(keyset: Keyset) -> KeysetPublic {
+        KeysetPublic {
+            sign: keyset.sign().public_only(),
+            crypto: keyset.crypto().public_only(),
+        }
+    }
+}
+
 /// Describes te various versions our for our identity format, allowing upgrades
 /// and downgrades.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -176,12 +210,13 @@ pub struct Identity {
     id: ID,
     /// The identity's current and default master key set
     keyset: Keyset,
-    /// Expired or deprecated or compromised keysets.
-    old_keysets: Vec<Keyset>,
     /// The claims this identity makes.
     claims: Vec<Claim>,
     /// A canonical list of places this identity forwards to.
     forwards: Vec<SignedForward>,
+    /// Expired or deprecated or compromised keysets. We keep these in order to
+    /// allow others to verify past claims we have stamped.
+    old_keysets: Vec<KeysetPublic>,
 }
 
 impl Identity {
@@ -191,9 +226,9 @@ impl Identity {
             version: IdentityVersion::default(),
             id,
             keyset: Keyset::new(master_key)?,
-            old_keysets: Vec::new(),
             claims: Vec::new(),
             forwards: Vec::new(),
+            old_keysets: Vec::new(),
         })
     }
 }
