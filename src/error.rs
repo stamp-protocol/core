@@ -48,6 +48,10 @@ pub enum Error {
     #[error("failed to open a sealed object")]
     CryptoOpenFailed,
 
+    /// A signature failed to verify.
+    #[error("the given signature/public key/data combo does not verify")]
+    CryptoSignatureVerificationFailed,
+
     /// Tried to open a private container that has no data
     #[error("attempt to open private object which has no data")]
     PrivateDataMissing,

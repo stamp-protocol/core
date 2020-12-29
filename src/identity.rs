@@ -202,27 +202,11 @@ impl Identity {
 mod tests {
     use super::*;
     use crate::{
-        key::derive_master_key,
         util,
     };
-    use sodiumoxide::{
-        crypto::{
-            pwhash::argon2id13,
-        },
-    };
-    use std::convert::TryInto;
 
     fn gen_master_key() -> SecretKey {
         SecretKey::new_xsalsa20poly1305()
-    }
-
-    #[test]
-    fn derives_master_key() {
-        let id = util::hash("my key".as_bytes()).unwrap();
-        let salt = util::hash(id.as_ref()).unwrap();
-        let saltbytes: [u8; argon2id13::SALTBYTES] = salt.as_ref()[0..argon2id13::SALTBYTES].try_into().unwrap();
-        let master_key = derive_master_key("ZONING IS COMMUNISM".as_bytes(), &saltbytes).unwrap();
-        assert_eq!(master_key.as_ref(), &[191, 236, 76, 249, 25, 39, 71, 203, 144, 167, 11, 131, 221, 21, 4, 194, 6, 176, 163, 123, 238, 170, 148, 29, 236, 186, 130, 157, 51, 202, 207, 169]);
     }
 
     #[test]

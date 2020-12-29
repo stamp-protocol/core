@@ -96,6 +96,20 @@ impl SignKeypair {
             }
         }
     }
+
+    /// Verify a value with a detached signature given the public key of the
+    /// signer.
+    pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
+        match (self, signature) {
+            (SignKeypair::Ed25519(ref pubkey, ..), SignKeypairSignature::Ed25519(ref sig)) => {
+                if ed25519::verify_detached(sig, data, pubkey) {
+                    Ok(())
+                } else {
+                    Err(Error::CryptoSignatureVerificationFailed)
+                }
+            }
+        }
+    }
 }
 
 /// An asymmetric signing keypair nonce.
@@ -147,17 +161,48 @@ impl CryptoKeypair {
         }
     }
 
+    /// Open an anonymous message encrypted with our public key. Requires our
+    /// master key to open.
+    pub fn open_anonymous(master_key: &SecretKey, our_keypair: &CryptoKeypair, data: &[u8]) -> Result<Vec<u8>> {
+        match our_keypair {
+            CryptoKeypair::Curve25519Xsalsa20Poly1305(ref pubkey, ref seckey_opt) => {
+                let seckey_sealed = seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
+                let seckey = seckey_sealed.open(master_key)?;
+                sodiumoxide::crypto::sealedbox::curve25519blake2bxsalsa20poly1305::open(data, pubkey, &seckey)
+                    .map_err(|_| Error::CryptoOpenFailed)
+            }
+        }
+    }
+
     /// Encrypt a message to a recipient, and sign it with our secret crypto
     /// key. Needs our master key to unlock our heroic private key.
-    pub fn seal(master_key: &SecretKey, our_keypair: &CryptoKeypair, their_keypair: &CryptoKeypair, data: &[u8]) -> Result<CryptoKeypairMessage> {
+    pub fn seal(our_master_key: &SecretKey, our_keypair: &CryptoKeypair, their_keypair: &CryptoKeypair, data: &[u8]) -> Result<CryptoKeypairMessage> {
         match (our_keypair, their_keypair) {
             (CryptoKeypair::Curve25519Xsalsa20Poly1305(_, ref our_seckey_opt), CryptoKeypair::Curve25519Xsalsa20Poly1305(ref their_pubkey, _)) => {
                 let our_seckey_sealed = our_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let our_seckey = our_seckey_sealed.open(master_key)?;
+                let our_seckey = our_seckey_sealed.open(our_master_key)?;
                 let nonce_raw = curve25519xsalsa20poly1305::gen_nonce();
                 let msg = curve25519xsalsa20poly1305::seal(data, &nonce_raw, &their_pubkey, &our_seckey);
                 let nonce = CryptoKeypairNonce::Curve25519Xsalsa20Poly1305(nonce_raw);
                 Ok(CryptoKeypairMessage::new(nonce, msg))
+            }
+        }
+    }
+
+    /// Open a message encrypted with our public key and verify the sender of
+    /// the message using their public key. Needs our master key to unlock the
+    /// private key used to decrypt the message.
+    pub fn open(our_master_key: &SecretKey, our_keypair: &CryptoKeypair, their_keypair: &CryptoKeypair, message: &CryptoKeypairMessage) -> Result<Vec<u8>> {
+        match (our_keypair, their_keypair) {
+            (CryptoKeypair::Curve25519Xsalsa20Poly1305(_, ref our_seckey_opt), CryptoKeypair::Curve25519Xsalsa20Poly1305(ref their_pubkey, _)) => {
+                let our_seckey_sealed = our_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
+                let our_seckey = our_seckey_sealed.open(our_master_key)?;
+                let nonce = message.nonce();
+                let nonce_raw = match nonce {
+                    CryptoKeypairNonce::Curve25519Xsalsa20Poly1305(ref x) => x,
+                };
+                curve25519xsalsa20poly1305::open(message.ciphertext(), nonce_raw, &their_pubkey, &our_seckey)
+                    .map_err(|_| Error::CryptoOpenFailed)
             }
         }
     }
@@ -179,6 +224,81 @@ pub fn derive_master_key(passphrase: &[u8], salt: &[u8; argon2id13::SALTBYTES]) 
             Ok(seckey)
         }
         Err(()) => Err(Error::CryptoKDFFailed)?,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util;
+    use std::convert::TryInto;
+
+    #[test]
+    fn secretkey_xsalsa20poly1305_enc_dec() {
+        let key = SecretKey::new_xsalsa20poly1305();
+        let val = String::from("get a job");
+        let nonce = key.gen_nonce();
+        let enc = key.seal(val.as_bytes(), &nonce).unwrap();
+        let dec_bytes = key.open(&enc, &nonce).unwrap();
+        let dec = String::from_utf8(dec_bytes).unwrap();
+        assert_eq!(dec, String::from("get a job"));
+    }
+
+    #[test]
+    fn signkeypair_ed25519_sign_verify() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let our_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+
+        let msg_real = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
+        let msg_fake = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering hi...");
+        let sig = our_keypair.sign(&master_key, msg_real.as_bytes()).unwrap();
+        let verify_real = our_keypair.verify(&sig, msg_real.as_bytes());
+        let verify_fake = our_keypair.verify(&sig, msg_fake.as_bytes());
+        assert_eq!(verify_real, Ok(()));
+        assert_eq!(verify_fake, Err(Error::CryptoSignatureVerificationFailed));
+    }
+
+    #[test]
+    fn cryptokeypair_curve25519xsalsa20poly1305_anonymous_enc_dec() {
+        let our_master_key = SecretKey::new_xsalsa20poly1305();
+        let our_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&our_master_key).unwrap();
+        let fake_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&our_master_key).unwrap();
+
+        let message = String::from("HI JERRY I'M BUTCH");
+        let sealed = CryptoKeypair::seal_anonymous(&our_keypair, message.as_bytes()).unwrap();
+        let opened = CryptoKeypair::open_anonymous(&our_master_key, &our_keypair, &sealed).unwrap();
+
+        assert_eq!(&opened[..], message.as_bytes());
+
+        let opened2 = CryptoKeypair::open_anonymous(&our_master_key, &fake_keypair, &sealed);
+        assert_eq!(opened2, Err(Error::CryptoOpenFailed));
+    }
+
+    #[test]
+    fn cryptokeypair_curve25519xsalsa20poly1305_enc_dec() {
+        let our_master_key = SecretKey::new_xsalsa20poly1305();
+        let our_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&our_master_key).unwrap();
+        let their_master_key = SecretKey::new_xsalsa20poly1305();
+        let their_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&their_master_key).unwrap();
+        let fake_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&their_master_key).unwrap();
+
+        let message = String::from("HI JERRY I'M BUTCH");
+        let sealed = CryptoKeypair::seal(&our_master_key, &our_keypair, &their_keypair, message.as_bytes()).unwrap();
+        let opened = CryptoKeypair::open(&our_master_key, &our_keypair, &their_keypair, &sealed).unwrap();
+
+        assert_eq!(&opened[..], message.as_bytes());
+
+        let opened2 = CryptoKeypair::open(&our_master_key, &our_keypair, &fake_keypair, &sealed);
+        assert_eq!(opened2, Err(Error::CryptoOpenFailed));
+    }
+
+    #[test]
+    fn derives_master_key() {
+        let id = util::hash("my key".as_bytes()).unwrap();
+        let salt = util::hash(id.as_ref()).unwrap();
+        let saltbytes: [u8; argon2id13::SALTBYTES] = salt.as_ref()[0..argon2id13::SALTBYTES].try_into().unwrap();
+        let master_key = derive_master_key("ZONING IS COMMUNISM".as_bytes(), &saltbytes).unwrap();
+        assert_eq!(master_key.as_ref(), &[191, 236, 76, 249, 25, 39, 71, 203, 144, 167, 11, 131, 221, 21, 4, 194, 6, 176, 163, 123, 238, 170, 148, 29, 236, 186, 130, 157, 51, 202, 207, 169]);
     }
 }
 
