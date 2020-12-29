@@ -84,6 +84,15 @@ impl SignKeypair {
         Ok(Self::Ed25519(public, Some(Private::seal(master_key, &secret)?)))
     }
 
+    /// Return a copy of this keypair with only the public key attached.
+    pub fn public_only(&self) -> Self {
+        match self {
+            Self::Ed25519(ref pubkey, ..) => {
+                Self::Ed25519(pubkey.clone(), None)
+            }
+        }
+    }
+
     /// Sign a value with our secret signing key.
     ///
     /// Must be unlocked via our master key.
@@ -150,6 +159,15 @@ impl CryptoKeypair {
     pub fn new_curve25519xsalsa20poly1305(master_key: &SecretKey) -> Result<Self> {
         let (public, secret) = curve25519xsalsa20poly1305::gen_keypair();
         Ok(Self::Curve25519Xsalsa20Poly1305(public, Some(Private::seal(master_key, &secret)?)))
+    }
+
+    /// Return a copy of this keypair with only the public key attached.
+    pub fn public_only(&self) -> Self {
+        match self {
+            Self::Curve25519Xsalsa20Poly1305(ref pubkey, ..) => {
+                Self::Curve25519Xsalsa20Poly1305(pubkey.clone(), None)
+            }
+        }
     }
 
     /// Anonymously encrypt a message using the recipient's public key.

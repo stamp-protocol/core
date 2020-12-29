@@ -138,8 +138,8 @@ pub enum ForwardType {
 /// for that forward type. Or you could forward to your personal domain, or
 /// your email address.
 ///
-/// Each forward is signed with your signing public key. This is a bit different
-/// from a claim, in that claims help verify your identity, and forwards are
+/// Each forward is signed with your signing secret key. This is a bit different
+/// from a claim in that claims help verify your identity, and forwards are
 /// assertions you can make that don't require external verification. If people
 /// trust that this is *your* identity via the signed claims, then they can
 /// trust the forwards you assert and sign.
