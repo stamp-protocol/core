@@ -25,10 +25,19 @@ use serde_derive::{Serialize, Deserialize};
 ///
 /// We generate this by signing the string "This is my stamp." using our initial
 /// private signing key.
+///
+/// `IdentityID`s are permanent and are not regenerated when the keysets are
+/// rotated.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IdentityID(SignKeypairSignature);
 
 /// A unique identifier for claims.
+///
+/// We generate this by signing the claim's data with our current private
+/// signing key.
+///
+/// `IdentityID`s are permanent and are not regenerated when the keysets are
+/// rotated.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClaimID(SignKeypairSignature);
 
@@ -203,8 +212,6 @@ pub enum ClaimSpec {
 pub struct Claim {
     /// The unique ID of this claim, created by signing the claim's data with
     /// our current signing keypair.
-    ///
-    /// ClaimIDs are not updated if the keyset is rotated.
     id: ClaimID,
     /// The data we're claiming.
     spec: ClaimSpec,
@@ -220,7 +227,7 @@ impl Claim {
     }
 }
 
-/// A claim made by an identity.
+/// A wrapper around a `Claim` that stores its stamps.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct ClaimContainer {
@@ -231,7 +238,8 @@ pub struct ClaimContainer {
 }
 
 impl ClaimContainer {
-    /// Create a new claim and sign it with our signing key.
+    /// Create a new claim, sign it with our signing key, and return a container
+    /// that holds the claim (with an empty set of stamps).
     pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, spec: ClaimSpec) -> Result<Self> {
         let serialized = ser::serialize(&spec)?;
         let signature = sign_keypair.sign(master_key, &serialized)?;
