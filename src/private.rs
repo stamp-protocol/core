@@ -19,7 +19,7 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> Private<T> {
     /// Create a new Private container from a given serializable data object and
     /// an encrypting key.
     pub fn seal(seal_key: &SecretKey, data: &T) -> Result<Self> {
-        let serialized = ser::serialize_raw(data)?;
+        let serialized = ser::serialize(data)?;
         let nonce = seal_key.gen_nonce();
         let sealed = seal_key.seal(&serialized, &nonce)?;
         Ok(Self {
@@ -33,7 +33,7 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> Private<T> {
     pub fn open(&self, open_key: &SecretKey) -> Result<T> {
         let open_bytes = open_key.open(&self.sealed, &self.nonce)
             .map_err(|_| Error::CryptoOpenFailed)?;
-        let obj: T = ser::deserialize_raw(&open_bytes[..])?;
+        let obj: T = ser::deserialize(&open_bytes[..])?;
         Ok(obj)
     }
 }

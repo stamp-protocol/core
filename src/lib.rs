@@ -11,10 +11,11 @@
 //!
 //! Also, where Stamp deviates is that any number of claims can be made by a
 //! Stamp identity, and any of them can be individually signed. For instance, an
-//! identity might claim ownership of an email address, and any person or might
-//! "stamp" (verify) that claim by having the owner of the identity sign a
-//! random string sent over email. Any number of claims or types of claims can
-//! be made and signed by any other participant (including the identity itself).
+//! identity might claim ownership of an email address, and any person or 
+//! organization might "stamp" (verify) that claim by having the owner of the
+//! identity sign a random string sent over email and return it to the verifier.
+//! Any number of claims or types of claims can be made and signed by any other
+//! participant.
 //!
 //! The Stamp protocol defines not just methods for encryption, signing, and
 //! verification, but also for key recovery among trusted peers or institutions.

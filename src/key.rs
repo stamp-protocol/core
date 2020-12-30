@@ -78,9 +78,18 @@ impl SecretKey {
 }
 
 /// A signature derived from a signing keypair.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SignKeypairSignature {
     Ed25519(ed25519::Signature),
+}
+
+impl SignKeypairSignature {
+    /// Convert this signature to hex
+    pub fn to_hex(&self) -> String {
+        match self {
+            Self::Ed25519(ref x) => sodiumoxide::hex::encode(x),
+        }
+    }
 }
 
 /// An asymmetric signing keypair.

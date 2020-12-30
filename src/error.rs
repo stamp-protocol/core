@@ -52,6 +52,10 @@ pub enum Error {
     #[error("the given signature/public key/data combo does not verify")]
     CryptoSignatureVerificationFailed,
 
+    /// Verification of an identity failed.
+    #[error("Verification of identity failed: {0}")]
+    IdentityVerificationFailed(String),
+
     /// Tried to open a private container that has no data
     #[error("attempt to open private object which has no data")]
     PrivateDataMissing,
