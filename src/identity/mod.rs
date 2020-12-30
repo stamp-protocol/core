@@ -26,20 +26,19 @@ use serde_derive::{Serialize, Deserialize};
 /// We generate this by signing the string "This is my stamp." using our initial
 /// private signing key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ID(SignKeypairSignature);
+pub struct IdentityID(SignKeypairSignature);
 
-/// A struct used to sign a claim, only used for signing and verification (but
-/// not storage).
-///
-/// This is used to construct a [SignatureEntry](crate::identity::SignatureEntry)
-/// object, which is ultimately what is stored with an identity.
-///
-/// Ths purpose of splitting these two objects apart is to make it easy to
-/// provide a standard way of signing a claim without having to duplicate the
-/// claim's data.
+/// A unique identifier for claims.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClaimID(SignKeypairSignature);
+
+/// A set of metadata that is signed when a stamp is created that is stored
+/// alongside the signature itself.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct SignatureEntryForSigning {
+pub struct StampSignatureMetadata {
+    /// The ID of the identity that is stamping.
+    stamper: IdentityID,
     /// How much confidence the stamper has that the claim being stamped is
     /// valid. This is a value between 0 and 255, and is ultimately a ratio
     /// via `c / 255`, where 0.0 is "lowest confidence" and 1.0 is "ultimate
@@ -49,115 +48,91 @@ pub struct SignatureEntryForSigning {
     confidence: u8,
     /// Filled in by the stamper, the date the claim was stamped
     date_signed: DateTime<Utc>,
-    /// The claim data being signed.
-    claimdata: ClaimSpec,
 }
 
-impl SignatureEntryForSigning {
-    /// Create a new signature entry for signing.
-    pub fn new(confidence: u8, date_signed: DateTime<Utc>, claimdata: ClaimSpec) -> Self {
+impl StampSignatureMetadata {
+    /// Create a new stamp signature metadata object.
+    pub fn new(stamper: IdentityID, confidence: u8, date_signed: DateTime<Utc>) -> Self {
         Self {
+            stamper,
             confidence,
             date_signed,
-            claimdata,
         }
     }
 }
 
-/// An entry used to describe a signature on a claim.
-///
-/// This includes the date it was signed, the confidence of the stamp, and
-/// optionally the claim data itself (present for the signature, but absent when
-/// stored).
+/// A somewhat ephemeral container used to serialize a set of data and sign it.
+/// Includes metadata about the signature (`SignatureEntry`)
+/// A struct used to sign a claim, only used for signing and verification (but
+/// not storage).
 ///
 /// Note that in the case of a *private* claim being signed, the signature
 /// applies to the encrypted entry, not the decrypted entry, allowing peers to
 /// verify that X stamped Y's claim without *knowing* Y's claim.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct SignatureEntry {
-    /// How much confidence the stamper has that the claim being stamped is
-    /// valid. This is a value between 0 and 255, and is ultimately a ratio
-    /// via `c / 255`, where 0.0 is "lowest confidence" and 1.0 is "ultimate
-    /// confidence." Keep in mind that 0 here is not "absolutely zero
-    /// confidence" as otherwise the stamp wouldn't be occuring in the first
-    /// place.
-    confidence: u8,
-    /// Filled in by the stamper, the date the claim was stamped
-    date_signed: DateTime<Utc>,
+pub struct StampSignatureContainer {
+    /// The metadata we're signing with this signature.
+    meta: StampSignatureMetadata,
+    /// The claim we're signing.
+    claim: Claim,
 }
 
-impl SignatureEntry {
-    /// Take a `SignatureEntryForSigning`, sign it, and return a
-    /// `SignatureEntry` and the signature.
-    pub fn generate_signed_entry(master_key: &SecretKey, sign_keypair: &SignKeypair, entry_to_sign: SignatureEntryForSigning) -> Result<(Self, SignKeypairSignature)> {
-        let ser = ser::serialize(&entry_to_sign)?;
-        let sig = sign_keypair.sign(master_key, &ser)?;
-        let SignatureEntryForSigning { confidence, date_signed, .. } = entry_to_sign;
-        let entry = SignatureEntry {
-            confidence,
-            date_signed,
-        };
-        Ok((entry, sig))
-    }
-}
-
-/// A draft of stamp of approval on a claim.
-///
-/// The draft is created by the stamper, and is then converted to a `Stamp` by
-/// the owner of the claim when they wish to record it.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct StampDraft {
-    /// Who stamped it
-    from: ID,
-    /// Signature of the attached `signature_entry` data.
-    signature: SignKeypairSignature,
-    /// Their signature
-    signature_entry: SignatureEntry,
-}
-
-impl StampDraft {
-    /// Create a new stamp on a claim.
-    pub fn stamp(our_id: &ID, master_key: &SecretKey, sign_keypair: &SignKeypair, claim_data: &ClaimSpec, confidence: u8, now: DateTime<Utc>) -> Result<Self> {
-        let signature_entry_for_signing = SignatureEntryForSigning::new(confidence, now, claim_data.clone());
-        let (signature_entry, signature) = SignatureEntry::generate_signed_entry(master_key, sign_keypair, signature_entry_for_signing)?;
-        Ok(Self {
-            from: our_id.clone(),
-            signature,
-            signature_entry,
-        })
-    }
-}
-
-/// A stamp of approval on a claim.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Stamp {
-    /// Who stamped it
-    from: ID,
-    /// Signature of the attached `signature_entry` data.
-    signature: SignKeypairSignature,
-    /// Their signature
-    signature_entry: SignatureEntry,
-    /// The date this stamp was saved (from the claim owner's point of view)
-    date_recorded: DateTime<Utc>,
-}
-
-impl Stamp {
-    /// Create a new stamp from a stamp draft
-    pub fn new(stamp_draft: StampDraft, now: DateTime<Utc>) -> Self {
-        let StampDraft { from, signature, signature_entry } = stamp_draft;
+impl StampSignatureContainer {
+    /// Create a new sig container
+    fn new(meta: StampSignatureMetadata, claim: Claim) -> Self {
         Self {
-            from,
-            signature,
-            signature_entry,
-            date_recorded: now,
+            meta,
+            claim,
         }
     }
 }
 
-/// Various types of codified relationships.
+/// A stamp of approval on a claim.
+///
+/// This is created by the stamper, and it is up to the claim owner to save the
+/// stamp to their identity (as well as to fill in the `recorded` date).
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct Stamp {
+    /// The signature metadata.
+    signature_meta: StampSignatureMetadata,
+    /// Signature of the attached `signature_entry` data.
+    signature: SignKeypairSignature,
+    /// The date this stamp was saved (from the claim owner's point of view)
+    recorded: Option<DateTime<Utc>>,
+}
+
+impl Stamp {
+    /// Stamp a claim.
+    ///
+    /// This must be created by the identity validating the claim, using their
+    /// private signing key.
+    pub fn stamp(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: &DateTime<Utc>, claim: &Claim) -> Result<Self> {
+        let meta = StampSignatureMetadata::new(stamper.clone(), confidence, now.clone());
+        let container = StampSignatureContainer::new(meta.clone(), claim.clone());
+        let ser = ser::serialize(&container)?;
+        let signature = sign_keypair.sign(master_key, &ser)?;
+        Ok(Self {
+            signature_meta: meta,
+            signature,
+            recorded: None,
+        })
+    }
+
+    /// Verify a stamp.
+    ///
+    /// Must have the stamper's public key, which can be obtained by querying
+    /// whatever networks means are accessible for the `IdentityID` in the
+    /// `signature_meta.stamper` field.
+    pub fn verify(&self, sign_keypair: &SignKeypair, claim: &Claim) -> Result<()> {
+        let container = StampSignatureContainer::new(self.signature_meta.clone(), claim.clone());
+        let ser = ser::serialize(&container)?;
+        sign_keypair.verify(&self.signature, &ser)
+    }
+}
+
+/// Various types of codified relationships, used in relationship claims.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Relationship {
     /// A familial relationship.
@@ -187,7 +162,7 @@ pub enum ClaimSpec {
     /// A claim that this identity is mine (always public).
     ///
     /// This claim should be made any time a new identity is created.
-    Identity(ID),
+    Identity(IdentityID),
     /// A claim that the name attached to this identity is mine.
     Name(MaybePrivate<String>),
     /// A claim that I own an email address
@@ -198,7 +173,7 @@ pub enum ClaimSpec {
     HomeAddress(MaybePrivate<String>),
     /// A claim that I am in a relationship with another identity, hopefully
     /// stamped by that identity ='[
-    Relation(Relationship, MaybePrivate<ID>),
+    Relation(Relationship, MaybePrivate<IdentityID>),
     /// A claim that I am in a relationship with another entity with some form
     /// of serializable identification (such as a signed certificate, a name,
     /// etc). Can be used to assert relationships to entities outside of the
@@ -221,29 +196,48 @@ pub enum ClaimSpec {
     Extension(Vec<u8>, MaybePrivate<Vec<u8>>),
 }
 
-/// A claim made by an identity.
+/// A type used when signing a claim. Contains all data about the claim except
+/// the stamps.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Claim {
-    /// The unique ID of this claim, created by signing the claim itself with
+    /// The unique ID of this claim, created by signing the claim's data with
     /// our current signing keypair.
     ///
-    /// IDs are not updated if the keyset is rotated.
-    id: ID,
+    /// ClaimIDs are not updated if the keyset is rotated.
+    id: ClaimID,
     /// The data we're claiming.
-    data: ClaimSpec,
+    spec: ClaimSpec,
+}
+
+impl Claim {
+    /// Create a new claim.
+    fn new(id: ClaimID, spec: ClaimSpec) -> Self {
+        Self {
+            id,
+            spec,
+        }
+    }
+}
+
+/// A claim made by an identity.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct ClaimContainer {
+    /// The actual claim data
+    claim: Claim,
     /// Stamps that have been made on our claim.
     stamps: Vec<Stamp>,
 }
 
-impl Claim {
+impl ClaimContainer {
     /// Create a new claim and sign it with our signing key.
-    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, data: ClaimSpec) -> Result<Self> {
-        let serialized = ser::serialize(&data)?;
+    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, spec: ClaimSpec) -> Result<Self> {
+        let serialized = ser::serialize(&spec)?;
         let signature = sign_keypair.sign(master_key, &serialized)?;
+        let claim = Claim::new(ClaimID(signature), spec);
         Ok(Self {
-            id: ID(signature),
-            data: data,
+            claim,
             stamps: Vec::new(),
         })
     }
@@ -404,11 +398,11 @@ pub struct Identity {
     /// The version of this identity.
     version: IdentityVersion,
     /// The unique identifier for this identity.
-    id: ID,
+    id: IdentityID,
     /// The identity's current and default master key set.
     keyset: Keyset,
     /// The claims this identity makes.
-    claims: Vec<Claim>,
+    claims: Vec<ClaimContainer>,
     /// Expired or deprecated or compromised keysets. We keep these in order to
     /// allow others to verify past claims we have stamped, and also to decrypt
     /// messages encrypted to us with the old keys, in case someone has an old
@@ -428,9 +422,9 @@ impl Identity {
     pub fn new(master_key: &SecretKey) -> Result<Self> {
         let keyset = Keyset::new(master_key)?;
         let sig = keyset.sign().sign(master_key, "This is my stamp.".as_bytes())?;
-        let id = ID(sig);
+        let id = IdentityID(sig);
         let extra_data = IdentityExtraData::new();
-        let identity_claim = Claim::new(master_key, keyset.sign(), ClaimSpec::Identity(id.clone()))?;
+        let identity_claim = ClaimContainer::new(master_key, keyset.sign(), ClaimSpec::Identity(id.clone()))?;
         Ok(Self {
             version: IdentityVersion::default(),
             id,
@@ -471,10 +465,10 @@ impl Identity {
 
         // now check that our claims are signed with our
         for claim in self.claims() {
-            let ser = ser::serialize(claim.data())?;
-            verify_multi(&claim.id().0, &ser)
+            let ser = ser::serialize(claim.claim().spec())?;
+            verify_multi(&claim.claim().id().0, &ser)
                 .map_err(|_| {
-                    Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim.id().0.to_hex()))
+                    Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim.claim().id().0.to_hex()))
                 })?;
         }
 
