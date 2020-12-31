@@ -1,11 +1,11 @@
 //! The identity module defines the data types and operations that define a
 //! Stamp identity.
 //!
-//! An identity is essentially a master set of keys (signing and encryption),
-//! a set of claims made by the identity owner (including the identity itself),
-//! any number of signatures that verify those claims, and a set of "forwards"
-//! that can point to other locations (for instance, your canonical email
-//! address, your personal domain, etc).
+//! An identity is essentially a set of keys (signing and encryption), a set of
+//! claims made by the identity owner (including the identity itself), any
+//! number of signatures that verify those claims, and a set of "forwards" that
+//! can point to other locations (for instance, your canonical email address,
+//! your personal domain, etc).
 //!
 //! This system relies heavily on the [key](crate::key) module, which provides
 //! all the mechanisms necessary for encryption, decryption, signing, and
@@ -251,45 +251,6 @@ impl ClaimContainer {
     }
 }
 
-/// A Keyset is a set of keys.
-///
-/// One key to encrypt messages.
-/// One key to hide them.
-/// One key to verify claims, and in the darkness sign them.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Keyset {
-    /// Signs our claims and others' claims
-    sign: SignKeypair,
-    /// Lets others send us encrypted messages, and us them.
-    crypto: CryptoKeypair,
-    /// Hides our private claim data
-    secret: Private<SecretKey>,
-}
-
-impl Keyset {
-    pub fn new(master_key: &SecretKey) -> Result<Self> {
-        Ok(Self {
-            sign: SignKeypair::new_ed25519(master_key)?,
-            crypto: CryptoKeypair::new_curve25519xsalsa20poly1305(master_key)?,
-            secret: Private::seal(master_key, &SecretKey::new_xsalsa20poly1305())?,
-        })
-    }
-}
-
-/// Describes te various versions our for our identity format, allowing upgrades
-/// and downgrades.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum IdentityVersion {
-    V1,
-}
-
-impl Default for IdentityVersion {
-    fn default() -> Self {
-        Self::V1
-    }
-}
-
 /// A set of forward types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ForwardType {
@@ -344,8 +305,8 @@ pub struct SignedValue<T: serde::Serialize> {
 }
 
 impl<T: serde::Serialize> SignedValue<T> {
-    /// Create a new signed value. Requires our signing keypair and our master
-    /// key (used to unlock the secret signing key).
+    /// Create a new signed value. Requires our signing keypair and our root key
+    /// (used to unlock the secret signing key).
     pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, value: T) -> Result<Self> {
         let serialized = ser::serialize(&value)?;
         let signature = sign_keypair.sign(master_key, &serialized)?;
@@ -353,6 +314,130 @@ impl<T: serde::Serialize> SignedValue<T> {
             value,
             signature,
         })
+    }
+}
+
+/// Why we are deprecating a key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DeprecationReason {
+    /// No reason.
+    Unspecified,
+    /// Replacing this key with another.
+    Superseded,
+    /// This key has been compromised.
+    Compromised,
+}
+
+/// Marks a key as deprecated, signed with our root key. In the case that the
+/// root key is being deprecated, the deprecation must be signed with the new
+/// root key.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct Deprecation {
+    /// Deprecation signature.
+    signature: SignKeypairSignature,
+    /// The reason we're deprecating this key.
+    reason: DeprecationReason,
+}
+
+/// An enum that holds any type of key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Key {
+    /// A signing key.
+    Sign(SignKeypair),
+    /// An asymmetric crypto key.
+    Crypto(CryptoKeypair),
+    /// Hides our private claim data
+    Secret(Private<SecretKey>),
+}
+
+impl Key {
+    /// Returns the `SignKeypair` if this is a signing key.
+    pub fn sign(&self) -> Option<SignKeypair> {
+        match self {
+            Self::Sign(ref x) => Some(x.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns the `SignKeypair` if this is a signing key.
+    pub fn crypto(&self) -> Option<CryptoKeypair> {
+        match self {
+            Self::Crypto(ref x) => Some(x.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns the `SignKeypair` if this is a signing key.
+    pub fn secret(&self) -> Option<Private<SecretKey>> {
+        match self {
+            Self::Secret(ref x) => Some(x.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// Holds a subkey, signed by the identity's root key. It also stores whether or
+/// not the key has been deprecated.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct Subkey {
+    /// The signature of this subkey's public key (unless this is a secret key,
+    /// in which case we sign the encrypted secret key).
+    signature: SignKeypairSignature,
+    /// The key itself.
+    key: Key,
+    /// Allows deprecation of a key.
+    deprecated: Option<Deprecation>,
+}
+
+/// Holds the keys for our identity.
+///
+/// This includes an always-present root signing key, and any number of other
+/// keys. There's no restriction on how many keys we can have or what kind of
+/// keys (signing, enryption, etc).
+///
+/// The keys stored here can also be deprecated. They can remain stored here for
+/// the purposes of verifying old signatures or decrypting old messages, but
+/// deprecated keys should not be used to sign or encrypt new data. Even the
+/// root key can be deprecated in the case that it's compromised.
+///
+/// In the event a root key is deprecated, the subkeys must be re-signed with
+/// the new root key.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct Keychain {
+    /// The account's root signing key.
+    root: SignKeypair,
+    /// Holds our subkeys, signed with our root keypair.
+    subkeys: Vec<Subkey>,
+}
+
+impl Keychain {
+    /// Create a new identity key collection
+    pub fn new(root_keypair: SignKeypair) -> Self {
+        Self {
+            root: root_keypair,
+            subkeys: Vec::new(),
+        }
+    }
+
+    /// Grab all signing subkeys.
+    pub fn subkeys_sign(&self) -> Vec<SignKeypair> {
+        self.subkeys.iter()
+            .map(|x| x.key().sign())
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect::<Vec<_>>()
+    }
+
+    /// Grab all crypto subkeys.
+    pub fn subkeys_crypto(&self) -> Vec<CryptoKeypair> {
+        self.subkeys.iter()
+            .map(|x| x.key().crypto())
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect::<Vec<_>>()
     }
 }
 
@@ -403,24 +488,12 @@ impl IdentityExtraData {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Identity {
-    /// The version of this identity.
-    version: IdentityVersion,
     /// The unique identifier for this identity.
     id: IdentityID,
-    /// The identity's current and default master key set.
-    keyset: Keyset,
+    /// Holds the keys for our identity.
+    keychain: Keychain,
     /// The claims this identity makes.
     claims: Vec<ClaimContainer>,
-    /// Expired or deprecated or compromised keysets. We keep these in order to
-    /// allow others to verify past claims we have stamped, and also to decrypt
-    /// messages encrypted to us with the old keys, in case someone has an old
-    /// version of the identity.
-    ///
-    /// New information must not be signed or encrypted with the old keys.
-    ///
-    /// The old keysets must be appended to, that is, new entries must be added
-    /// to the end of the list.
-    old_keysets: Vec<Keyset>,
     /// Extra data that can be attached to our identity.
     extra_data: IdentityExtraData,
 }
@@ -428,17 +501,16 @@ pub struct Identity {
 impl Identity {
     /// Create a new identity
     pub fn new(master_key: &SecretKey) -> Result<Self> {
-        let keyset = Keyset::new(master_key)?;
-        let sig = keyset.sign().sign(master_key, "This is my stamp.".as_bytes())?;
+        let root_keypair = SignKeypair::new_ed25519(master_key)?;
+        let sig = root_keypair.sign(master_key, "This is my stamp.".as_bytes())?;
         let id = IdentityID(sig);
+        let identity_claim = ClaimContainer::new(master_key, &root_keypair, ClaimSpec::Identity(id.clone()))?;
+        let keychain = Keychain::new(root_keypair);
         let extra_data = IdentityExtraData::new();
-        let identity_claim = ClaimContainer::new(master_key, keyset.sign(), ClaimSpec::Identity(id.clone()))?;
         Ok(Self {
-            version: IdentityVersion::default(),
             id,
-            keyset,
+            keychain,
             claims: vec![identity_claim],
-            old_keysets: Vec::new(),
             extra_data,
         })
     }
@@ -455,11 +527,11 @@ impl Identity {
     /// must not be stored alongside the signatures).
     pub fn verify(&self) -> Result<()> {
         let verify_multi = |sig: &SignKeypairSignature, bytes_to_verify: &[u8]| -> std::result::Result<(), ()> {
-            match self.keyset().sign().verify(sig, bytes_to_verify) {
+            match self.keychain().root().verify(sig, bytes_to_verify) {
                 Ok(_) => Ok(()),
                 _ => {
-                    for keyset in self.old_keysets() {
-                        if keyset.sign().verify(sig, bytes_to_verify).is_ok() {
+                    for sign_keypair in self.keychain().subkeys_sign() {
+                        if sign_keypair.verify(sig, bytes_to_verify).is_ok() {
                             return Ok(());
                         }
                     }
@@ -471,7 +543,7 @@ impl Identity {
         verify_multi(&self.id().0, "This is my stamp.".as_bytes())
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.id")))?;
 
-        // now check that our claims are signed with our
+        // now check that our claims are signed with one of our sign keys
         for claim in self.claims() {
             let ser = ser::serialize(claim.claim().spec())?;
             verify_multi(&claim.claim().id().0, &ser)
@@ -497,8 +569,7 @@ mod tests {
         let master_key = gen_master_key();
         let identity = Identity::new(&master_key).unwrap();
 
-        assert_eq!(identity.version(), &IdentityVersion::default());
-        assert_eq!(identity.old_keysets().len(), 0);
+        assert_eq!(identity.keychain().subkeys().len(), 0);
         assert_eq!(identity.claims().len(), 1);
         assert!(identity.extra_data().nickname().is_none());
         assert_eq!(identity.extra_data().forwards().len(), 0);

@@ -68,9 +68,11 @@ impl SecretKey {
             },
         }
     }
+}
 
+impl AsRef<[u8]> for SecretKey {
     /// Get the raw bytes for this key
-    pub fn as_ref(&self) -> &[u8] {
+    fn as_ref(&self) -> &[u8] {
         match self {
             SecretKey::Xsalsa20Poly1305(ref key) => key.as_ref(),
         }
@@ -116,7 +118,7 @@ impl SignKeypair {
 
     /// Sign a value with our secret signing key.
     ///
-    /// Must be unlocked via our master key.
+    /// Must be unlocked via our root key.
     pub fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<SignKeypairSignature> {
         match self {
             SignKeypair::Ed25519(_, ref sec_locked_opt) => {
@@ -201,7 +203,7 @@ impl CryptoKeypair {
     }
 
     /// Open an anonymous message encrypted with our public key. Requires our
-    /// master key to open.
+    /// root key to open.
     pub fn open_anonymous(master_key: &SecretKey, our_keypair: &CryptoKeypair, data: &[u8]) -> Result<Vec<u8>> {
         match our_keypair {
             CryptoKeypair::Curve25519Xsalsa20Poly1305(ref pubkey, ref seckey_opt) => {
@@ -214,7 +216,7 @@ impl CryptoKeypair {
     }
 
     /// Encrypt a message to a recipient, and sign it with our secret crypto
-    /// key. Needs our master key to unlock our heroic private key.
+    /// key. Needs our root key to unlock our heroic private key.
     pub fn seal(our_master_key: &SecretKey, our_keypair: &CryptoKeypair, their_keypair: &CryptoKeypair, data: &[u8]) -> Result<CryptoKeypairMessage> {
         match (our_keypair, their_keypair) {
             (CryptoKeypair::Curve25519Xsalsa20Poly1305(_, ref our_seckey_opt), CryptoKeypair::Curve25519Xsalsa20Poly1305(ref their_pubkey, _)) => {
@@ -229,7 +231,7 @@ impl CryptoKeypair {
     }
 
     /// Open a message encrypted with our public key and verify the sender of
-    /// the message using their public key. Needs our master key to unlock the
+    /// the message using their public key. Needs our root key to unlock the
     /// private key used to decrypt the message.
     pub fn open(our_master_key: &SecretKey, our_keypair: &CryptoKeypair, their_keypair: &CryptoKeypair, message: &CryptoKeypairMessage) -> Result<Vec<u8>> {
         match (our_keypair, their_keypair) {
@@ -248,7 +250,7 @@ impl CryptoKeypair {
 }
 
 
-/// Generate a master key from a passphrase/salt
+/// Generate a root key from a passphrase/salt
 pub fn derive_master_key(passphrase: &[u8], salt: &[u8; argon2id13::SALTBYTES]) -> Result<SecretKey> {
     let len = xsalsa20poly1305::KEYBYTES;
     let mut key: Vec<u8> = vec![0; len];
@@ -289,7 +291,7 @@ mod tests {
         let our_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
 
         let msg_real = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
-        let msg_fake = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering hi...");
+        let msg_fake = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...");
         let sig = our_keypair.sign(&master_key, msg_real.as_bytes()).unwrap();
         let verify_real = our_keypair.verify(&sig, msg_real.as_bytes());
         let verify_fake = our_keypair.verify(&sig, msg_fake.as_bytes());
