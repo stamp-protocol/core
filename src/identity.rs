@@ -11,20 +11,21 @@
 //! all the mechanisms necessary for encryption, decryption, signing, and
 //! verification of data.
 
-use chrono::{DateTime, Utc};
 use crate::{
     error::{Error, Result},
-    key::{SecretKey, SignKeypairSignature, SignKeypair, CryptoKeypair},
-    private::{Private, MaybePrivate},
+    key::{SecretKey, SignKeypairSignature, SignKeypair},
+    keychain::Keychain,
+    private::MaybePrivate,
     ser,
+    util::Timestamp,
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
 
 /// A unique identifier for identities.
 ///
-/// We generate this by signing the string "This is my stamp." using our initial
-/// private signing key.
+/// We generate this by signing the string "This is my stamp." in a `DateSigner`
+/// using our initial private signing key.
 ///
 /// `IdentityID`s are permanent and are not regenerated when the keysets are
 /// rotated.
@@ -33,13 +34,60 @@ pub struct IdentityID(SignKeypairSignature);
 
 /// A unique identifier for claims.
 ///
-/// We generate this by signing the claim's data with our current private
-/// signing key.
+/// We generate this by signing the claim's data in a `DateSigner` with our
+/// current private signing key.
 ///
 /// `IdentityID`s are permanent and are not regenerated when the keysets are
 /// rotated.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClaimID(SignKeypairSignature);
+
+/// A struct that wraps any type and requires it to be signed in order to be
+/// created or modified.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct SignedValue<T: serde::Serialize> {
+    /// The value we wish to sign.
+    value: T,
+    /// The signature for our value.
+    signature: SignKeypairSignature,
+}
+
+impl<T: serde::Serialize> SignedValue<T> {
+    /// Create a new signed value. Requires our signing keypair and our root key
+    /// (used to unlock the secret signing key).
+    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, value: T) -> Result<Self> {
+        let serialized = ser::serialize(&value)?;
+        let signature = sign_keypair.sign(master_key, &serialized)?;
+        Ok(Self {
+            value,
+            signature,
+        })
+    }
+}
+
+/// Attaches a serializable object to a date for signing.
+///
+/// This is a one-way object used for comparing signatures, so never needs to be
+/// deserialized.
+#[derive(Debug, Clone, Serialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct DateSigner<'a, 'b, T> {
+    /// The date we signed this value.
+    date: &'a Timestamp,
+    /// The value being signed.
+    value: &'b T,
+}
+
+impl<'a, 'b, T: serde::Serialize> DateSigner<'a, 'b, T> {
+    /// Construct a new DateSigner
+    pub fn new(date: &'a Timestamp, value: &'b T) -> Self {
+        Self {
+            date,
+            value,
+        }
+    }
+}
 
 /// A set of metadata that is signed when a stamp is created that is stored
 /// alongside the signature itself.
@@ -56,12 +104,12 @@ pub struct StampSignatureMetadata {
     /// place.
     confidence: u8,
     /// Filled in by the stamper, the date the claim was stamped
-    date_signed: DateTime<Utc>,
+    date_signed: Timestamp,
 }
 
 impl StampSignatureMetadata {
     /// Create a new stamp signature metadata object.
-    pub fn new(stamper: IdentityID, confidence: u8, date_signed: DateTime<Utc>) -> Self {
+    pub fn new(stamper: IdentityID, confidence: u8, date_signed: Timestamp) -> Self {
         Self {
             stamper,
             confidence,
@@ -108,8 +156,6 @@ pub struct Stamp {
     signature_meta: StampSignatureMetadata,
     /// Signature of the attached `signature_entry` data.
     signature: SignKeypairSignature,
-    /// The date this stamp was saved (from the claim owner's point of view)
-    recorded: Option<DateTime<Utc>>,
 }
 
 impl Stamp {
@@ -117,7 +163,7 @@ impl Stamp {
     ///
     /// This must be created by the identity validating the claim, using their
     /// private signing key.
-    pub fn stamp(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: &DateTime<Utc>, claim: &Claim) -> Result<Self> {
+    pub fn stamp(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: &Timestamp, claim: &Claim) -> Result<Self> {
         let meta = StampSignatureMetadata::new(stamper.clone(), confidence, now.clone());
         let container = StampSignatureContainer::new(meta.clone(), claim.clone());
         let ser = ser::serialize(&container)?;
@@ -125,7 +171,6 @@ impl Stamp {
         Ok(Self {
             signature_meta: meta,
             signature,
-            recorded: None,
         })
     }
 
@@ -138,6 +183,41 @@ impl Stamp {
         let container = StampSignatureContainer::new(self.signature_meta.clone(), claim.clone());
         let ser = ser::serialize(&container)?;
         sign_keypair.verify(&self.signature, &ser)
+    }
+}
+
+/// A stamp that has been counter-signed by our signing private key and accepted
+/// into our identity. Ie, a stamped stamp.
+///
+/// This is created by the identity owner after receiving a signed stamp. The
+/// idea here is that a stamp is not full valid until it has been accepted by us
+/// for inclusion into the identity.
+///
+/// Any schmuck can stamp any of our claims, but those stamps are not included
+/// in our identity (and should be disregarded by others) until we accept them.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct AcceptedStamp {
+    /// The stamp itself.
+    stamp: Stamp,
+    /// The date this stamp was saved (from the claim owner's point of view)
+    recorded: Timestamp,
+    /// The signature of the stamp we're accepting, created by signing the stamp
+    /// in a `DateSigner` with our current signing keypair.
+    signature: SignKeypairSignature,
+}
+
+impl AcceptedStamp {
+    /// Accept a stamp.
+    pub fn accept(master_key: &SecretKey, sign_keypair: &SignKeypair, stamp: Stamp, now: Timestamp) -> Result<Self> {
+        let datesigner = DateSigner::new(&now, &stamp);
+        let serialized = ser::serialize(&datesigner)?;
+        let signature = sign_keypair.sign(&master_key, &serialized)?;
+        Ok(Self {
+            stamp,
+            recorded: now,
+            signature,
+        })
     }
 }
 
@@ -210,18 +290,21 @@ pub enum ClaimSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Claim {
-    /// The unique ID of this claim, created by signing the claim's data with
-    /// our current signing keypair.
+    /// The unique ID of this claim, created by signing the claim's data in a
+    /// `DateSigner` with our current signing keypair.
     id: ClaimID,
+    /// The date we created the claim.
+    created: Timestamp,
     /// The data we're claiming.
     spec: ClaimSpec,
 }
 
 impl Claim {
     /// Create a new claim.
-    fn new(id: ClaimID, spec: ClaimSpec) -> Self {
+    fn new(id: ClaimID, now: Timestamp, spec: ClaimSpec) -> Self {
         Self {
             id,
+            created: now,
             spec,
         }
     }
@@ -234,16 +317,17 @@ pub struct ClaimContainer {
     /// The actual claim data
     claim: Claim,
     /// Stamps that have been made on our claim.
-    stamps: Vec<Stamp>,
+    stamps: Vec<AcceptedStamp>,
 }
 
 impl ClaimContainer {
     /// Create a new claim, sign it with our signing key, and return a container
     /// that holds the claim (with an empty set of stamps).
-    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, spec: ClaimSpec) -> Result<Self> {
-        let serialized = ser::serialize(&spec)?;
+    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, now: Timestamp, spec: ClaimSpec) -> Result<Self> {
+        let datesigner = DateSigner::new(&now, &spec);
+        let serialized = ser::serialize(&datesigner)?;
         let signature = sign_keypair.sign(master_key, &serialized)?;
-        let claim = Claim::new(ClaimID(signature), spec);
+        let claim = Claim::new(ClaimID(signature), now, spec);
         Ok(Self {
             claim,
             stamps: Vec::new(),
@@ -293,157 +377,9 @@ pub struct Forward {
     is_default: bool,
 }
 
-/// A struct that wraps any type and requires it to be signed in order to be
-/// created or modified.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct SignedValue<T: serde::Serialize> {
-    /// The value we wish to sign.
-    value: T,
-    /// The signature for our value.
-    signature: SignKeypairSignature,
-}
-
-impl<T: serde::Serialize> SignedValue<T> {
-    /// Create a new signed value. Requires our signing keypair and our root key
-    /// (used to unlock the secret signing key).
-    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, value: T) -> Result<Self> {
-        let serialized = ser::serialize(&value)?;
-        let signature = sign_keypair.sign(master_key, &serialized)?;
-        Ok(Self {
-            value,
-            signature,
-        })
-    }
-}
-
-/// Why we are deprecating a key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DeprecationReason {
-    /// No reason.
-    Unspecified,
-    /// Replacing this key with another.
-    Superseded,
-    /// This key has been compromised.
-    Compromised,
-}
-
-/// Marks a key as deprecated, signed with our root key. In the case that the
-/// root key is being deprecated, the deprecation must be signed with the new
-/// root key.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Deprecation {
-    /// Deprecation signature.
-    signature: SignKeypairSignature,
-    /// The reason we're deprecating this key.
-    reason: DeprecationReason,
-}
-
-/// An enum that holds any type of key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Key {
-    /// A signing key.
-    Sign(SignKeypair),
-    /// An asymmetric crypto key.
-    Crypto(CryptoKeypair),
-    /// Hides our private claim data
-    Secret(Private<SecretKey>),
-}
-
-impl Key {
-    /// Returns the `SignKeypair` if this is a signing key.
-    pub fn sign(&self) -> Option<SignKeypair> {
-        match self {
-            Self::Sign(ref x) => Some(x.clone()),
-            _ => None,
-        }
-    }
-
-    /// Returns the `SignKeypair` if this is a signing key.
-    pub fn crypto(&self) -> Option<CryptoKeypair> {
-        match self {
-            Self::Crypto(ref x) => Some(x.clone()),
-            _ => None,
-        }
-    }
-
-    /// Returns the `SignKeypair` if this is a signing key.
-    pub fn secret(&self) -> Option<Private<SecretKey>> {
-        match self {
-            Self::Secret(ref x) => Some(x.clone()),
-            _ => None,
-        }
-    }
-}
-
-/// Holds a subkey, signed by the identity's root key. It also stores whether or
-/// not the key has been deprecated.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Subkey {
-    /// The signature of this subkey's public key (unless this is a secret key,
-    /// in which case we sign the encrypted secret key).
-    signature: SignKeypairSignature,
-    /// The key itself.
-    key: Key,
-    /// Allows deprecation of a key.
-    deprecated: Option<Deprecation>,
-}
-
-/// Holds the keys for our identity.
-///
-/// This includes an always-present root signing key, and any number of other
-/// keys. There's no restriction on how many keys we can have or what kind of
-/// keys (signing, enryption, etc).
-///
-/// The keys stored here can also be deprecated. They can remain stored here for
-/// the purposes of verifying old signatures or decrypting old messages, but
-/// deprecated keys should not be used to sign or encrypt new data. Even the
-/// root key can be deprecated in the case that it's compromised.
-///
-/// In the event a root key is deprecated, the subkeys must be re-signed with
-/// the new root key.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Keychain {
-    /// The account's root signing key.
-    root: SignKeypair,
-    /// Holds our subkeys, signed with our root keypair.
-    subkeys: Vec<Subkey>,
-}
-
-impl Keychain {
-    /// Create a new identity key collection
-    pub fn new(root_keypair: SignKeypair) -> Self {
-        Self {
-            root: root_keypair,
-            subkeys: Vec::new(),
-        }
-    }
-
-    /// Grab all signing subkeys.
-    pub fn subkeys_sign(&self) -> Vec<SignKeypair> {
-        self.subkeys.iter()
-            .map(|x| x.key().sign())
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
-            .collect::<Vec<_>>()
-    }
-
-    /// Grab all crypto subkeys.
-    pub fn subkeys_crypto(&self) -> Vec<CryptoKeypair> {
-        self.subkeys.iter()
-            .map(|x| x.key().crypto())
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
-            .collect::<Vec<_>>()
-    }
-}
-
 /// Extra public data that is attached to our identity.
 ///
-/// Each entry in this struct is signed by our secret signing key. In the case
+/// Each entry in this struct is signed by our root signing key. In the case
 /// that our identity is re-keyed, the entries in this struct must be re-signed.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
@@ -468,9 +404,6 @@ pub struct IdentityExtraData {
     nickname: Option<SignedValue<String>>,
     /// A canonical list of places this identity forwards to.
     forwards: Vec<SignedValue<Forward>>,
-    /// A field for storing any signed data we wish to store alongside our
-    /// identity.
-    extension: Option<SignedValue<Vec<u8>>>,
 }
 
 impl IdentityExtraData {
@@ -479,7 +412,6 @@ impl IdentityExtraData {
         Self {
             nickname: None,
             forwards: Vec::new(),
-            extension: None,
         }
     }
 }
@@ -490,6 +422,20 @@ impl IdentityExtraData {
 pub struct Identity {
     /// The unique identifier for this identity.
     id: IdentityID,
+    /// A signature that is created by collecting all signatures contained in
+    /// the identity and signing them with the root signing key.
+    ///
+    /// This gives any identity a verifiable completeness: if any data is added
+    /// or removed that is not authorized by the identity owner, the identity
+    /// will fail to validate. This can be useful in cases where an identity is
+    /// distributed by a third party.
+    ///
+    /// This obviously doesn't guard against distributing an old (but unedited)
+    /// version of an identity.
+    root_signature: SignKeypairSignature,
+    /// When this identity was created. This value is signed in the IdentityID
+    /// via a `DateSigner`.
+    created: Timestamp,
     /// Holds the keys for our identity.
     keychain: Keychain,
     /// The claims this identity makes.
@@ -500,19 +446,73 @@ pub struct Identity {
 
 impl Identity {
     /// Create a new identity
-    pub fn new(master_key: &SecretKey) -> Result<Self> {
+    pub fn new(master_key: &SecretKey, now: Timestamp) -> Result<Self> {
         let root_keypair = SignKeypair::new_ed25519(master_key)?;
-        let sig = root_keypair.sign(master_key, "This is my stamp.".as_bytes())?;
+        let id_string = String::from("This is my stamp.");
+        let datesigner = DateSigner::new(&now, &id_string);
+        let ser = ser::serialize(&datesigner)?;
+        let sig = root_keypair.sign(master_key, &ser)?;
         let id = IdentityID(sig);
-        let identity_claim = ClaimContainer::new(master_key, &root_keypair, ClaimSpec::Identity(id.clone()))?;
+        let identity_claim = ClaimContainer::new(master_key, &root_keypair, now.clone(), ClaimSpec::Identity(id.clone()))?;
         let keychain = Keychain::new(root_keypair);
         let extra_data = IdentityExtraData::new();
-        Ok(Self {
+        let temporary_root_signature = keychain.root().sign(master_key, "temporary".as_bytes())?;
+        let mut identity = Self {
             id,
+            root_signature: temporary_root_signature,
+            created: now,
             keychain,
             claims: vec![identity_claim],
             extra_data,
-        })
+        };
+        identity.set_root_signature(identity.generate_root_signature(master_key)?);
+        Ok(identity)
+    }
+
+    /// Grab a list of all our identity's sub-signatures.
+    fn sub_signatures(&self) -> Vec<&SignKeypairSignature> {
+        let mut signatures = vec![
+            &self.id().0,
+        ];
+
+        // sign the signatures of all our subkeys
+        for subkey in self.keychain().subkeys() {
+            signatures.push(&subkey.signature());
+        }
+
+        // sign our claims and their stamps
+        for claim in self.claims() {
+            // sign each claim's id (which is itself a signature)
+            signatures.push(&claim.claim().id().0);
+            // now sign each claim's accepted stamps. the accepted stamp's
+            // signature signs the entire stamp, so we can stop there.
+            for stamp in claim.stamps() {
+                signatures.push(&stamp.signature());
+            }
+        }
+
+        // sign our extra data
+        if let Some(nickname) = self.extra_data().nickname().as_ref() {
+            signatures.push(nickname.signature());
+        }
+        for forward in self.extra_data().forwards() {
+            signatures.push(forward.signature());
+        }
+        signatures
+    }
+
+    /// Generate a signature that is a result of signing all the identity's
+    /// contained signatures *in the order they are stored*.
+    ///
+    /// This makes each identity completely immutable (even the order of the
+    /// contained items) by anyone but the owner of the master key/root signing
+    /// key.
+    ///
+    /// One signature to rule them all.
+    fn generate_root_signature(&self, master_key: &SecretKey) -> Result<SignKeypairSignature> {
+        let signatures = self.sub_signatures();
+        let serialized = ser::serialize(&signatures)?;
+        self.keychain().root().sign(master_key, &serialized)
     }
 
     /// Verify that the portions of this identity that can be verified, mainly
@@ -526,6 +526,12 @@ impl Identity {
     /// the identity (we need the public keys of all the signers for that, which
     /// must not be stored alongside the signatures).
     pub fn verify(&self) -> Result<()> {
+        // verify our root signature
+        let sub_signatures = self.sub_signatures();
+        self.keychain().root().verify(self.root_signature(), &ser::serialize(&sub_signatures)?)?;
+
+        // a helper that tries to verify a signature with all the signing keys
+        // in the keychain, even the revoked ones.
         let verify_multi = |sig: &SignKeypairSignature, bytes_to_verify: &[u8]| -> std::result::Result<(), ()> {
             match self.keychain().root().verify(sig, bytes_to_verify) {
                 Ok(_) => Ok(()),
@@ -540,12 +546,16 @@ impl Identity {
             }
         };
 
-        verify_multi(&self.id().0, "This is my stamp.".as_bytes())
+        let id_string = String::from("This is my stamp.");
+        let datesigner = DateSigner::new(self.created(), &id_string);
+        let ser = ser::serialize(&datesigner)?;
+        verify_multi(&self.id().0, &ser)
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.id")))?;
 
         // now check that our claims are signed with one of our sign keys
         for claim in self.claims() {
-            let ser = ser::serialize(claim.claim().spec())?;
+            let datesigner = DateSigner::new(claim.claim().created(), claim.claim().spec());
+            let ser = ser::serialize(&datesigner)?;
             verify_multi(&claim.claim().id().0, &ser)
                 .map_err(|_| {
                     Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim.claim().id().0.to_hex()))
@@ -553,6 +563,23 @@ impl Identity {
         }
 
         Ok(())
+    }
+}
+
+/// Allows identity formats to be versioned so as to not break compatibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum IdentityVersion {
+    V1(Identity),
+}
+
+pub trait VersionedIdentity {
+    /// Converts an identity into a versioned identity.
+    fn version(self) -> IdentityVersion;
+}
+
+impl VersionedIdentity for Identity {
+    fn version(self) -> IdentityVersion {
+        IdentityVersion::V1(self)
     }
 }
 
@@ -567,19 +594,20 @@ mod tests {
     #[test]
     fn init() {
         let master_key = gen_master_key();
-        let identity = Identity::new(&master_key).unwrap();
+        let now = Timestamp::now();
+        let identity = Identity::new(&master_key, now).unwrap();
 
         assert_eq!(identity.keychain().subkeys().len(), 0);
         assert_eq!(identity.claims().len(), 1);
         assert!(identity.extra_data().nickname().is_none());
         assert_eq!(identity.extra_data().forwards().len(), 0);
-        assert!(identity.extra_data().extension().is_none());
     }
 
     #[test]
     fn verify() {
         let master_key = gen_master_key();
-        let identity = Identity::new(&master_key).unwrap();
+        let now = Timestamp::now();
+        let identity = Identity::new(&master_key, now).unwrap();
         assert_eq!(identity.verify(), Ok(()));
     }
 }
