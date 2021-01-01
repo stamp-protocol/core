@@ -6,6 +6,8 @@ use sodiumoxide::{
 };
 use std::ops::Deref;
 
+pub mod sign;
+
 /// Hash arbitrary data using blake2b
 pub fn hash(data: &[u8]) -> Result<generichash::Digest> {
     let mut state = generichash::State::new(generichash::DIGEST_MAX, None)

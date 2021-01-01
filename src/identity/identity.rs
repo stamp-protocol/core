@@ -1,30 +1,21 @@
-//! The identity module defines the data types and operations that define a
-//! Stamp identity.
-//!
-//! An identity is essentially a set of keys (signing and encryption), a set of
-//! claims made by the identity owner (including the identity itself), any
-//! number of signatures that verify those claims, and a set of "forwards" that
-//! can point to other locations (for instance, your canonical email address,
-//! your personal domain, etc).
-//!
-//! This system relies heavily on the [key](crate::key) module, which provides
-//! all the mechanisms necessary for encryption, decryption, signing, and
-//! verification of data.
-
 use crate::{
     error::{Error, Result},
     identity::{
+        claim::{ClaimSpec, ClaimContainer},
         keychain::Keychain,
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
-    private::MaybePrivate,
     ser,
-    util::Timestamp,
+    util::{
+        Timestamp,
+        sign::{DateSigner, SignedValue},
+    },
     IdentityVersion,
     VersionedIdentity,
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
+use std::ops::Deref;
 
 /// A unique identifier for identities.
 ///
@@ -36,306 +27,10 @@ use serde_derive::{Serialize, Deserialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IdentityID(SignKeypairSignature);
 
-/// A unique identifier for claims.
-///
-/// We generate this by signing the claim's data in a `DateSigner` with our
-/// current private signing key.
-///
-/// `IdentityID`s are permanent and are not regenerated when the keysets are
-/// rotated.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClaimID(SignKeypairSignature);
-
-/// A struct that wraps any type and requires it to be signed in order to be
-/// created or modified.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct SignedValue<T: serde::Serialize> {
-    /// The value we wish to sign.
-    value: T,
-    /// The signature for our value.
-    signature: SignKeypairSignature,
-}
-
-impl<T: serde::Serialize> SignedValue<T> {
-    /// Create a new signed value. Requires our signing keypair and our root key
-    /// (used to unlock the secret signing key).
-    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, value: T) -> Result<Self> {
-        let serialized = ser::serialize(&value)?;
-        let signature = sign_keypair.sign(master_key, &serialized)?;
-        Ok(Self {
-            value,
-            signature,
-        })
-    }
-}
-
-/// Attaches a serializable object to a date for signing.
-///
-/// This is a one-way object used for comparing signatures, so never needs to be
-/// deserialized.
-#[derive(Debug, Clone, Serialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct DateSigner<'a, 'b, T> {
-    /// The date we signed this value.
-    date: &'a Timestamp,
-    /// The value being signed.
-    value: &'b T,
-}
-
-impl<'a, 'b, T: serde::Serialize> DateSigner<'a, 'b, T> {
-    /// Construct a new DateSigner
-    pub fn new(date: &'a Timestamp, value: &'b T) -> Self {
-        Self {
-            date,
-            value,
-        }
-    }
-}
-
-/// A set of metadata that is signed when a stamp is created that is stored
-/// alongside the signature itself.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct StampSignatureMetadata {
-    /// The ID of the identity that is stamping.
-    stamper: IdentityID,
-    /// How much confidence the stamper has that the claim being stamped is
-    /// valid. This is a value between 0 and 255, and is ultimately a ratio
-    /// via `c / 255`, where 0.0 is "lowest confidence" and 1.0 is "ultimate
-    /// confidence." Keep in mind that 0 here is not "absolutely zero
-    /// confidence" as otherwise the stamp wouldn't be occuring in the first
-    /// place.
-    confidence: u8,
-    /// Filled in by the stamper, the date the claim was stamped
-    date_signed: Timestamp,
-}
-
-impl StampSignatureMetadata {
-    /// Create a new stamp signature metadata object.
-    pub fn new(stamper: IdentityID, confidence: u8, date_signed: Timestamp) -> Self {
-        Self {
-            stamper,
-            confidence,
-            date_signed,
-        }
-    }
-}
-
-/// A somewhat ephemeral container used to serialize a set of data and sign it.
-/// Includes metadata about the signature (`SignatureEntry`)
-/// A struct used to sign a claim, only used for signing and verification (but
-/// not storage).
-///
-/// Note that in the case of a *private* claim being signed, the signature
-/// applies to the encrypted entry, not the decrypted entry, allowing peers to
-/// verify that X stamped Y's claim without *knowing* Y's claim.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct StampSignatureContainer {
-    /// The metadata we're signing with this signature.
-    meta: StampSignatureMetadata,
-    /// The claim we're signing.
-    claim: Claim,
-}
-
-impl StampSignatureContainer {
-    /// Create a new sig container
-    fn new(meta: StampSignatureMetadata, claim: Claim) -> Self {
-        Self {
-            meta,
-            claim,
-        }
-    }
-}
-
-/// A stamp of approval on a claim.
-///
-/// This is created by the stamper, and it is up to the claim owner to save the
-/// stamp to their identity (as well as to fill in the `recorded` date).
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Stamp {
-    /// The signature metadata.
-    signature_meta: StampSignatureMetadata,
-    /// Signature of the attached `signature_entry` data.
-    signature: SignKeypairSignature,
-}
-
-impl Stamp {
-    /// Stamp a claim.
-    ///
-    /// This must be created by the identity validating the claim, using their
-    /// private signing key.
-    pub fn stamp(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: &Timestamp, claim: &Claim) -> Result<Self> {
-        let meta = StampSignatureMetadata::new(stamper.clone(), confidence, now.clone());
-        let container = StampSignatureContainer::new(meta.clone(), claim.clone());
-        let ser = ser::serialize(&container)?;
-        let signature = sign_keypair.sign(master_key, &ser)?;
-        Ok(Self {
-            signature_meta: meta,
-            signature,
-        })
-    }
-
-    /// Verify a stamp.
-    ///
-    /// Must have the stamper's public key, which can be obtained by querying
-    /// whatever networks means are accessible for the `IdentityID` in the
-    /// `signature_meta.stamper` field.
-    pub fn verify(&self, sign_keypair: &SignKeypair, claim: &Claim) -> Result<()> {
-        let container = StampSignatureContainer::new(self.signature_meta.clone(), claim.clone());
-        let ser = ser::serialize(&container)?;
-        sign_keypair.verify(&self.signature, &ser)
-    }
-}
-
-/// A stamp that has been counter-signed by our signing private key and accepted
-/// into our identity. Ie, a stamped stamp.
-///
-/// This is created by the identity owner after receiving a signed stamp. The
-/// idea here is that a stamp is not full valid until it has been accepted by us
-/// for inclusion into the identity.
-///
-/// Any schmuck can stamp any of our claims, but those stamps are not included
-/// in our identity (and should be disregarded by others) until we accept them.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct AcceptedStamp {
-    /// The stamp itself.
-    stamp: Stamp,
-    /// The date this stamp was saved (from the claim owner's point of view)
-    recorded: Timestamp,
-    /// The signature of the stamp we're accepting, created by signing the stamp
-    /// in a `DateSigner` with our current signing keypair.
-    signature: SignKeypairSignature,
-}
-
-impl AcceptedStamp {
-    /// Accept a stamp.
-    pub fn accept(master_key: &SecretKey, sign_keypair: &SignKeypair, stamp: Stamp, now: Timestamp) -> Result<Self> {
-        let datesigner = DateSigner::new(&now, &stamp);
-        let serialized = ser::serialize(&datesigner)?;
-        let signature = sign_keypair.sign(&master_key, &serialized)?;
-        Ok(Self {
-            stamp,
-            recorded: now,
-            signature,
-        })
-    }
-}
-
-/// Various types of codified relationships, used in relationship claims.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Relationship {
-    /// A familial relationship.
-    Family,
-    /// A friendship.
-    Friend,
-    /// An organizational or group membership.
-    ///
-    /// Note that this doesn't have to be a company or any predefined notion of
-    /// an organization, but can really mean "a member of any group" including
-    /// but not limited to a book club, a state citizenship, and anything
-    /// in-between or beyond.
-    OrganizationMember,
-    /// Any custom relationship.
-    Extension(Vec<u8>),
-}
-
-/// A collection of known claims one can make about their identity.
-///
-/// Note that the claim type itself will always be public, but the data attached
-/// to a claim can be either public or private ("private" as in encrypted with
-/// our `secret` key in our keyset). This allows others to see that I have made
-/// a particular claim (and that others have stamped it) without revealing the
-/// private data in that claim.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ClaimSpec {
-    /// A claim that this identity is mine (always public).
-    ///
-    /// This claim should be made any time a new identity is created.
-    Identity(IdentityID),
-    /// A claim that the name attached to this identity is mine.
-    Name(MaybePrivate<String>),
-    /// A claim that I own an email address
-    Email(MaybePrivate<String>),
-    /// A claim that I own a PGP keypair
-    PGP(MaybePrivate<String>),
-    /// A claim that I reside at a physical address
-    HomeAddress(MaybePrivate<String>),
-    /// A claim that I am in a relationship with another identity, hopefully
-    /// stamped by that identity ='[
-    Relation(Relationship, MaybePrivate<IdentityID>),
-    /// A claim that I am in a relationship with another entity with some form
-    /// of serializable identification (such as a signed certificate, a name,
-    /// etc). Can be used to assert relationships to entities outside of the
-    /// Stamp protocol (although stamps on these relationships must be provided
-    /// by Stamp protocol identities).
-    RelationExtension(Relationship, MaybePrivate<Vec<u8>>),
-    /// Any kind of claim of identity ownership or possession outside the
-    /// defined types.
-    ///
-    /// This can be something like a state-issued identification, ownership over
-    /// an internet domain name, a social networking screen name, etc.
-    ///
-    /// Effectively, this exists as a catch-all and allows for many more types
-    /// of claims than can be thought of here. This could be a JSON string with
-    /// a pre-defined schema stored somewhere. It could be an XML document. It
-    /// could be binary-encoded data.
-    ///
-    /// Anything you can dream up that you wish to claim in any format can exist
-    /// here.
-    Extension(Vec<u8>, MaybePrivate<Vec<u8>>),
-}
-
-/// A type used when signing a claim. Contains all data about the claim except
-/// the stamps.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Claim {
-    /// The unique ID of this claim, created by signing the claim's data in a
-    /// `DateSigner` with our current signing keypair.
-    id: ClaimID,
-    /// The date we created the claim.
-    created: Timestamp,
-    /// The data we're claiming.
-    spec: ClaimSpec,
-}
-
-impl Claim {
-    /// Create a new claim.
-    fn new(id: ClaimID, now: Timestamp, spec: ClaimSpec) -> Self {
-        Self {
-            id,
-            created: now,
-            spec,
-        }
-    }
-}
-
-/// A wrapper around a `Claim` that stores its stamps.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct ClaimContainer {
-    /// The actual claim data
-    claim: Claim,
-    /// Stamps that have been made on our claim.
-    stamps: Vec<AcceptedStamp>,
-}
-
-impl ClaimContainer {
-    /// Create a new claim, sign it with our signing key, and return a container
-    /// that holds the claim (with an empty set of stamps).
-    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, now: Timestamp, spec: ClaimSpec) -> Result<Self> {
-        let datesigner = DateSigner::new(&now, &spec);
-        let serialized = ser::serialize(&datesigner)?;
-        let signature = sign_keypair.sign(master_key, &serialized)?;
-        let claim = Claim::new(ClaimID(signature), now, spec);
-        Ok(Self {
-            claim,
-            stamps: Vec::new(),
-        })
+impl Deref for IdentityID {
+    type Target = SignKeypairSignature;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -487,7 +182,7 @@ impl Identity {
         // sign our claims and their stamps
         for claim in self.claims() {
             // sign each claim's id (which is itself a signature)
-            signatures.push(&claim.claim().id().0);
+            signatures.push(&claim.claim().id());
             // now sign each claim's accepted stamps. the accepted stamp's
             // signature signs the entire stamp, so we can stop there.
             for stamp in claim.stamps() {
@@ -560,9 +255,9 @@ impl Identity {
         for claim in self.claims() {
             let datesigner = DateSigner::new(claim.claim().created(), claim.claim().spec());
             let ser = ser::serialize(&datesigner)?;
-            verify_multi(&claim.claim().id().0, &ser)
+            verify_multi(&claim.claim().id(), &ser)
                 .map_err(|_| {
-                    Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim.claim().id().0.to_hex()))
+                    Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim.claim().id().to_hex()))
                 })?;
         }
 
