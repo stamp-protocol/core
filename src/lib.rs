@@ -95,11 +95,23 @@
 //
 // [Is it stamped?]
 
+use serde_derive::{Serialize, Deserialize};
+
 pub mod error;
 pub mod util;
 pub mod ser;
 pub mod private;
 pub mod key;
-pub mod keychain;
 pub mod identity;
+
+/// Allows identity formats to be versioned so as to not break compatibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum IdentityVersion {
+    V1(identity::Identity),
+}
+
+pub trait VersionedIdentity {
+    /// Converts an identity into a versioned identity.
+    fn version(self) -> IdentityVersion;
+}
 

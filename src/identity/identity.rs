@@ -13,11 +13,15 @@
 
 use crate::{
     error::{Error, Result},
+    identity::{
+        keychain::Keychain,
+    },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
-    keychain::Keychain,
     private::MaybePrivate,
     ser,
     util::Timestamp,
+    IdentityVersion,
+    VersionedIdentity,
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
@@ -564,17 +568,6 @@ impl Identity {
 
         Ok(())
     }
-}
-
-/// Allows identity formats to be versioned so as to not break compatibility.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum IdentityVersion {
-    V1(Identity),
-}
-
-pub trait VersionedIdentity {
-    /// Converts an identity into a versioned identity.
-    fn version(self) -> IdentityVersion;
 }
 
 impl VersionedIdentity for Identity {
