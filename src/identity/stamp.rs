@@ -45,14 +45,13 @@ impl StampSignatureMetadata {
     }
 }
 
-/// A somewhat ephemeral container used to serialize a set of data and sign it.
-/// Includes metadata about the signature (`SignatureEntry`)
-/// A struct used to sign a claim, only used for signing and verification (but
-/// not storage).
+/// A somewhat ephemeral container used specifically for signing a set of
+/// metadata about a stamp along with the claim being stamped. This container is
+/// not stored anywhere, but rather we just store the resulting signature.
 ///
-/// Note that in the case of a *private* claim being signed, the signature
-/// applies to the encrypted entry, not the decrypted entry, allowing peers to
-/// verify that X stamped Y's claim without *knowing* Y's claim.
+/// Note that in the case of a claim with private data being signed, the
+/// signature applies to the encrypted entry, not the decrypted entry, allowing
+/// anyone to verify that X stamped Y's claim without *knowing* Y's claim.
 #[derive(Debug, Clone, Serialize, getset::Getters, getset::MutGetters, getset::Setters)]
 pub struct StampSignatureContainer<'a, 'b> {
     /// The metadata we're signing with this signature.
