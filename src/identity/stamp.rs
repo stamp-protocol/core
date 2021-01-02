@@ -1,4 +1,4 @@
-//! Is it stamped?
+//! A stamp is a signed seal of approval on a [claim](crate::identity::Claim).
 
 use crate::{
     error::Result,
@@ -53,18 +53,17 @@ impl StampSignatureMetadata {
 /// Note that in the case of a *private* claim being signed, the signature
 /// applies to the encrypted entry, not the decrypted entry, allowing peers to
 /// verify that X stamped Y's claim without *knowing* Y's claim.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct StampSignatureContainer {
+#[derive(Debug, Clone, Serialize, getset::Getters, getset::MutGetters, getset::Setters)]
+pub struct StampSignatureContainer<'a, 'b> {
     /// The metadata we're signing with this signature.
-    meta: StampSignatureMetadata,
+    meta: &'a StampSignatureMetadata,
     /// The claim we're signing.
-    claim: Claim,
+    claim: &'b Claim,
 }
 
-impl StampSignatureContainer {
+impl<'a, 'b> StampSignatureContainer<'a, 'b> {
     /// Create a new sig container
-    fn new(meta: StampSignatureMetadata, claim: Claim) -> Self {
+    fn new(meta: &'a StampSignatureMetadata, claim: &'b Claim) -> Self {
         Self {
             meta,
             claim,
@@ -92,7 +91,7 @@ impl Stamp {
     /// private signing key.
     pub fn stamp(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: &Timestamp, claim: &Claim) -> Result<Self> {
         let meta = StampSignatureMetadata::new(stamper.clone(), confidence, now.clone());
-        let container = StampSignatureContainer::new(meta.clone(), claim.clone());
+        let container = StampSignatureContainer::new(&meta, claim);
         let ser = ser::serialize(&container)?;
         let signature = sign_keypair.sign(master_key, &ser)?;
         Ok(Self {
@@ -107,7 +106,7 @@ impl Stamp {
     /// whatever networks means are accessible for the `IdentityID` in the
     /// `signature_meta.stamper` field.
     pub fn verify(&self, sign_keypair: &SignKeypair, claim: &Claim) -> Result<()> {
-        let container = StampSignatureContainer::new(self.signature_meta.clone(), claim.clone());
+        let container = StampSignatureContainer::new(self.signature_meta(), claim);
         let ser = ser::serialize(&container)?;
         sign_keypair.verify(&self.signature, &ser)
     }
