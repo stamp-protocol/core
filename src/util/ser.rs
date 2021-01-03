@@ -72,7 +72,7 @@ pub(crate) mod base64_binary_from_slice {
               T: AsRef<[u8]>,
     {
         if serializer.is_human_readable() {
-            serializer.collect_str(&base64::display::Base64Display::with_config(bytes.as_ref(), base64::URL_SAFE))
+            serializer.serialize_str(&base64::encode_config(bytes.as_ref(), base64::URL_SAFE))
         } else {
             serializer.serialize_bytes(bytes.as_ref())
         }
