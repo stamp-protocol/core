@@ -304,18 +304,19 @@ mod tests {
         let master_key = gen_master_key();
         let now = Timestamp::now();
         let identity = Identity::new(&master_key, now).unwrap();
-        println!("---- ser: yaml");
-        let yaml = serde_yaml::to_string(&identity).unwrap();
-        println!("---- ser: msgpack");
+        let yaml = ser::serialize_human(&identity).unwrap();
         let msgpk = ser::serialize(&identity).unwrap();
+
+        // TODO: build a nice, complete identity and (de)serialize it
 
         println!("---- ser: result: yaml");
         println!("{}", yaml);
         println!("---- ser: result: msgpack");
         println!("{}", base64::encode_config(&msgpk, base64::STANDARD));
 
-        let _identity2: Identity = serde_yaml::from_slice(yaml.as_bytes()).unwrap();
-        let _identity3: Identity = ser::deserialize(&msgpk).unwrap();
+        let identity2: Identity = ser::deserialize_human(yaml.as_bytes()).unwrap();
+        let identity3: Identity = ser::deserialize(&msgpk).unwrap();
+        assert_eq!(ser::serialize_human(&identity2).unwrap(), ser::serialize_human(&identity3).unwrap());
     }
 }
 

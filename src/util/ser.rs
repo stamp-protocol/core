@@ -5,14 +5,20 @@ pub(crate) fn serialize<T: Serialize>(obj: &T) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     obj.serialize(&mut rmp_serde::Serializer::new(&mut buf).with_binary())?;
     Ok(buf)
-    //let ser = rmp_serde::to_vec(obj)?;
-    //Ok(ser)
+}
+
+pub(crate) fn serialize_human<T: Serialize>(obj: &T) -> Result<String> {
+    Ok(serde_yaml::to_string(obj)?)
 }
 
 pub(crate) fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     let obj = T::deserialize(&mut rmp_serde::Deserializer::new(bytes).with_binary())?;
     //let obj = rmp_serde::from_read(bytes)?;
     Ok(obj)
+}
+
+pub(crate) fn deserialize_human<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    Ok(serde_yaml::from_slice(bytes)?)
 }
 
 // NOTE to self (ie, serializer.is_human_readable())
@@ -42,7 +48,7 @@ pub(crate) mod base64_bytes {
         where S: Serializer,
     {
         if serializer.is_human_readable() {
-            serializer.collect_str(&base64::display::Base64Display::with_config(bytes.as_ref(), base64::URL_SAFE))
+            serializer.collect_str(&base64::display::Base64Display::with_config(bytes.as_ref(), base64::STANDARD))
         } else {
             //serde_bytes::serialize(bytes, serializer)
             serializer.serialize_bytes(bytes.as_ref())
@@ -54,7 +60,7 @@ pub(crate) mod base64_bytes {
     {
         if deserializer.is_human_readable() {
             let s = <String>::deserialize(deserializer)?;
-            base64::decode_config(s, base64::URL_SAFE).map_err(de::Error::custom)
+            base64::decode_config(s, base64::STANDARD).map_err(de::Error::custom)
         } else {
             serde_bytes::deserialize(deserializer)
             //let slice = <Vec<u8>>::deserialize(deserializer)?;
@@ -72,7 +78,7 @@ pub(crate) mod base64_binary_from_slice {
               T: AsRef<[u8]>,
     {
         if serializer.is_human_readable() {
-            serializer.serialize_str(&base64::encode_config(bytes.as_ref(), base64::URL_SAFE))
+            serializer.serialize_str(&base64::encode_config(bytes.as_ref(), base64::STANDARD))
         } else {
             serializer.serialize_bytes(bytes.as_ref())
         }
@@ -84,11 +90,35 @@ pub(crate) mod base64_binary_from_slice {
     {
         if deserializer.is_human_readable() {
             let s = <String>::deserialize(deserializer)?;
-            let vec = base64::decode_config(s, base64::URL_SAFE).map_err(de::Error::custom)?;
+            let vec = base64::decode_config(s, base64::STANDARD).map_err(de::Error::custom)?;
             let val = T::try_from_slice(&vec[..]).map_err(|_| de::Error::custom(String::from("bad slice length")))?;
             Ok(val)
         } else {
             T::deserialize(deserializer)
+        }
+    }
+}
+
+pub(crate) mod timestamp {
+    use serde::{Serialize, Serializer, Deserialize, Deserializer};
+
+    pub fn serialize<S>(ts: &chrono::NaiveDateTime, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer,
+    {
+        if serializer.is_human_readable() {
+            ts.serialize(serializer)
+        } else {
+            chrono::naive::serde::ts_nanoseconds::serialize(ts, serializer)
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<chrono::NaiveDateTime, D::Error>
+        where D: Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            chrono::NaiveDateTime::deserialize(deserializer)
+        } else {
+            chrono::naive::serde::ts_nanoseconds::deserialize(deserializer)
         }
     }
 }

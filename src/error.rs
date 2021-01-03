@@ -60,9 +60,13 @@ pub enum Error {
     #[error("attempt to open private object which has no data")]
     PrivateDataMissing,
 
-    /// An error while engaging in serialization.
-    #[error("serialization error")]
-    Serialize(#[from] rmp_serde::encode::Error),
+    /// An error while engaging in msgpack serialization.
+    #[error("msgpack serialization error")]
+    SerializeMsgPack(#[from] rmp_serde::encode::Error),
+
+    /// An error while engaging in yaml serialization.
+    #[error("yaml serialization error")]
+    SerializeYaml(#[from] serde_yaml::Error),
 
     #[cfg(test)]
     #[error("generic serialization error")]

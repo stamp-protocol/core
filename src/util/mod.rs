@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{NaiveDateTime, Utc};
 use crate::error::{Error, Result};
 use serde_derive::{Serialize, Deserialize};
 use sodiumoxide::{
@@ -7,7 +7,7 @@ use sodiumoxide::{
 use std::ops::Deref;
 
 #[macro_use]
-pub(crate) mod ser;
+pub mod ser;
 pub(crate) mod sign;
 
 /// Hash arbitrary data using blake2b
@@ -22,24 +22,24 @@ pub fn hash(data: &[u8]) -> Result<generichash::Digest> {
 
 /// A library-local representation of a time.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Timestamp(DateTime<Utc>);
+pub struct Timestamp(#[serde(with = "crate::util::ser::timestamp")] NaiveDateTime);
 
 impl Timestamp {
     /// Create a new Timestamp from the current date/time.
     pub fn now() -> Self {
-        Self(Utc::now())
+        Self(Utc::now().naive_utc())
     }
 }
 
 impl Deref for Timestamp {
-    type Target = DateTime<Utc>;
+    type Target = NaiveDateTime;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl From<DateTime<Utc>> for Timestamp {
-    fn from(date: DateTime<Utc>) -> Self {
+impl From<NaiveDateTime> for Timestamp {
+    fn from(date: NaiveDateTime) -> Self {
         Self(date)
     }
 }
