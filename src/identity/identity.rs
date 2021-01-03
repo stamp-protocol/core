@@ -5,10 +5,10 @@ use crate::{
         keychain::Keychain,
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
-    ser,
     util::{
         Timestamp,
         sign::{DateSigner, SignedValue},
+        ser,
     },
     IdentityVersion,
     VersionedIdentity,
@@ -297,6 +297,25 @@ mod tests {
         let now = Timestamp::now();
         let identity = Identity::new(&master_key, now).unwrap();
         assert_eq!(identity.verify(), Ok(()));
+    }
+
+    #[test]
+    fn serialize_human() {
+        let master_key = gen_master_key();
+        let now = Timestamp::now();
+        let identity = Identity::new(&master_key, now).unwrap();
+        println!("---- ser: yaml");
+        let yaml = serde_yaml::to_string(&identity).unwrap();
+        println!("---- ser: msgpack");
+        let msgpk = ser::serialize(&identity).unwrap();
+
+        println!("---- ser: result: yaml");
+        println!("{}", yaml);
+        println!("---- ser: result: msgpack");
+        println!("{}", base64::encode_config(&msgpk, base64::STANDARD));
+
+        let _identity2: Identity = serde_yaml::from_slice(yaml.as_bytes()).unwrap();
+        let _identity3: Identity = ser::deserialize(&msgpk).unwrap();
     }
 }
 

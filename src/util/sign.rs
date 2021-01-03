@@ -3,8 +3,10 @@
 use crate::{
     error::Result,
     key::{SecretKey, SignKeypairSignature, SignKeypair},
-    ser,
-    util::Timestamp,
+    util::{
+        Timestamp,
+        ser,
+    },
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};

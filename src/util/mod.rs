@@ -6,7 +6,9 @@ use sodiumoxide::{
 };
 use std::ops::Deref;
 
-pub mod sign;
+#[macro_use]
+pub(crate) mod ser;
+pub(crate) mod sign;
 
 /// Hash arbitrary data using blake2b
 pub fn hash(data: &[u8]) -> Result<generichash::Digest> {

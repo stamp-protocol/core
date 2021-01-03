@@ -6,10 +6,10 @@ use crate::{
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
     private::MaybePrivate,
-    ser,
     util::{
         Timestamp,
         sign::DateSigner,
+        ser,
     },
 };
 use getset;

@@ -7,10 +7,10 @@ use crate::{
         IdentityID,
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
-    ser,
     util::{
         Timestamp,
         sign::DateSigner,
+        ser,
     },
 };
 use getset;

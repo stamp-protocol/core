@@ -98,8 +98,8 @@
 use serde_derive::{Serialize, Deserialize};
 
 pub mod error;
+#[macro_use]
 pub mod util;
-pub mod ser;
 pub mod private;
 pub mod key;
 pub mod identity;
