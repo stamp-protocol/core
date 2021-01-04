@@ -10,6 +10,7 @@ edition = "2018"
 base64 = "0.13.0"
 chrono = { version = "0.4", features = ["serde"] }
 getset = "0.1"
+hex = "0.4.2"
 rmp-serde = "0.15"
 serde = "1.0"
 serde_bytes = "0.11"

@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 pub struct Private<T> {
     #[serde(skip)]
     _phantom: PhantomData<T>,
-    #[serde(with = "crate::util::ser::base64_bytes")]
+    #[serde(with = "crate::util::ser::human_bytes")]
     sealed: Vec<u8>,
     nonce: SecretKeyNonce,
 }

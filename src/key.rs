@@ -33,14 +33,14 @@ impl_try_from_slice!(ed25519::Signature);
 /// A symmetric encryption key nonce
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SecretKeyNonce {
-    #[serde(with = "crate::util::ser::base64_binary_from_slice")]
+    #[serde(with = "crate::util::ser::human_binary_from_slice")]
     Xsalsa20Poly1305(xsalsa20poly1305::Nonce),
 }
 
 /// A symmetric encryption key
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SecretKey {
-    #[serde(with = "crate::util::ser::base64_binary_from_slice")]
+    #[serde(with = "crate::util::ser::human_binary_from_slice")]
     Xsalsa20Poly1305(xsalsa20poly1305::Key),
 }
 
@@ -88,7 +88,7 @@ impl SecretKey {
 /// A signature derived from a signing keypair.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SignKeypairSignature {
-    #[serde(with = "crate::util::ser::base64_binary_from_slice")]
+    #[serde(with = "crate::util::ser::human_binary_from_slice")]
     Ed25519(ed25519::Signature),
 }
 
@@ -104,7 +104,7 @@ impl SignKeypairSignature {
 /// An asymmetric signing keypair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SignKeypair {
-    Ed25519(#[serde(with = "crate::util::ser::base64_binary_from_slice")] ed25519::PublicKey, Option<Private<ed25519::SecretKey>>),
+    Ed25519(#[serde(with = "crate::util::ser::human_binary_from_slice")] ed25519::PublicKey, Option<Private<ed25519::SecretKey>>),
 }
 
 impl SignKeypair {

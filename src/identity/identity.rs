@@ -263,6 +263,14 @@ impl Identity {
 
         Ok(())
     }
+
+    /// Create a new claim from the given data, sign it, and attach it to this
+    /// identity.
+    pub fn make_claim(&mut self, master_key: &SecretKey, now: Timestamp, claim: ClaimSpec) -> Result<()> {
+        let claim_container = ClaimContainer::new(master_key, self.keychain().root(), now, claim)?;
+        self.claims_mut().push(claim_container);
+        Ok(())
+    }
 }
 
 impl VersionedIdentity for Identity {
@@ -308,11 +316,6 @@ mod tests {
         let msgpk = ser::serialize(&identity).unwrap();
 
         // TODO: build a nice, complete identity and (de)serialize it
-
-        println!("---- ser: result: yaml");
-        println!("{}", yaml);
-        println!("---- ser: result: msgpack");
-        println!("{}", base64::encode_config(&msgpk, base64::STANDARD));
 
         let identity2: Identity = ser::deserialize_human(yaml.as_bytes()).unwrap();
         let identity3: Identity = ser::deserialize(&msgpk).unwrap();

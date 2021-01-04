@@ -104,14 +104,56 @@ pub mod private;
 pub mod key;
 pub mod identity;
 
+use error::Result;
+use util::ser;
+
 /// Allows identity formats to be versioned so as to not break compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IdentityVersion {
     V1(identity::Identity),
 }
 
+impl IdentityVersion {
+    /// Serialize this versioned identity into a byte vector.
+    pub fn serialize_binary(&self) -> Result<Vec<u8>> {
+        ser::serialize(self)
+    }
+
+    /// Serialize this versioned identity into a human readable format
+    pub fn serialize_human(&self) -> Result<String> {
+        ser::serialize_human(self)
+    }
+
+    /// Deserialize this versioned identity from a byte vector.
+    pub fn deserialize_binary(slice: &[u8]) -> Result<Self> {
+        ser::deserialize(slice)
+    }
+
+    /// Deserialize this versioned identity from a byte vector.
+    pub fn deserialize_human(slice: &[u8]) -> Result<Self> {
+        ser::deserialize_human(slice)
+    }
+}
+
 pub trait VersionedIdentity {
     /// Converts an identity into a versioned identity.
     fn version(self) -> IdentityVersion;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versioned_serde() {
+        let master_key = key::SecretKey::new_xsalsa20poly1305();
+        let now = util::Timestamp::now();
+        let identity = identity::Identity::new(&master_key, now).unwrap();
+        let version = identity.version();
+        let human = ser::serialize_human(&version).unwrap();
+        let machine = ser::serialize(&version).unwrap();
+        println!("--- ser: human\n{}", human);
+        println!("--- ser: machine\n{}", base64::encode(&machine));
+    }
 }
 
