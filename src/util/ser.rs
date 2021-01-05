@@ -1,3 +1,12 @@
+//! Helpful serialization tools.
+//!
+//! Helpful for our contexts, anyway. Probably really annoying for deserializing
+//! if you're not using this library (or rust in general). But since there are
+//! no serialization formats what provide a human-readable format but that can
+//! also represent binary data either via hexadecimal or base64 THAT ARE ALSO
+//! readily supported by rust, we kind of have to take things into our own hands
+//! here and just make some serialization calls.
+
 use crate::error::Result;
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -20,10 +29,6 @@ pub(crate) fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 pub(crate) fn deserialize_human<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     Ok(serde_yaml::from_slice(bytes)?)
 }
-
-// NOTE to self (ie, serializer.is_human_readable())
-// https://github.com/serde-rs/json/issues/360#issuecomment-353752998
-// https://docs.serde.rs/serde/trait.Serializer.html#method.is_human_readable
 
 pub trait TryFromSlice {
     type Item;

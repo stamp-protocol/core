@@ -1,3 +1,9 @@
+//! This module holds the identity structures and methods.
+//!
+//! Here we define what an identity looks like and how all the pieces
+//! ([claims](crate::identity::claim), [stamps](crate::identity::stamp), and
+//! [forwards](crate::identity::Forward)) all tie together.
+
 use crate::{
     error::{Error, Result},
     identity::{
@@ -215,11 +221,12 @@ impl Identity {
     }
 
     /// Verify that the portions of this identity that can be verified, mainly
-    /// by using the identity's public signing key.
+    /// by using the identity's public signing key (or key*s* if we have revoked
+    /// keys).
     ///
-    /// Specifically, we verify our identity's ID, the signatures we've made on
-    /// our claims (stored in each claim's ID), and the identity's extra data
-    /// entries.
+    /// Specifically, we verify our identity's ID, our keychain, the signatures
+    /// we've made on our claims (stored in each claim's ID), and the identity's
+    /// extra data entries.
     ///
     /// The idea here is that we can't verify the stamps on our claims inside
     /// the identity (we need the public keys of all the signers for that, which

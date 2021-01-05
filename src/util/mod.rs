@@ -1,3 +1,5 @@
+//! Utilities. OBVIOUSLY.
+
 use chrono::{DateTime, NaiveDateTime, Utc};
 use crate::error::{Error, Result};
 use serde_derive::{Serialize, Deserialize};
@@ -20,7 +22,22 @@ pub fn hash(data: &[u8]) -> Result<generichash::Digest> {
         .map_err(|_| Error::CryptoHashStateDigestError)
 }
 
-/// A library-local representation of a time.
+/// A library-local representation of a time. I can hear you groaning already:
+/// "Oh my god, why make a custom date/time object?!" Yes, I was once just like
+/// you...young, and foolish. But hear me out:
+///
+/// - We want to the the Right Thing when serializing, and this is often much
+/// easier with a wrapper type.
+/// - If the underlying datetime object needs to change, we can do it in one
+/// place instead of fifty places now. You'd think this wouldn't be an issue,
+/// but some places where Stamp might want to run use their own serializers
+/// instead of serde, so we might need to do some tricky things with features.
+/// - Any place that takes a `Timestamp` will receive any value that can be
+/// converted into a `Timestamp` via `From/Into` which we have implemented for
+/// [DateTime<Utc>](chrono::DateTime) and [NaiveDateTime](chrono::NaiveDateTime),
+/// and you can always get the underlying type via a `&timestamp` deref.
+///
+/// So put down the pitchfork.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Timestamp(#[serde(with = "crate::util::ser::timestamp")] DateTime<Utc>);
 

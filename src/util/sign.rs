@@ -1,4 +1,4 @@
-//! Includes some utilities helpful for signing things.
+//! Includes some utilities helpful for generating signatures.
 
 use crate::{
     error::Result,

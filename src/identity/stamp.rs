@@ -15,12 +15,26 @@ use crate::{
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
+use std::ops::Deref;
 
-/// A set of metadata that is signed when a stamp is created that is stored
+/// A unique identifier for stamps.
+///
+/// A stamp is a signature on a claim, and this ID is that signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StampID(SignKeypairSignature);
+
+impl Deref for StampID {
+    type Target = SignKeypairSignature;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// A set of data that is signed when a stamp is created that is stored
 /// alongside the signature itself.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct StampSignatureMetadata {
+pub struct StampEntry {
     /// The ID of the identity that is stamping.
     stamper: IdentityID,
     /// How much confidence the stamper has that the claim being stamped is
@@ -30,41 +44,46 @@ pub struct StampSignatureMetadata {
     /// confidence" as otherwise the stamp wouldn't be occuring in the first
     /// place.
     confidence: u8,
-    /// Filled in by the stamper, the date the claim was stamped
+    /// Filled in by the stamper, the date the claim was stamped.
     date_signed: Timestamp,
+    /// The date this stamp expires (if at all). The stamper can choose to set
+    /// this expiration date if they feel their stamp is only good for a set
+    /// period of time.
+    expires: Option<Timestamp>,
 }
 
-impl StampSignatureMetadata {
-    /// Create a new stamp signature metadata object.
-    pub fn new(stamper: IdentityID, confidence: u8, date_signed: Timestamp) -> Self {
+impl StampEntry {
+    /// Create a new stamp entry.
+    pub fn new<T: Into<Timestamp>>(stamper: IdentityID, confidence: u8, date_signed: Timestamp, expires: Option<T>) -> Self {
         Self {
             stamper,
             confidence,
             date_signed,
+            expires: expires.map(|x| x.into()),
         }
     }
 }
 
-/// A somewhat ephemeral container used specifically for signing a set of
-/// metadata about a stamp along with the claim being stamped. This container is
-/// not stored anywhere, but rather we just store the resulting signature.
+/// A somewhat ephemeral container used specifically for signing a stamp entry
+/// along with the claim being stamped. This container is not stored anywhere,
+/// but rather we just store the resulting signature.
 ///
 /// Note that in the case of a claim with private data being signed, the
 /// signature applies to the encrypted entry, not the decrypted entry, allowing
 /// anyone to verify that X stamped Y's claim without *knowing* Y's claim.
 #[derive(Debug, Clone, Serialize, getset::Getters, getset::MutGetters, getset::Setters)]
 pub struct StampSignatureContainer<'a, 'b> {
-    /// The metadata we're signing with this signature.
-    meta: &'a StampSignatureMetadata,
+    /// The stamp entry we're signing with this signature.
+    entry: &'a StampEntry,
     /// The claim we're signing.
     claim: &'b Claim,
 }
 
 impl<'a, 'b> StampSignatureContainer<'a, 'b> {
     /// Create a new sig container
-    fn new(meta: &'a StampSignatureMetadata, claim: &'b Claim) -> Self {
+    fn new(entry: &'a StampEntry, claim: &'b Claim) -> Self {
         Self {
-            meta,
+            entry,
             claim,
         }
     }
@@ -72,15 +91,18 @@ impl<'a, 'b> StampSignatureContainer<'a, 'b> {
 
 /// A stamp of approval on a claim.
 ///
+/// Effectively, this is a signature and a collection of stamp data.
+///
 /// This is created by the stamper, and it is up to the claim owner to save the
-/// stamp to their identity (as well as to fill in the `recorded` date).
+/// stamp to their identity (using the `AcceptedStamp` object).
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Stamp {
-    /// The signature metadata.
-    signature_meta: StampSignatureMetadata,
-    /// Signature of the attached `signature_entry` data.
-    signature: SignKeypairSignature,
+    /// This stamp's signature, and by remarkable coincidence, also its unique
+    /// identifier.
+    id: StampID,
+    /// The stamp entry, containing all the actual stamp data.
+    entry: StampEntry,
 }
 
 impl Stamp {
@@ -88,14 +110,14 @@ impl Stamp {
     ///
     /// This must be created by the identity validating the claim, using their
     /// private signing key.
-    pub fn stamp(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: &Timestamp, claim: &Claim) -> Result<Self> {
-        let meta = StampSignatureMetadata::new(stamper.clone(), confidence, now.clone());
-        let container = StampSignatureContainer::new(&meta, claim);
+    pub fn stamp<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: &Timestamp, claim: &Claim, expires: Option<T>) -> Result<Self> {
+        let entry = StampEntry::new(stamper.clone(), confidence, now.clone(), expires);
+        let container = StampSignatureContainer::new(&entry, claim);
         let ser = ser::serialize(&container)?;
         let signature = sign_keypair.sign(master_key, &ser)?;
         Ok(Self {
-            signature_meta: meta,
-            signature,
+            id: StampID(signature),
+            entry: entry,
         })
     }
 
@@ -103,11 +125,11 @@ impl Stamp {
     ///
     /// Must have the stamper's public key, which can be obtained by querying
     /// whatever networks means are accessible for the `IdentityID` in the
-    /// `signature_meta.stamper` field.
+    /// `entry.stamper` field.
     pub fn verify(&self, sign_keypair: &SignKeypair, claim: &Claim) -> Result<()> {
-        let container = StampSignatureContainer::new(self.signature_meta(), claim);
+        let container = StampSignatureContainer::new(self.entry(), claim);
         let ser = ser::serialize(&container)?;
-        sign_keypair.verify(&self.signature, &ser)
+        sign_keypair.verify(&self.id, &ser)
     }
 }
 
@@ -144,5 +166,41 @@ impl AcceptedStamp {
             signature,
         })
     }
+}
+
+/// A unique identifier for a stamp revocation.
+///
+/// A stamp is a signature on a claim, and this ID is that signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StampRevocationID(SignKeypairSignature);
+
+impl Deref for StampRevocationID {
+    type Target = SignKeypairSignature;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// An object published when a stamper wishes to revoke their stamp.
+///
+/// If this is not signed by the same identity that made the original stamp, it
+/// must be ignored. Note, however, that the original stamper's signing key may
+/// have changed since then, so we must look through their revoked keys when
+/// checking if this revocation is valid. If any of their signing keys match the
+/// original stamp, then it's a valid revocation.
+///
+/// Effectively, if the same identity can verify both the original stamp and the
+/// revocation, then the revocation is valid.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct StampRevocation {
+    /// The unique ID of this recovation, which also happens to be the signature
+    /// of the revocation.
+    id: StampRevocationID,
+    /// The identity ID of the original stamper (which must match the identity
+    /// ID of the revoker).
+    stamper: IdentityID,
+    /// The ID of the stamp we're revoking.
+    stamp_id: StampID,
 }
 

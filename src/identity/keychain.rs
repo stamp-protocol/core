@@ -1,3 +1,17 @@
+//! The keychain holds all of the keys, active or revoked, for an idntity. It
+//! stores keys not only used for the identity itself, but any kind of
+//! cryptographic keys the identity holds wishes to use.
+//!
+//! For instance, they might store an "email" keypair and request that others
+//! encrypt emails to them via that key. They might store their dogecoin wallet
+//! private keys in the keychain. They could even store the key to their heart
+//! (as long as it can be represented cryptographically).
+//!
+//! Because the keychain stores even revoked keys, it's possible to verify old
+//! signatures made with those keys even if they aren't in active use anymore.
+//! This gives identities a longevity that wouldn't be possible if they were
+//! tied to just a single keypair.
+
 use crate::{
     key::{SecretKey, SignKeypairSignature, SignKeypair, CryptoKeypair},
     private::Private,

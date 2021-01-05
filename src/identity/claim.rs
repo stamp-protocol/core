@@ -1,3 +1,11 @@
+//! A claim is any information we can provide to distinguish our identity. This
+//! can be as simple as "this identity is mine" (which is the default claim and
+//! always exists in any identity) or "this email is mine" to something like "I
+//! have blonde hair, blue eyes, and a cute little button nose."
+//!
+//! However, a claim by itself is not meaningful or useful unless it is
+//! [stamped](crate::identity::stamp) by someone withing your trust network.
+
 use crate::{
     error::Result,
     identity::{
