@@ -18,11 +18,24 @@ use crate::{
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
+use std::ops::Deref;
+
+/// A unique identifier for a key revocation. This is a signature of the
+/// revocation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RevocationID(SignKeypairSignature);
+
+impl Deref for RevocationID {
+    type Target = SignKeypairSignature;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 /// Why we are deprecating a key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RevocationReason {
-    /// No reason.
+    /// No reason. Feeling cute today, might revoke my keys, IDK.
     Unspecified,
     /// Replacing this key with another.
     Superseded,
@@ -36,8 +49,8 @@ pub enum RevocationReason {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Revocation {
-    /// Revocation signature.
-    signature: SignKeypairSignature,
+    /// Revocation signature, and also unique ID for this revocation.
+    id: RevocationID,
     /// The reason we're deprecating this key.
     reason: RevocationReason,
 }
@@ -49,7 +62,7 @@ pub enum Key {
     Sign(SignKeypair),
     /// An asymmetric crypto key.
     Crypto(CryptoKeypair),
-    /// Hides our private claim data
+    /// Hides our private data (including private claims).
     Secret(Private<SecretKey>),
 }
 
@@ -79,18 +92,36 @@ impl Key {
     }
 }
 
-/// Holds a subkey, signed by the identity's root key. It also stores whether or
-/// not the key has been revoked.
+/// A unique identifier for a key. This is a signature of the key itself.
+///
+/// A bit different from other IDs in that it must be regenerated when the root
+/// keypair changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubkeyID(SignKeypairSignature);
+
+impl Deref for SubkeyID {
+    type Target = SignKeypairSignature;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Holds a subkey's id/signature (signed by the root key), its key data, and an
+/// optional revocation.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Subkey {
-    /// The signature of this subkey's public key (unless this is a secret key,
-    /// in which case we sign the encrypted secret key).
-    signature: SignKeypairSignature,
+    /// They subkey's unique ID, and signature of its *public* contents.
+    ///
+    /// This must be regeneroned when the root keypair changes. (I feel...
+    /// perfect)
+    id: SubkeyID,
     /// The key itself.
+    ///
+    /// Alright, Parker, shut up. Thank you, Parker. Shut up. Thank you.
     key: Key,
-    /// Allows deprecation of a key.
-    revoked: Option<Revocation>,
+    /// Allows revocation of a key.
+    revocation: Option<Revocation>,
 }
 
 /// Holds the keys for our identity.
@@ -109,7 +140,10 @@ pub struct Subkey {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Keychain {
-    /// The account's root signing key.
+    /// The identity's root signing key. Does not need an id or revocations
+    /// because a key signing itself would be ridiculous and the moment it is
+    /// revoked it joins the other subkeys, so there's no need to wrap it in
+    /// the subkey object.
     root: SignKeypair,
     /// Holds our subkeys, signed with our root keypair.
     subkeys: Vec<Subkey>,

@@ -182,7 +182,7 @@ impl Identity {
 
         // sign the signatures of all our subkeys
         for subkey in self.keychain().subkeys() {
-            signatures.push(&subkey.signature());
+            signatures.push(&subkey.id());
         }
 
         // sign our claims and their stamps
