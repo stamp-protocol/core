@@ -105,25 +105,27 @@ pub(crate) mod human_binary_from_slice {
 }
 
 pub(crate) mod timestamp {
+    use chrono::{DateTime, Utc};
     use serde::{Serialize, Serializer, Deserialize, Deserializer};
 
-    pub fn serialize<S>(ts: &chrono::NaiveDateTime, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(ts: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer,
     {
         if serializer.is_human_readable() {
             ts.serialize(serializer)
         } else {
-            chrono::naive::serde::ts_nanoseconds::serialize(ts, serializer)
+            chrono::naive::serde::ts_nanoseconds::serialize(&ts.naive_utc(), serializer)
         }
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<chrono::NaiveDateTime, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
         where D: Deserializer<'de>,
     {
         if deserializer.is_human_readable() {
-            chrono::NaiveDateTime::deserialize(deserializer)
+            chrono::DateTime::deserialize(deserializer)
         } else {
-            chrono::naive::serde::ts_nanoseconds::deserialize(deserializer)
+            let naive = chrono::naive::serde::ts_nanoseconds::deserialize(deserializer)?;
+            Ok(DateTime::<Utc>::from_utc(naive, Utc))
         }
     }
 }

@@ -1,4 +1,4 @@
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use crate::error::{Error, Result};
 use serde_derive::{Serialize, Deserialize};
 use sodiumoxide::{
@@ -22,24 +22,30 @@ pub fn hash(data: &[u8]) -> Result<generichash::Digest> {
 
 /// A library-local representation of a time.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Timestamp(#[serde(with = "crate::util::ser::timestamp")] NaiveDateTime);
+pub struct Timestamp(#[serde(with = "crate::util::ser::timestamp")] DateTime<Utc>);
 
 impl Timestamp {
     /// Create a new Timestamp from the current date/time.
     pub fn now() -> Self {
-        Self(Utc::now().naive_utc())
+        Self(Utc::now())
     }
 }
 
 impl Deref for Timestamp {
-    type Target = NaiveDateTime;
+    type Target = DateTime<Utc>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 impl From<NaiveDateTime> for Timestamp {
-    fn from(date: NaiveDateTime) -> Self {
+    fn from(naive: NaiveDateTime) -> Self {
+        Self(DateTime::<Utc>::from_utc(naive, Utc))
+    }
+}
+
+impl From<DateTime<Utc>> for Timestamp {
+    fn from(date: DateTime<Utc>) -> Self {
         Self(date)
     }
 }
