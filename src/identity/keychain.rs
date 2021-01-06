@@ -13,12 +13,28 @@
 //! tied to just a single keypair.
 
 use crate::{
+    error::Result,
     key::{SecretKey, SignKeypairSignature, SignKeypair, CryptoKeypair},
     private::Private,
+    util::ser,
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
+
+/// A unique identifier for a key. This is a signature of the key itself.
+///
+/// A bit different from other IDs in that it must be regenerated when the root
+/// keypair changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyID(SignKeypairSignature);
+
+impl Deref for KeyID {
+    type Target = SignKeypairSignature;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 /// A unique identifier for a key revocation. This is a signature of the
 /// revocation.
@@ -51,6 +67,8 @@ pub enum RevocationReason {
 pub struct Revocation {
     /// Revocation signature, and also unique ID for this revocation.
     id: RevocationID,
+    /// The permanent ID of the key we are revoking.
+    key_id: KeyID,
     /// The reason we're deprecating this key.
     reason: RevocationReason,
 }
@@ -64,11 +82,17 @@ pub enum Key {
     Crypto(CryptoKeypair),
     /// Hides our private data (including private claims).
     Secret(Private<SecretKey>),
+    /// An extension type, can be used to save any kind of public/secret keypair
+    /// that isn't covered by the stamp system.
+    ExtensionKeypair(Vec<u8>, Private<Vec<u8>>),
+    /// An extension type, can be used to save any kind of key that isn't
+    /// covered by the stamp system.
+    ExtensionSecret(Private<Vec<u8>>),
 }
 
 impl Key {
     /// Returns the `SignKeypair` if this is a signing key.
-    pub fn sign(&self) -> Option<SignKeypair> {
+    pub fn as_signkey(&self) -> Option<SignKeypair> {
         match self {
             Self::Sign(ref x) => Some(x.clone()),
             _ => None,
@@ -76,7 +100,7 @@ impl Key {
     }
 
     /// Returns the `SignKeypair` if this is a signing key.
-    pub fn crypto(&self) -> Option<CryptoKeypair> {
+    pub fn as_cryptokey(&self) -> Option<CryptoKeypair> {
         match self {
             Self::Crypto(ref x) => Some(x.clone()),
             _ => None,
@@ -84,25 +108,11 @@ impl Key {
     }
 
     /// Returns the `SignKeypair` if this is a signing key.
-    pub fn secret(&self) -> Option<Private<SecretKey>> {
+    pub fn as_secretkey(&self) -> Option<Private<SecretKey>> {
         match self {
             Self::Secret(ref x) => Some(x.clone()),
             _ => None,
         }
-    }
-}
-
-/// A unique identifier for a key. This is a signature of the key itself.
-///
-/// A bit different from other IDs in that it must be regenerated when the root
-/// keypair changes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SubkeyID(SignKeypairSignature);
-
-impl Deref for SubkeyID {
-    type Target = SignKeypairSignature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 
@@ -111,17 +121,48 @@ impl Deref for SubkeyID {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Subkey {
-    /// They subkey's unique ID, and signature of its *public* contents.
-    ///
-    /// This must be regeneroned when the root keypair changes. (I feel...
-    /// perfect)
-    id: SubkeyID,
+    /// They subkey's unique ID, and signature of its *public* contents, signed
+    /// by the identity's *current* root keypair (and forevermore unchanged).
+    id: KeyID,
+    /// The signature of the key's *public* contents, always kept up to date
+    /// with the *latest* root signing key...this must be regeneroned when the
+    /// root keypair changes (I feel.....perfect)
+    signature: SignKeypairSignature,
     /// The key itself.
     ///
     /// Alright, Parker, shut up. Thank you, Parker. Shut up. Thank you.
     key: Key,
     /// Allows revocation of a key.
     revocation: Option<Revocation>,
+}
+
+impl Subkey {
+    /// Create a new subkey, signed by our root key.
+    fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, key: Key) -> Result<Self> {
+        // create a blank signature we're going to use TEMPORARILY for the id
+        // and signature fields.
+        //
+        // fake signature. Sad!
+        let blank_signature = SignKeypairSignature::blank(sign_keypair);
+        let mut subkey = Self {
+            id: KeyID(blank_signature.clone()),
+            signature: blank_signature,
+            key,
+            revocation: None,
+        };
+        // now, sign our key and update our key's id
+        subkey.sign(master_key, sign_keypair)?;
+        subkey.set_id(KeyID(subkey.signature().clone()));
+        Ok(subkey)
+    }
+
+    /// Sign this subkey with the given signing key.
+    fn sign(&mut self, master_key: &SecretKey, sign_keypair: &SignKeypair) -> Result<()> {
+        let serialized = ser::serialize(self.key())?;
+        let signature = sign_keypair.sign(master_key, &serialized)?;
+        self.set_signature(signature);
+        Ok(())
+    }
 }
 
 /// Holds the keys for our identity.
@@ -151,7 +192,7 @@ pub struct Keychain {
 
 impl Keychain {
     /// Create a new keychain
-    pub fn new(root_keypair: SignKeypair) -> Self {
+    pub(crate) fn new(root_keypair: SignKeypair) -> Self {
         Self {
             root: root_keypair,
             subkeys: Vec::new(),
@@ -161,7 +202,7 @@ impl Keychain {
     /// Grab all signing subkeys.
     pub fn subkeys_sign(&self) -> Vec<SignKeypair> {
         self.subkeys.iter()
-            .map(|x| x.key().sign())
+            .map(|x| x.key().as_signkey())
             .filter(|x| x.is_some())
             .map(|x| x.unwrap())
             .collect::<Vec<_>>()
@@ -170,10 +211,46 @@ impl Keychain {
     /// Grab all crypto subkeys.
     pub fn subkeys_crypto(&self) -> Vec<CryptoKeypair> {
         self.subkeys.iter()
-            .map(|x| x.key().crypto())
+            .map(|x| x.key().as_cryptokey())
             .filter(|x| x.is_some())
             .map(|x| x.unwrap())
             .collect::<Vec<_>>()
+    }
+
+    /// Add a new subkey to the keychain (and sign it).
+    pub(crate) fn add_subkey(self, master_key: &SecretKey, key: Key) -> Result<Self> {
+        let Self { root, mut subkeys } = self;
+        subkeys.push(Subkey::new(master_key, &root, key)?);
+        Ok(Self {
+            root,
+            subkeys,
+        })
+    }
+
+    /// Make sure all our subkeys are signed with our current root keypair.
+    pub(crate) fn sign_subkeys(self, master_key: &SecretKey) -> Result<Self> {
+        let Self { root, mut subkeys } = self;
+        for subkey in &mut subkeys {
+            subkey.sign(master_key, &root)?;
+        }
+        Ok(Self {
+            root,
+            subkeys,
+        })
+    }
+
+    /// Replace our root signing key.
+    ///
+    /// This moves the current root key into the subkeys, revokes it, and
+    /// updates the signature on all the subkeys (including the old root key).
+    pub(crate) fn set_root_key(self, master_key: &SecretKey, new_root_keypair: SignKeypair) -> Result<Self> {
+        let Self { root: old_root, mut subkeys } = self;
+        subkeys.push(Subkey::new(master_key, &new_root_keypair, Key::Sign(old_root))?);
+        let keychain = Self {
+            root: new_root_keypair,
+            subkeys,
+        };
+        keychain.sign_subkeys(master_key)
     }
 }
 

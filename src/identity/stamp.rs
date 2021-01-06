@@ -54,11 +54,11 @@ pub struct StampEntry {
 
 impl StampEntry {
     /// Create a new stamp entry.
-    pub fn new<T: Into<Timestamp>>(stamper: IdentityID, confidence: u8, date_signed: Timestamp, expires: Option<T>) -> Self {
+    fn new<T: Into<Timestamp>>(stamper: IdentityID, confidence: u8, date_signed: T, expires: Option<T>) -> Self {
         Self {
             stamper,
             confidence,
-            date_signed,
+            date_signed: date_signed.into(),
             expires: expires.map(|x| x.into()),
         }
     }
@@ -110,8 +110,8 @@ impl Stamp {
     ///
     /// This must be created by the identity validating the claim, using their
     /// private signing key.
-    pub fn stamp<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: &Timestamp, claim: &Claim, expires: Option<T>) -> Result<Self> {
-        let entry = StampEntry::new(stamper.clone(), confidence, now.clone(), expires);
+    pub fn stamp<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: T, claim: &Claim, expires: Option<T>) -> Result<Self> {
+        let entry = StampEntry::new(stamper.clone(), confidence, now, expires);
         let container = StampSignatureContainer::new(&entry, claim);
         let ser = ser::serialize(&container)?;
         let signature = sign_keypair.sign(master_key, &ser)?;
@@ -181,6 +181,32 @@ impl Deref for StampRevocationID {
     }
 }
 
+/// An object that contains a stamp revocation's inner data. Its signature is
+/// what gives the revocation its ID.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct StampRevocationEntry {
+    /// The identity ID of the original stamper (which must match the identity
+    /// ID of the revoker).
+    stamper: IdentityID,
+    /// The ID of the stamp we're revoking.
+    stamp_id: StampID,
+    /// Date revoked
+    date_revoked: Timestamp,
+}
+
+impl StampRevocationEntry {
+    /// Create a new stamp revocaiton entry.
+    fn new(stamper: IdentityID, stamp_id: StampID, date_revoked: Timestamp) -> Self {
+        Self {
+            stamper,
+            stamp_id,
+            date_revoked,
+        }
+    }
+}
+
+
 /// An object published when a stamper wishes to revoke their stamp.
 ///
 /// If this is not signed by the same identity that made the original stamp, it
@@ -197,10 +223,20 @@ pub struct StampRevocation {
     /// The unique ID of this recovation, which also happens to be the signature
     /// of the revocation.
     id: StampRevocationID,
-    /// The identity ID of the original stamper (which must match the identity
-    /// ID of the revoker).
-    stamper: IdentityID,
-    /// The ID of the stamp we're revoking.
-    stamp_id: StampID,
+    /// Holds the revocations inner data.
+    entry: StampRevocationEntry,
+}
+
+impl StampRevocation {
+    /// Create a new stamp revocation
+    pub fn new<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: IdentityID, stamp_id: StampID, date_revoked: T) -> Result<Self> {
+        let entry = StampRevocationEntry::new(stamper, stamp_id, date_revoked.into());
+        let serialized = ser::serialize(&entry)?;
+        let sig = sign_keypair.sign(master_key, &serialized)?;
+        Ok(Self {
+            id: StampRevocationID(sig),
+            entry,
+        })
+    }
 }
 

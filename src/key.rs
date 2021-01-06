@@ -99,6 +99,28 @@ impl SignKeypairSignature {
             Self::Ed25519(ref x) => sodiumoxide::hex::encode(x),
         }
     }
+
+    /// Given a signing keypair, return a blank (ie, 0x0000000000...) signature
+    /// that matches the key type.
+    ///
+    /// This is useful when an object NEEDS a signature to be constructed, but
+    /// there is a method on that object specifically for signing itself. So, do
+    /// we duplicate the signing code in two places? Or do we give the object a
+    /// blank signature just to construct it, then call the signature method
+    /// once it's constructed? I prefer the latter.
+    pub fn blank(sign_keypair: &SignKeypair) -> Self {
+        match sign_keypair {
+            SignKeypair::Ed25519(..) => Self::Ed25519(ed25519::Signature::from_slice(vec![0; ed25519::SIGNATUREBYTES].as_slice()).unwrap()),
+        }
+    }
+}
+
+impl AsRef<[u8]> for SignKeypairSignature {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Ed25519(sig) => sig.as_ref(),
+        }
+    }
 }
 
 /// An asymmetric signing keypair.
@@ -347,6 +369,14 @@ mod tests {
         let saltbytes: [u8; argon2id13::SALTBYTES] = salt.as_ref()[0..argon2id13::SALTBYTES].try_into().unwrap();
         let master_key = derive_master_key("ZONING IS COMMUNISM".as_bytes(), &saltbytes).unwrap();
         assert_eq!(master_key.as_ref(), &[191, 236, 76, 249, 25, 39, 71, 203, 144, 167, 11, 131, 221, 21, 4, 194, 6, 176, 163, 123, 238, 170, 148, 29, 236, 186, 130, 157, 51, 202, 207, 169]);
+    }
+
+    #[test]
+    fn blank_signature() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        let blank = SignKeypairSignature::blank(&sign_keypair);
+        assert_eq!(blank.as_ref(), vec![0; ed25519::SIGNATUREBYTES].as_slice());
     }
 }
 

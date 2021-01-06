@@ -7,14 +7,6 @@ use thiserror::Error;
 /// which an expectation is not met or a problem occurs.
 #[derive(Error, Debug)]
 pub enum Error {
-    /// An error while engaging in deserialization.
-    #[error("deserialization error")]
-    Deserialize(#[from] rmp_serde::decode::Error),
-
-    /// An IO/net error
-    #[error("io error {0:?}")]
-    IoError(#[from] std::io::Error),
-
     /// Trying to use an xsalsa20poly1305 (or other) nonce with a
     /// NON-xsalsa20poly1305 algo, or vice versa, etc.
     #[error("cryptographic algorithm mismatch")]
@@ -52,9 +44,21 @@ pub enum Error {
     #[error("the given signature/public key/data combo does not verify")]
     CryptoSignatureVerificationFailed,
 
+    /// An error while engaging in deserialization.
+    #[error("deserialization error")]
+    Deserialize(#[from] rmp_serde::decode::Error),
+
+    /// The claim being operated on wasn't found
+    #[error("identity claim not found")]
+    IdentityClaimNotFound,
+
     /// Verification of an identity failed.
     #[error("Verification of identity failed: {0}")]
     IdentityVerificationFailed(String),
+
+    /// An IO/net error
+    #[error("io error {0:?}")]
+    IoError(#[from] std::io::Error),
 
     /// Tried to open a private container that has no data
     #[error("attempt to open private object which has no data")]

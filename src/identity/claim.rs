@@ -143,7 +143,8 @@ pub struct ClaimContainer {
 impl ClaimContainer {
     /// Create a new claim, sign it with our signing key, and return a container
     /// that holds the claim (with an empty set of stamps).
-    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, now: Timestamp, spec: ClaimSpec) -> Result<Self> {
+    pub fn new<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, now: T, spec: ClaimSpec) -> Result<Self> {
+        let now: Timestamp = now.into();
         let datesigner = DateSigner::new(&now, &spec);
         let serialized = ser::serialize(&datesigner)?;
         let signature = sign_keypair.sign(master_key, &serialized)?;

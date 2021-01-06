@@ -7,8 +7,9 @@
 use crate::{
     error::{Error, Result},
     identity::{
-        claim::{ClaimSpec, ClaimContainer},
-        keychain::Keychain,
+        claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
+        keychain::{Key, Keychain},
+        stamp::{StampID, Stamp, StampRevocation},
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
     util::{
@@ -161,10 +162,10 @@ impl Identity {
         let identity_claim = ClaimContainer::new(master_key, &root_keypair, now.clone(), ClaimSpec::Identity(id.clone()))?;
         let keychain = Keychain::new(root_keypair);
         let extra_data = IdentityExtraData::new();
-        let temporary_root_signature = keychain.root().sign(master_key, "temporary".as_bytes())?;
+        let blank_root_signature = SignKeypairSignature::blank(keychain.root());
         let mut identity = Self {
             id,
-            root_signature: temporary_root_signature,
+            root_signature: blank_root_signature,
             created: now,
             keychain,
             claims: vec![identity_claim],
@@ -233,8 +234,7 @@ impl Identity {
     /// must not be stored alongside the signatures).
     pub fn verify(&self) -> Result<()> {
         // verify our root signature
-        let sub_signatures = self.sub_signatures();
-        self.keychain().root().verify(self.root_signature(), &ser::serialize(&sub_signatures)?)?;
+        self.keychain().root().verify(self.root_signature(), &ser::serialize(&self.sub_signatures())?)?;
 
         // a helper that tries to verify a signature with all the signing keys
         // in the keychain, even the revoked ones.
@@ -273,10 +273,49 @@ impl Identity {
 
     /// Create a new claim from the given data, sign it, and attach it to this
     /// identity.
-    pub fn make_claim(&mut self, master_key: &SecretKey, now: Timestamp, claim: ClaimSpec) -> Result<()> {
+    pub fn make_claim<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, claim: ClaimSpec) -> Result<Self> {
         let claim_container = ClaimContainer::new(master_key, self.keychain().root(), now, claim)?;
         self.claims_mut().push(claim_container);
-        Ok(())
+        Ok(self)
+    }
+
+    /// Remove a claim from this identity, including any stamps it has received.
+    pub fn remove_claim(mut self, id: &ClaimID) -> Result<Self> {
+        let exists = self.claims().iter().find(|x| x.claim().id() == id);
+        if exists.is_none() {
+            Err(Error::IdentityClaimNotFound)?;
+        }
+        self.claims_mut().retain(|x| x.claim().id() != id);
+        Ok(self)
+    }
+
+    /// Set the root signing key on this identity.
+    pub fn set_root_key(mut self, master_key: &SecretKey, new_root_keypair: SignKeypair) -> Result<Self> {
+        // TODO: instead of cloning, deconstruct and reconstruct identity
+        self.set_keychain(self.keychain().clone().set_root_key(master_key, new_root_keypair)?);
+        Ok(self)
+    }
+
+    /// Add a new subkey to our identity.
+    pub fn add_subkey(mut self, master_key: &SecretKey, key: Key) -> Result<Self> {
+        // TODO: instead of cloning, deconstruct and reconstruct identity
+        self.set_keychain(self.keychain().clone().add_subkey(master_key, key)?);
+        Ok(self)
+    }
+
+    /// Stamp a claim with our identity.
+    pub fn stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, confidence: u8, now: T, claim: &Claim, expires: Option<T>) -> Result<Stamp> {
+        Stamp::stamp(master_key, self.keychain().root(), self.id(), confidence, now, claim, expires)
+    }
+
+    /// Revoke a stamp we've made.
+    ///
+    /// For instance if you've stamped the identity for the Miner 49er but it
+    /// turns out it was just Hank the caretaker all along (who was trying to
+    /// scare people away from the mines so he could have the oil reserves to
+    /// himself), you might wish to revoke your stamp on that identity.
+    pub fn revoke_stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, stamp_id: StampID, date_revoked: T) -> Result<StampRevocation> {
+        StampRevocation::new(master_key, self.keychain().root(), self.id().clone(), stamp_id, date_revoked)
     }
 }
 
