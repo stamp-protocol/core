@@ -52,6 +52,10 @@ pub enum Error {
     #[error("identity claim not found")]
     IdentityClaimNotFound,
 
+    /// The subkey being operated on wasn't found
+    #[error("identity subkey not found")]
+    IdentitySubkeyNotFound,
+
     /// Verification of an identity failed.
     #[error("Verification of identity failed: {0}")]
     IdentityVerificationFailed(String),

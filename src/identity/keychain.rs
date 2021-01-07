@@ -13,7 +13,7 @@
 //! tied to just a single keypair.
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     key::{SecretKey, SignKeypairSignature, SignKeypair, CryptoKeypair},
     private::Private,
     util::ser,
@@ -59,6 +59,27 @@ pub enum RevocationReason {
     Compromised,
 }
 
+/// The inner data stored by a revocation, the signature of which is used as the
+/// revocation's ID.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct RevocationEntry {
+    /// The permanent ID of the key we are revoking.
+    key_id: KeyID,
+    /// The reason we're deprecating this key.
+    reason: RevocationReason,
+}
+
+impl RevocationEntry {
+    /// Create a new revocation entry.
+    pub fn new(key_id: KeyID, reason: RevocationReason) -> Self {
+        Self {
+            key_id,
+            reason,
+        }
+    }
+}
+
 /// Marks a key as revoked, signed with our root key. In the case that the
 /// root key is being revoked, the deprecation must be signed with the new
 /// root key.
@@ -67,10 +88,21 @@ pub enum RevocationReason {
 pub struct Revocation {
     /// Revocation signature, and also unique ID for this revocation.
     id: RevocationID,
-    /// The permanent ID of the key we are revoking.
-    key_id: KeyID,
-    /// The reason we're deprecating this key.
-    reason: RevocationReason,
+    /// The inner data for this revocation
+    entry: RevocationEntry,
+}
+
+impl Revocation {
+    /// Create a new revocation.
+    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
+        let entry = RevocationEntry::new(key_id, reason);
+        let serialized = ser::serialize(&entry)?;
+        let signature = sign_keypair.sign(master_key, &serialized)?;
+        Ok(Self {
+            id: RevocationID(signature),
+            entry,
+        })
+    }
 }
 
 /// An enum that holds any type of key.
@@ -84,7 +116,7 @@ pub enum Key {
     Secret(Private<SecretKey>),
     /// An extension type, can be used to save any kind of public/secret keypair
     /// that isn't covered by the stamp system.
-    ExtensionKeypair(Vec<u8>, Private<Vec<u8>>),
+    ExtensionKeypair(Vec<u8>, Option<Private<Vec<u8>>>),
     /// An extension type, can be used to save any kind of key that isn't
     /// covered by the stamp system.
     ExtensionSecret(Private<Vec<u8>>),
@@ -161,6 +193,13 @@ impl Subkey {
         let serialized = ser::serialize(self.key())?;
         let signature = sign_keypair.sign(master_key, &serialized)?;
         self.set_signature(signature);
+        Ok(())
+    }
+
+    /// Revoked this subkey.
+    fn revoke(&mut self, master_key: &SecretKey, sign_keypair: &SignKeypair, reason: RevocationReason) -> Result<()> {
+        let revocation = Revocation::new(master_key, sign_keypair, self.id().clone(), reason)?;
+        self.revocation = Some(revocation);
         Ok(())
     }
 }
@@ -251,6 +290,57 @@ impl Keychain {
             subkeys,
         };
         keychain.sign_subkeys(master_key)
+    }
+
+    /// Revoke a subkey.
+    pub(crate) fn revoke_subkey(self, master_key: &SecretKey, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
+        let Self { root, mut subkeys } = self;
+        let key = subkeys.iter_mut()
+            .find(|x| x.id() == &key_id)
+            .ok_or(Error::IdentitySubkeyNotFound)?;
+        key.revoke(master_key, &root, reason)?;
+        Ok(Self {
+            root,
+            subkeys,
+        })
+    }
+
+    /// Delete a key from the keychain.
+    pub(crate) fn delete_subkey(self, key_id: &KeyID) -> Result<Self> {
+        let Self { root, mut subkeys } = self;
+        let exists = subkeys.iter().find(|x| x.id() == key_id);
+        if exists.is_none() {
+            Err(Error::IdentitySubkeyNotFound)?;
+        }
+        subkeys.retain(|x| x.id() != key_id);
+        Ok(Self {
+            root,
+            subkeys,
+        })
+    }
+
+    pub(crate) fn strip(self) -> Self {
+        let Self { root, subkeys } = self;
+        let subkeys = subkeys.into_iter()
+            .map(|x| {
+                let res = match x.key.clone() {
+                    Key::Sign(keypair) => Some(Key::Sign(keypair.public_only())),
+                    Key::Crypto(keypair) => Some(Key::Crypto(keypair.public_only())),
+                    Key::ExtensionKeypair(public, _) => Some(Key::ExtensionKeypair(public, None)),
+                    _ => None,
+                };
+                (res, x)
+            })
+            .filter(|x| x.0.is_some())
+            .map(|(key, mut subkey)| {
+                subkey.set_key(key.unwrap());
+                subkey
+            })
+            .collect::<Vec<_>>();
+        Self {
+            root: root.public_only(),
+            subkeys,
+        }
     }
 }
 

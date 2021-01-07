@@ -120,8 +120,8 @@ impl IdentityVersion {
     }
 
     /// Serialize this versioned identity into a human readable format
-    pub fn serialize_human(&self) -> Result<String> {
-        ser::serialize_human(self)
+    pub fn serialize_human_public(&self) -> Result<String> {
+        ser::serialize_human(&self.strip())
     }
 
     /// Deserialize this versioned identity from a byte vector.
@@ -132,6 +132,13 @@ impl IdentityVersion {
     /// Deserialize this versioned identity from a byte vector.
     pub fn deserialize_human(slice: &[u8]) -> Result<Self> {
         ser::deserialize_human(slice)
+    }
+
+    /// Strip all private data from this identity.
+    fn strip(&self) -> Self {
+        match self {
+            Self::V1(identity) => Self::V1(identity.strip()),
+        }
     }
 }
 
@@ -150,8 +157,8 @@ mod tests {
         let now = util::Timestamp::now();
         let identity = identity::Identity::new(&master_key, now).unwrap();
         let version = identity.version();
-        let human = ser::serialize_human(&version).unwrap();
-        let machine = ser::serialize(&version).unwrap();
+        let human = version.serialize_human_public().unwrap();
+        let machine = version.serialize_binary().unwrap();
         println!("--- ser: human\n{}", human);
         println!("--- ser: machine\n{}", base64::encode(&machine));
     }

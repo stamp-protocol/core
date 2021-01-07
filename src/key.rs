@@ -139,7 +139,7 @@ impl SignKeypair {
     /// Return a copy of this keypair with only the public key attached.
     pub fn public_only(&self) -> Self {
         match self {
-            Self::Ed25519(ref pubkey, ..) => {
+            Self::Ed25519(pubkey, ..) => {
                 Self::Ed25519(pubkey.clone(), None)
             }
         }

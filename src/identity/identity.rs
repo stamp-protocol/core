@@ -8,7 +8,7 @@ use crate::{
     error::{Error, Result},
     identity::{
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
-        keychain::{Key, Keychain},
+        keychain::{RevocationReason, KeyID, Key, Keychain},
         stamp::{StampID, Stamp, StampRevocation},
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
@@ -175,6 +175,14 @@ impl Identity {
         Ok(identity)
     }
 
+    /// Return a version of this identity without and private data (secret keys,
+    /// mainly).
+    pub(crate) fn strip(&self) -> Self {
+        let mut clone = self.clone();
+        clone.set_keychain(self.keychain().clone().strip());
+        clone
+    }
+
     /// Grab a list of all our identity's sub-signatures.
     fn sub_signatures(&self) -> Vec<&SignKeypairSignature> {
         let mut signatures = vec![
@@ -303,6 +311,20 @@ impl Identity {
         Ok(self)
     }
 
+    /// Revoke one of our subkeys, for instance if it has been compromised.
+    pub fn revoke_subkey(mut self, master_key: &SecretKey, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
+        // TODO: instead of cloning, deconstruct and reconstruct identity
+        self.set_keychain(self.keychain().clone().revoke_subkey(master_key, key_id, reason)?);
+        Ok(self)
+    }
+
+    /// Remove a subkey from the keychain.
+    pub fn delete_subkey(mut self, key_id: &KeyID) -> Result<Self> {
+        // TODO: instead of cloning, deconstruct and reconstruct identity
+        self.set_keychain(self.keychain().clone().delete_subkey(key_id)?);
+        Ok(self)
+    }
+
     /// Stamp a claim with our identity.
     pub fn stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, confidence: u8, now: T, claim: &Claim, expires: Option<T>) -> Result<Stamp> {
         Stamp::stamp(master_key, self.keychain().root(), self.id(), confidence, now, claim, expires)
@@ -314,6 +336,11 @@ impl Identity {
     /// turns out it was just Hank the caretaker all along (who was trying to
     /// scare people away from the mines so he could have the oil reserves to
     /// himself), you might wish to revoke your stamp on that identity.
+    ///
+    /// Note that this doesn't change the claim itself on the identity the claim
+    /// belongs to, but instead we must publish this revocation on whatever
+    /// medium we see fit, and it is up to people to check for revocations on
+    /// that medium before accepting a stamped claim as given.
     pub fn revoke_stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, stamp_id: StampID, date_revoked: T) -> Result<StampRevocation> {
         StampRevocation::new(master_key, self.keychain().root(), self.id().clone(), stamp_id, date_revoked)
     }
