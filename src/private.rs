@@ -85,7 +85,7 @@ pub struct PrivateVerifiableInner<T> {
 ///
 /// This also allows the key that protects the private data to be rotated
 /// without the HMAC (and therefor the stamps) on that data being deprecated.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PrivateVerifiable<T> {
     /// Allows us to cast this container to T without this container ever
     /// actually storing any T value (because it's encrypted).
@@ -158,7 +158,7 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> PrivateVerifiable<T> {
 
 /// A wrapper that contains either public/plaintext data of type T or encrypted
 /// data, which can be deserialized to T.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MaybePrivate<T> {
     /// Any publicly-viewable data
     Public(T),
@@ -256,6 +256,20 @@ mod tests {
         assert_eq!(maybe3.open(&seal_key), Err(Error::PrivateDataMissing));
         assert_eq!(maybe3.open(&fake_key), Err(Error::PrivateDataMissing));
         assert_eq!(maybe3.has_data(), false);
+    }
+
+    #[test]
+    fn maybe_private_strip() {
+        let seal_key = SecretKey::new_xsalsa20poly1305();
+        let maybe: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
+        assert!(maybe.has_data());
+        let maybe2 = maybe.strip_private();
+        let hmac = match &maybe {
+            MaybePrivate::Private(hmac, _) => hmac.clone(),
+            _ => panic!("weird"),
+        };
+        assert_eq!(maybe2, MaybePrivate::Private(hmac, None));
+        assert!(!maybe2.has_data());
     }
 }
 

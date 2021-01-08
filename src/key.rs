@@ -31,7 +31,7 @@ impl_try_from_slice!(xsalsa20poly1305::Key);
 impl_try_from_slice!(ed25519::Signature);
 
 /// A symmetric encryption key nonce
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SecretKeyNonce {
     #[serde(with = "crate::util::ser::human_binary_from_slice")]
     Xsalsa20Poly1305(xsalsa20poly1305::Nonce),
@@ -174,7 +174,7 @@ impl SignKeypair {
 }
 
 /// An asymmetric signing keypair nonce.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CryptoKeypairNonce {
     Curve25519Xsalsa20Poly1305(curve25519xsalsa20poly1305::Nonce),
 }

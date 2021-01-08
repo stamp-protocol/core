@@ -176,6 +176,8 @@ impl ClaimContainer {
     /// that holds the claim (with an empty set of stamps).
     pub fn new<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, now: T, spec: ClaimSpec) -> Result<Self> {
         let now: Timestamp = now.into();
+        // stripping returns either the public data or the HMAC of the private
+        // data, giving us an unchanging item we van verify.
         let stripped_spec = spec.strip_private();
         let datesigner = DateSigner::new(&now, &stripped_spec);
         let serialized = ser::serialize(&datesigner)?;

@@ -229,6 +229,22 @@ impl Identity {
         self.keychain().root().sign(master_key, &serialized)
     }
 
+    /// Verify that a signature and a set of data used to generate that
+    /// signature can be verified by at least one of our signing keys.
+    fn verify_signature_multi(&self, sig: &SignKeypairSignature, bytes_to_verify: &[u8]) -> Result<()> {
+        match self.keychain().root().verify(sig, bytes_to_verify) {
+            Ok(_) => Ok(()),
+            _ => {
+                for sign_keypair in self.keychain().subkeys_sign() {
+                    if sign_keypair.verify(sig, bytes_to_verify).is_ok() {
+                        return Ok(());
+                    }
+                }
+                Err(Error::CryptoSignatureVerificationFailed)
+            }
+        }
+    }
+
     /// Verify that the portions of this identity that can be verified, mainly
     /// by using the identity's public signing key (or key*s* if we have revoked
     /// keys).
@@ -244,33 +260,17 @@ impl Identity {
         // verify our root signature
         self.keychain().root().verify(self.root_signature(), &ser::serialize(&self.sub_signatures())?)?;
 
-        // a helper that tries to verify a signature with all the signing keys
-        // in the keychain, even the revoked ones.
-        let verify_multi = |sig: &SignKeypairSignature, bytes_to_verify: &[u8]| -> std::result::Result<(), ()> {
-            match self.keychain().root().verify(sig, bytes_to_verify) {
-                Ok(_) => Ok(()),
-                _ => {
-                    for sign_keypair in self.keychain().subkeys_sign() {
-                        if sign_keypair.verify(sig, bytes_to_verify).is_ok() {
-                            return Ok(());
-                        }
-                    }
-                    Err(())
-                }
-            }
-        };
-
         let id_string = String::from("This is my stamp.");
         let datesigner = DateSigner::new(self.created(), &id_string);
         let ser = ser::serialize(&datesigner)?;
-        verify_multi(&self.id().0, &ser)
+        self.verify_signature_multi(&self.id().0, &ser)
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.id")))?;
 
         // now check that our claims are signed with one of our sign keys
         for claim in self.claims() {
             let datesigner = DateSigner::new(claim.claim().created(), claim.claim().spec());
             let ser = ser::serialize(&datesigner)?;
-            verify_multi(&claim.claim().id(), &ser)
+            self.verify_signature_multi(&claim.claim().id(), &ser)
                 .map_err(|_| {
                     Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim.claim().id().to_hex()))
                 })?;

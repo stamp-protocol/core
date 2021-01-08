@@ -206,7 +206,6 @@ impl StampRevocationEntry {
     }
 }
 
-
 /// An object published when a stamper wishes to revoke their stamp.
 ///
 /// If this is not signed by the same identity that made the original stamp, it
