@@ -319,7 +319,7 @@ impl Keychain {
         })
     }
 
-    pub(crate) fn strip(self) -> Self {
+    pub(crate) fn strip_private(self) -> Self {
         let Self { root, subkeys } = self;
         let subkeys = subkeys.into_iter()
             .map(|x| {

@@ -43,7 +43,7 @@ impl Deref for ClaimID {
 
 /// Various types of codified relationships, used in relationship claims.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Relationship {
+pub enum RelationshipType {
     /// A familial relationship.
     Family,
     /// A friendship.
@@ -57,6 +57,16 @@ pub enum Relationship {
     OrganizationMember,
     /// Any custom relationship.
     Extension(Vec<u8>),
+}
+
+/// Defines a relationship.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct Relationship<T> {
+    /// The type of relationship we have.
+    relation: RelationshipType,
+    /// Who the relationship is with.
+    who: T,
 }
 
 /// A collection of known claims one can make about their identity.
@@ -77,20 +87,26 @@ pub enum ClaimSpec {
     /// A claim that I own an email address
     Email(MaybePrivate<String>),
     /// A claim that I own a PGP keypair
+    ///
+    /// NOTE: we *could* reimplement *all* of PGP and allow people to verify
+    /// this themselves via cross-signing, but seems more appropriate to keep
+    /// the spec lean and instead require third-parties to verify the claim.
     PGP(MaybePrivate<String>),
     /// A claim that I reside at a physical address
     HomeAddress(MaybePrivate<String>),
     /// A claim that I am in a relationship with another identity, hopefully
     /// stamped by that identity ='[
-    Relation(Relationship, MaybePrivate<IdentityID>),
+    Relation(MaybePrivate<Relationship<IdentityID>>),
     /// A claim that I am in a relationship with another entity with some form
     /// of serializable identification (such as a signed certificate, a name,
     /// etc). Can be used to assert relationships to entities outside of the
     /// Stamp protocol (although stamps on these relationships must be provided
     /// by Stamp protocol identities).
-    RelationExtension(Relationship, MaybePrivate<Vec<u8>>),
+    RelationExtension(MaybePrivate<Relationship<Vec<u8>>>),
     /// Any kind of claim of identity ownership or possession outside the
-    /// defined types.
+    /// defined types. This includes a public field (which could be used as a
+    /// key) and a maybe-private field which would be a value (or a key and
+    /// value if the public field is empty).
     ///
     /// This can be something like a state-issued identification, ownership over
     /// an internet domain name, a social networking screen name, etc.
@@ -103,6 +119,21 @@ pub enum ClaimSpec {
     /// Anything you can dream up that you wish to claim in any format can exist
     /// here.
     Extension(Vec<u8>, MaybePrivate<Vec<u8>>),
+}
+
+impl ClaimSpec {
+    fn strip_private(&self) -> Self {
+        match self {
+            Self::Identity(id) => Self::Identity(id.clone()),
+            Self::Name(val) => Self::Name(val.strip_private()),
+            Self::Email(val) => Self::Email(val.strip_private()),
+            Self::PGP(val) => Self::PGP(val.strip_private()),
+            Self::HomeAddress(val) => Self::HomeAddress(val.strip_private()),
+            Self::Relation(val) => Self::Relation(val.strip_private()),
+            Self::RelationExtension(val) => Self::RelationExtension(val.strip_private()),
+            Self::Extension(key, val) => Self::Extension(key.clone(), val.strip_private()),
+        }
+    }
 }
 
 /// A type used when signing a claim. Contains all data about the claim except
@@ -145,7 +176,8 @@ impl ClaimContainer {
     /// that holds the claim (with an empty set of stamps).
     pub fn new<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, now: T, spec: ClaimSpec) -> Result<Self> {
         let now: Timestamp = now.into();
-        let datesigner = DateSigner::new(&now, &spec);
+        let stripped_spec = spec.strip_private();
+        let datesigner = DateSigner::new(&now, &stripped_spec);
         let serialized = ser::serialize(&datesigner)?;
         let signature = sign_keypair.sign(master_key, &serialized)?;
         let claim = Claim::new(ClaimID(signature), now, spec);

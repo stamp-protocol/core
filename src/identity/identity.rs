@@ -177,9 +177,9 @@ impl Identity {
 
     /// Return a version of this identity without and private data (secret keys,
     /// mainly).
-    pub(crate) fn strip(&self) -> Self {
+    pub(crate) fn strip_private(&self) -> Self {
         let mut clone = self.clone();
-        clone.set_keychain(self.keychain().clone().strip());
+        clone.set_keychain(self.keychain().clone().strip_private());
         clone
     }
 

@@ -28,6 +28,10 @@ pub enum Error {
     #[error("could not update hash state")]
     CryptoHashStateUpdateError,
 
+    /// An HMAC failed to verify.
+    #[error("the given HMAC combo does not verify")]
+    CryptoHmacVerificationFailed,
+
     /// Could not generate key from password
     #[error("key derivation from password failed")]
     CryptoKDFFailed,

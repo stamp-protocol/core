@@ -121,7 +121,7 @@ impl IdentityVersion {
 
     /// Serialize this versioned identity into a human readable format
     pub fn serialize_human_public(&self) -> Result<String> {
-        ser::serialize_human(&self.strip())
+        ser::serialize_human(&self.strip_private())
     }
 
     /// Deserialize this versioned identity from a byte vector.
@@ -135,9 +135,9 @@ impl IdentityVersion {
     }
 
     /// Strip all private data from this identity.
-    fn strip(&self) -> Self {
+    fn strip_private(&self) -> Self {
         match self {
-            Self::V1(identity) => Self::V1(identity.strip()),
+            Self::V1(identity) => Self::V1(identity.strip_private()),
         }
     }
 }
