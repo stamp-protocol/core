@@ -13,6 +13,7 @@
 
 
 pub mod keychain;
+pub mod recovery;
 pub mod claim;
 pub mod stamp;
 pub mod identity;

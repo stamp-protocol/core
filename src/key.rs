@@ -13,7 +13,10 @@
 use crate::{
     error::{Error, Result},
     private::{Private},
-    util::ser::TryFromSlice,
+    util::{
+        ser::TryFromSlice,
+        sign::Signable,
+    },
 };
 use serde_derive::{Serialize, Deserialize};
 use sodiumoxide::{
@@ -139,10 +142,15 @@ impl SignKeypair {
     /// Return a copy of this keypair with only the public key attached.
     pub fn public_only(&self) -> Self {
         match self {
-            Self::Ed25519(pubkey, ..) => {
+            Self::Ed25519(pubkey, _) => {
                 Self::Ed25519(pubkey.clone(), None)
             }
         }
+    }
+
+    /// Convert this signing keypair into a signing public key.
+    pub fn into_public(self) -> SignKeypairPublic {
+        From::from(self)
     }
 
     /// Sign a value with our secret signing key.
@@ -150,7 +158,7 @@ impl SignKeypair {
     /// Must be unlocked via our master key.
     pub fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<SignKeypairSignature> {
         match self {
-            SignKeypair::Ed25519(_, ref sec_locked_opt) => {
+            Self::Ed25519(_, ref sec_locked_opt) => {
                 let sec_locked = sec_locked_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let seckey = sec_locked.open(master_key)?;
                 Ok(SignKeypairSignature::Ed25519(ed25519::sign_detached(data, &seckey)))
@@ -162,13 +170,58 @@ impl SignKeypair {
     /// signer.
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
         match (self, signature) {
-            (SignKeypair::Ed25519(ref pubkey, ..), SignKeypairSignature::Ed25519(ref sig)) => {
+            (Self::Ed25519(ref pubkey, _), SignKeypairSignature::Ed25519(ref sig)) => {
                 if ed25519::verify_detached(sig, data, pubkey) {
                     Ok(())
                 } else {
                     Err(Error::CryptoSignatureVerificationFailed)
                 }
             }
+        }
+    }
+}
+
+impl PartialEq for SignKeypair {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Ed25519(public1, _), Self::Ed25519(public2, _)) => public1 == public2,
+        }
+    }
+}
+
+impl Signable for SignKeypair {
+    type Item = SignKeypairPublic;
+    fn signable(&self) -> Self::Item {
+        self.clone().into()
+    }
+}
+
+/// An asymmetric signing public key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SignKeypairPublic {
+    Ed25519(#[serde(with = "crate::util::ser::human_binary_from_slice")] ed25519::PublicKey),
+}
+
+impl SignKeypairPublic {
+    /// Verify a value with a detached signature given the public key of the
+    /// signer.
+    pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
+        match (self, signature) {
+            (Self::Ed25519(ref pubkey), SignKeypairSignature::Ed25519(ref sig)) => {
+                if ed25519::verify_detached(sig, data, pubkey) {
+                    Ok(())
+                } else {
+                    Err(Error::CryptoSignatureVerificationFailed)
+                }
+            }
+        }
+    }
+}
+
+impl From<SignKeypair> for SignKeypairPublic {
+    fn from(kp: SignKeypair) -> Self {
+        match kp {
+            SignKeypair::Ed25519(public, _) => Self::Ed25519(public),
         }
     }
 }
@@ -216,7 +269,7 @@ impl CryptoKeypair {
     /// Return a copy of this keypair with only the public key attached.
     pub fn public_only(&self) -> Self {
         match self {
-            Self::Curve25519Xsalsa20Poly1305(ref pubkey, ..) => {
+            Self::Curve25519Xsalsa20Poly1305(ref pubkey, _) => {
                 Self::Curve25519Xsalsa20Poly1305(pubkey.clone(), None)
             }
         }

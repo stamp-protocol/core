@@ -44,6 +44,10 @@ pub enum Error {
     #[error("failed to open a sealed object")]
     CryptoOpenFailed,
 
+    /// Failed to produce a signature
+    #[error("failed to create a signature")]
+    CryptoSignatureFailed,
+
     /// A signature failed to verify.
     #[error("the given signature/public key/data combo does not verify")]
     CryptoSignatureVerificationFailed,
@@ -55,6 +59,10 @@ pub enum Error {
     /// The claim being operated on wasn't found
     #[error("identity claim not found")]
     IdentityClaimNotFound,
+
+    /// The identity is missing one or more recovery key entries.
+    #[error("identity missing recovery key")]
+    IdentityRecoveryKeyMissing,
 
     /// The subkey being operated on wasn't found
     #[error("identity subkey not found")]

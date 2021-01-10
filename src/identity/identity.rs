@@ -9,6 +9,7 @@ use crate::{
     identity::{
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
         keychain::{RevocationReason, KeyID, Key, Keychain},
+        recovery::{Recovery},
         stamp::{StampID, Stamp, StampRevocation},
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
@@ -128,8 +129,12 @@ impl IdentityExtraData {
 pub struct Identity {
     /// The unique identifier for this identity.
     id: IdentityID,
-    /// A signature that is created by collecting all signatures contained in
-    /// the identity and signing them with the root signing key.
+    /// Our identity recovery mechanisms. This allows us to replace our recovery
+    /// keypair in the event it's lost or compromised.
+    recovery: Recovery,
+    /// A signature that is created by collecting all claim, stamp, and keychain
+    /// signatures contained in the identity and signing them with the root
+    /// signing key.
     ///
     /// This gives any identity a verifiable completeness: if any data is added
     /// or removed that is not authorized by the identity owner, the identity
@@ -151,20 +156,24 @@ pub struct Identity {
 }
 
 impl Identity {
-    /// Create a new identity
+    /// Create a new identity.
     pub fn new(master_key: &SecretKey, now: Timestamp) -> Result<Self> {
+        let alpha_keypair = SignKeypair::new_ed25519(master_key)?;
+        let policy_keypair = SignKeypair::new_ed25519(master_key)?;
+        let recovery_keypair = SignKeypair::new_ed25519(master_key)?;
         let root_keypair = SignKeypair::new_ed25519(master_key)?;
         let id_string = String::from("This is my stamp.");
         let datesigner = DateSigner::new(&now, &id_string);
         let ser = ser::serialize(&datesigner)?;
-        let sig = root_keypair.sign(master_key, &ser)?;
-        let id = IdentityID(sig);
+        let id = IdentityID(alpha_keypair.sign(master_key, &ser)?);
         let identity_claim = ClaimContainer::new(master_key, &root_keypair, now.clone(), ClaimSpec::Identity(id.clone()))?;
-        let keychain = Keychain::new(root_keypair);
+        let recovery = Recovery::new()?;
+        let keychain = Keychain::new(master_key, alpha_keypair, policy_keypair, recovery_keypair, root_keypair)?;
         let extra_data = IdentityExtraData::new();
         let blank_root_signature = SignKeypairSignature::blank(keychain.root());
         let mut identity = Self {
             id,
+            recovery,
             root_signature: blank_root_signature,
             created: now,
             keychain,
@@ -191,7 +200,14 @@ impl Identity {
 
         // sign the signatures of all our subkeys
         for subkey in self.keychain().subkeys() {
-            signatures.push(&subkey.id());
+            // only sign keys with a public component, since these will be
+            // published and can be verified. secret keys are not published and
+            // therefor cannot be verified (so we don't add them to verification
+            // chain)..
+            match subkey.key().public_only() {
+                Some(_) => signatures.push(&subkey.id()),
+                None => {}
+            }
         }
 
         // sign our claims and their stamps
@@ -257,14 +273,24 @@ impl Identity {
     /// the identity (we need the public keys of all the signers for that, which
     /// must not be stored alongside the signatures).
     pub fn verify(&self) -> Result<()> {
-        // verify our root signature
-        self.keychain().root().verify(self.root_signature(), &ser::serialize(&self.sub_signatures())?)?;
-
+        // verify our identity ID against the alpha key.
         let id_string = String::from("This is my stamp.");
         let datesigner = DateSigner::new(self.created(), &id_string);
         let ser = ser::serialize(&datesigner)?;
-        self.verify_signature_multi(&self.id().0, &ser)
+        self.keychain().alpha().verify(self.id(), &ser)
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.id")))?;
+
+        // verify our policy and recovery keys against the alpha key
+        self.keychain().policy().verify_value(self.keychain().alpha())
+            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.policy")))?;
+        self.keychain().recovery().verify_value(self.keychain().alpha())
+            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.recovery")))?;
+        // verify the root signing key against the recovery key
+        self.keychain().root().verify_value(self.keychain().recovery())
+            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.root")))?;
+
+        // verify our root signature
+        self.keychain().root().verify(self.root_signature(), &ser::serialize(&self.sub_signatures())?)?;
 
         // now check that our claims are signed with one of our sign keys
         for claim in self.claims() {
@@ -298,29 +324,25 @@ impl Identity {
     }
 
     /// Set the root signing key on this identity.
-    pub fn set_root_key(mut self, master_key: &SecretKey, new_root_keypair: SignKeypair) -> Result<Self> {
-        // TODO: instead of cloning, deconstruct and reconstruct identity
-        self.set_keychain(self.keychain().clone().set_root_key(master_key, new_root_keypair)?);
+    pub fn set_root_key(mut self, master_key: &SecretKey, recovery_keypair: &SignKeypair, new_root_keypair: SignKeypair) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().set_root_key(master_key, recovery_keypair, new_root_keypair)?);
         Ok(self)
     }
 
     /// Add a new subkey to our identity.
     pub fn add_subkey(mut self, master_key: &SecretKey, key: Key) -> Result<Self> {
-        // TODO: instead of cloning, deconstruct and reconstruct identity
         self.set_keychain(self.keychain().clone().add_subkey(master_key, key)?);
         Ok(self)
     }
 
     /// Revoke one of our subkeys, for instance if it has been compromised.
     pub fn revoke_subkey(mut self, master_key: &SecretKey, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
-        // TODO: instead of cloning, deconstruct and reconstruct identity
         self.set_keychain(self.keychain().clone().revoke_subkey(master_key, key_id, reason)?);
         Ok(self)
     }
 
     /// Remove a subkey from the keychain.
     pub fn delete_subkey(mut self, key_id: &KeyID) -> Result<Self> {
-        // TODO: instead of cloning, deconstruct and reconstruct identity
         self.set_keychain(self.keychain().clone().delete_subkey(key_id)?);
         Ok(self)
     }

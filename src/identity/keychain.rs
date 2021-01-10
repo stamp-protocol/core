@@ -16,7 +16,7 @@ use crate::{
     error::{Error, Result},
     key::{SecretKey, SignKeypairSignature, SignKeypair, CryptoKeypair},
     private::Private,
-    util::ser,
+    util::{ser, sign::SignedValue},
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
@@ -146,6 +146,17 @@ impl Key {
             _ => None,
         }
     }
+
+    /// Returns a version of this key without any private data. Useful for signing.
+    pub(crate) fn public_only(&self) -> Option<Self> {
+        match self {
+            Self::Sign(keypair) => Some(Self::Sign(keypair.public_only())),
+            Self::Crypto(keypair) => Some(Self::Crypto(keypair.public_only())),
+            Self::Secret(_) => None,
+            Self::ExtensionKeypair(public, _) => Some(Self::ExtensionKeypair(public.clone(), None)),
+            Self::ExtensionSecret(_) => None,
+        }
+    }
 }
 
 /// Holds a subkey's id/signature (signed by the root key), its key data, and an
@@ -190,15 +201,27 @@ impl Subkey {
 
     /// Sign this subkey with the given signing key.
     fn sign(&mut self, master_key: &SecretKey, sign_keypair: &SignKeypair) -> Result<()> {
-        let serialized = ser::serialize(self.key())?;
+        // if we have a keypair, just sign the public key, otherwise sign the
+        // whole key body (which is encrypted via the master key).
+        //
+        // the idea here is that we still want to sign key integrity for private
+        // keys (and give them an id), but because we don't publish them there's
+        // really no need to sign any kind of verifiable data (it's only used
+        // for our own personal amusement).
+        let maybe_public = self.key().public_only();
+        let key = match maybe_public.as_ref() {
+            Some(public) => public,
+            None => self.key(),
+        };
+        let serialized = ser::serialize(key)?;
         let signature = sign_keypair.sign(master_key, &serialized)?;
         self.set_signature(signature);
         Ok(())
     }
 
     /// Revoked this subkey.
-    fn revoke(&mut self, master_key: &SecretKey, sign_keypair: &SignKeypair, reason: RevocationReason) -> Result<()> {
-        let revocation = Revocation::new(master_key, sign_keypair, self.id().clone(), reason)?;
+    fn revoke(&mut self, master_key: &SecretKey, root_keypair: &SignKeypair, reason: RevocationReason) -> Result<()> {
+        let revocation = Revocation::new(master_key, root_keypair, self.id().clone(), reason)?;
         self.revocation = Some(revocation);
         Ok(())
     }
@@ -220,27 +243,42 @@ impl Subkey {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Keychain {
-    /// The identity's root signing key. Does not need an id or revocations
-    /// because a key signing itself would be ridiculous and the moment it is
-    /// revoked it joins the other subkeys, so there's no need to wrap it in
-    /// the subkey object.
-    root: SignKeypair,
+    /// The alpha key. One key to rule them all.
+    ///
+    /// You really should never use this key without a REALLY good reason. This
+    /// key controls the policy and recovery keys, which should be all you'd
+    /// ever need, even in the case of a compromised identity.
+    alpha: SignKeypair,
+    /// Our policy signing key. Lets us create recovery policies. This is signed
+    /// by the alpha key, which prevents tampering.
+    policy: SignedValue<SignKeypair>,
+    /// The recovery key. If we have this, we can replace our root signing
+    /// keypair. This is signed by the alpha key.
+    recovery: SignedValue<SignKeypair>,
+    /// The identity's root signing key, signed by the recovery key.
+    root: SignedValue<SignKeypair>,
     /// Holds our subkeys, signed with our root keypair.
     subkeys: Vec<Subkey>,
 }
 
 impl Keychain {
     /// Create a new keychain
-    pub(crate) fn new(root_keypair: SignKeypair) -> Self {
-        Self {
-            root: root_keypair,
+    pub(crate) fn new(master_key: &SecretKey, alpha_keypair: SignKeypair, policy_keypair: SignKeypair, recovery_keypair: SignKeypair, root_keypair: SignKeypair) -> Result<Self> {
+        let root = SignedValue::new(master_key, &recovery_keypair, root_keypair)?;
+        let policy = SignedValue::new(master_key, &alpha_keypair, policy_keypair)?;
+        let recovery = SignedValue::new(master_key, &alpha_keypair, recovery_keypair)?;
+        Ok(Self {
+            alpha: alpha_keypair,
+            policy,
+            recovery,
+            root,
             subkeys: Vec::new(),
-        }
+        })
     }
 
     /// Grab all signing subkeys.
     pub fn subkeys_sign(&self) -> Vec<SignKeypair> {
-        self.subkeys.iter()
+        self.subkeys().iter()
             .map(|x| x.key().as_signkey())
             .filter(|x| x.is_some())
             .map(|x| x.unwrap())
@@ -249,7 +287,7 @@ impl Keychain {
 
     /// Grab all crypto subkeys.
     pub fn subkeys_crypto(&self) -> Vec<CryptoKeypair> {
-        self.subkeys.iter()
+        self.subkeys().iter()
             .map(|x| x.key().as_cryptokey())
             .filter(|x| x.is_some())
             .map(|x| x.unwrap())
@@ -257,71 +295,59 @@ impl Keychain {
     }
 
     /// Add a new subkey to the keychain (and sign it).
-    pub(crate) fn add_subkey(self, master_key: &SecretKey, key: Key) -> Result<Self> {
-        let Self { root, mut subkeys } = self;
-        subkeys.push(Subkey::new(master_key, &root, key)?);
-        Ok(Self {
-            root,
-            subkeys,
-        })
+    pub(crate) fn add_subkey(mut self, master_key: &SecretKey, key: Key) -> Result<Self> {
+        let root = self.root().clone();
+        self.subkeys_mut().push(Subkey::new(master_key, &root, key)?);
+        Ok(self)
     }
 
     /// Make sure all our subkeys are signed with our current root keypair.
-    pub(crate) fn sign_subkeys(self, master_key: &SecretKey) -> Result<Self> {
-        let Self { root, mut subkeys } = self;
-        for subkey in &mut subkeys {
+    pub(crate) fn sign_subkeys(mut self, master_key: &SecretKey) -> Result<Self> {
+        let root = self.root().clone();
+        for subkey in self.subkeys_mut() {
             subkey.sign(master_key, &root)?;
         }
-        Ok(Self {
-            root,
-            subkeys,
-        })
+        Ok(self)
     }
 
     /// Replace our root signing key.
     ///
     /// This moves the current root key into the subkeys, revokes it, and
     /// updates the signature on all the subkeys (including the old root key).
-    pub(crate) fn set_root_key(self, master_key: &SecretKey, new_root_keypair: SignKeypair) -> Result<Self> {
-        let Self { root: old_root, mut subkeys } = self;
-        subkeys.push(Subkey::new(master_key, &new_root_keypair, Key::Sign(old_root))?);
-        let keychain = Self {
-            root: new_root_keypair,
-            subkeys,
-        };
-        keychain.sign_subkeys(master_key)
+    pub(crate) fn set_root_key(mut self, master_key: &SecretKey, recovery_key: &SignKeypair, new_root_keypair: SignKeypair) -> Result<Self> {
+        let root = self.root().deref().clone();
+        self.subkeys_mut().push(Subkey::new(master_key, &new_root_keypair, Key::Sign(root))?);
+        self.set_root(SignedValue::new(master_key, recovery_key, new_root_keypair)?);
+        self.sign_subkeys(master_key)
     }
 
     /// Revoke a subkey.
-    pub(crate) fn revoke_subkey(self, master_key: &SecretKey, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
-        let Self { root, mut subkeys } = self;
-        let key = subkeys.iter_mut()
+    pub(crate) fn revoke_subkey(mut self, master_key: &SecretKey, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
+        let root = self.root().clone();
+        let key = self.subkeys_mut().iter_mut()
             .find(|x| x.id() == &key_id)
             .ok_or(Error::IdentitySubkeyNotFound)?;
         key.revoke(master_key, &root, reason)?;
-        Ok(Self {
-            root,
-            subkeys,
-        })
+        Ok(self)
     }
 
     /// Delete a key from the keychain.
-    pub(crate) fn delete_subkey(self, key_id: &KeyID) -> Result<Self> {
-        let Self { root, mut subkeys } = self;
-        let exists = subkeys.iter().find(|x| x.id() == key_id);
+    pub(crate) fn delete_subkey(mut self, key_id: &KeyID) -> Result<Self> {
+        let exists = self.subkeys().iter().find(|x| x.id() == key_id);
         if exists.is_none() {
             Err(Error::IdentitySubkeyNotFound)?;
         }
-        subkeys.retain(|x| x.id() != key_id);
-        Ok(Self {
-            root,
-            subkeys,
-        })
+        self.subkeys_mut().retain(|x| x.id() != key_id);
+        Ok(self)
     }
 
-    pub(crate) fn strip_private(self) -> Self {
-        let Self { root, subkeys } = self;
-        let subkeys = subkeys.into_iter()
+    pub(crate) fn strip_private(&self) -> Self {
+        let mut keychain_clone = self.clone();
+        keychain_clone.set_alpha(self.alpha().public_only());
+        keychain_clone.policy_mut().set_value(self.policy().value().public_only());
+        keychain_clone.recovery_mut().set_value(self.recovery().value().public_only());
+        keychain_clone.root_mut().set_value(self.root().value().public_only());
+        let subkeys = self.subkeys().clone().into_iter()
             .map(|x| {
                 let res = match x.key.clone() {
                     Key::Sign(keypair) => Some(Key::Sign(keypair.public_only())),
@@ -337,10 +363,8 @@ impl Keychain {
                 subkey
             })
             .collect::<Vec<_>>();
-        Self {
-            root: root.public_only(),
-            subkeys,
-        }
+        keychain_clone.set_subkeys(subkeys);
+        keychain_clone
     }
 }
 

@@ -1,13 +1,11 @@
 //! Welcome to the Stamp core, a reference implementation of the Stamp protocol.
 //!
-//! The Stamp protocol is essentially the successor to PGP. It seeks to provide
+//! The Stamp protocol is essentially a successor to PGP. It seeks to provide
 //! a meaningful cryptographic identity for a given person, which can be signed
-//! by either their peers or various institutions. This identity is somewhat
-//! detached from the cryptographic keys used to manage it, and is meant to be
+//! by either their peers or various institutions. This identity is meant to be
 //! long-lived *beyond the life of the keys*. Where PGP is a somewhat ephemeral
 //! master keypair and collection of subkeys, Stamp is a permanent marker of
-//! identity and the signatures on one's identity are not meaningfully attached
-//! to any particular set of keys.
+//! identity which offers various avenues for recovery in the case of lost keys.
 //!
 //! Also, where Stamp deviates is that any number of claims can be made by a
 //! Stamp identity, and any of them can be individually signed. For instance, an
