@@ -93,7 +93,7 @@ pub struct Revocation {
 }
 
 impl Revocation {
-    /// Create a new revocation.
+    /// Create a new revocation. Must be signed by a root keypair.
     pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
         let entry = RevocationEntry::new(key_id, reason);
         let serialized = ser::serialize(&entry)?;
@@ -159,38 +159,89 @@ impl Key {
     }
 }
 
+/// A key container.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct KeyEntry {
+    /// The key itself.
+    ///
+    /// Alright, Parker, shut up. Thank you, Parker. Shut up. Thank you. Nobody
+    /// thinks you're funny.
+    key: Key,
+    /// The key's human-readable title, for example "Email"
+    title: String,
+    /// The key's human-readable description, for example "Please send me
+    /// encrypted emails using this key." Or "HAI THIS IS MY DOGECOIN ADDRESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS!!!1"
+    description: String,
+}
+
+impl KeyEntry {
+    /// Create a new KeyEntry.
+    fn new(key: Key, title: String, description: String) -> Self {
+        Self {
+            key,
+            title,
+            description,
+        }
+    }
+
+    /// Returns a version of this key(entry) without any private data. Useful
+    /// for signing.
+    pub(crate) fn public_only(&self) -> Option<Self> {
+        match self.key().public_only() {
+            Some(x) => {
+                let mut clone = self.clone();
+                clone.set_key(x);
+                Some(clone)
+            }
+            None => None,
+        }
+    }
+}
+
+impl Deref for KeyEntry {
+    type Target = Key;
+    fn deref(&self) -> &Self::Target {
+        self.key()
+    }
+}
+
 /// Holds a subkey's id/signature (signed by the root key), its key data, and an
 /// optional revocation.
+///
+/// If the subkey is a keypair, we sign the public key of the keypair (making it
+/// verifiable without the private data) and in the case of a secret key, we
+/// sign the whole key.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Subkey {
-    /// They subkey's unique ID, and signature of its *public* contents, signed
-    /// by the identity's *current* root keypair (and forevermore unchanged).
+    /// They subkey's unique ID, and signature of the key itself by the
+    /// identity's *current* root keypair (and forevermore unchanged).
     id: KeyID,
-    /// The signature of the key's *public* contents, always kept up to date
-    /// with the *latest* root signing key...this must be regeneroned when the
-    /// root keypair changes (I feel.....perfect)
+    /// The signature of the key, always kept up to date with the *latest* root
+    /// signing key...this must be regeneroned when the root keypair changes
+    /// (I feel.....perfect)
     signature: SignKeypairSignature,
-    /// The key itself.
-    ///
-    /// Alright, Parker, shut up. Thank you, Parker. Shut up. Thank you.
-    key: Key,
+    /// The key itself, along with some metadata. This is what we sign in our id
+    /// and signature fields.
+    key: KeyEntry,
     /// Allows revocation of a key.
     revocation: Option<Revocation>,
 }
 
 impl Subkey {
     /// Create a new subkey, signed by our root key.
-    fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, key: Key) -> Result<Self> {
+    fn new<T: Into<String>>(master_key: &SecretKey, sign_keypair: &SignKeypair, key: Key, title: T, description: T) -> Result<Self> {
         // create a blank signature we're going to use TEMPORARILY for the id
         // and signature fields.
         //
         // fake signature. Sad!
         let blank_signature = SignKeypairSignature::blank(sign_keypair);
+        let entry = KeyEntry::new(key, title.into(), description.into());
         let mut subkey = Self {
             id: KeyID(blank_signature.clone()),
             signature: blank_signature,
-            key,
+            key: entry,
             revocation: None,
         };
         // now, sign our key and update our key's id
@@ -295,9 +346,9 @@ impl Keychain {
     }
 
     /// Add a new subkey to the keychain (and sign it).
-    pub(crate) fn add_subkey(mut self, master_key: &SecretKey, key: Key) -> Result<Self> {
+    pub(crate) fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, title: T, description: T) -> Result<Self> {
         let root = self.root().clone();
-        self.subkeys_mut().push(Subkey::new(master_key, &root, key)?);
+        self.subkeys_mut().push(Subkey::new(master_key, &root, key, title, description)?);
         Ok(self)
     }
 
@@ -314,9 +365,11 @@ impl Keychain {
     ///
     /// This moves the current root key into the subkeys, revokes it, and
     /// updates the signature on all the subkeys (including the old root key).
-    pub(crate) fn set_root_key(mut self, master_key: &SecretKey, recovery_key: &SignKeypair, new_root_keypair: SignKeypair) -> Result<Self> {
+    pub(crate) fn set_root_key(mut self, master_key: &SecretKey, recovery_key: &SignKeypair, new_root_keypair: SignKeypair, reason: RevocationReason) -> Result<Self> {
         let root = self.root().deref().clone();
-        self.subkeys_mut().push(Subkey::new(master_key, &new_root_keypair, Key::Sign(root))?);
+        let mut subkey = Subkey::new(master_key, &new_root_keypair, Key::Sign(root), "root key", "deprecated root key")?;
+        subkey.revoke(master_key, &new_root_keypair, reason)?;
+        self.subkeys_mut().push(subkey);
         self.set_root(SignedValue::new(master_key, recovery_key, new_root_keypair)?);
         self.sign_subkeys(master_key)
     }
@@ -347,15 +400,10 @@ impl Keychain {
         keychain_clone.policy_mut().set_value(self.policy().value().public_only());
         keychain_clone.recovery_mut().set_value(self.recovery().value().public_only());
         keychain_clone.root_mut().set_value(self.root().value().public_only());
+        //keychain_clone.subkeys().retain
         let subkeys = self.subkeys().clone().into_iter()
             .map(|x| {
-                let res = match x.key.clone() {
-                    Key::Sign(keypair) => Some(Key::Sign(keypair.public_only())),
-                    Key::Crypto(keypair) => Some(Key::Crypto(keypair.public_only())),
-                    Key::ExtensionKeypair(public, _) => Some(Key::ExtensionKeypair(public, None)),
-                    _ => None,
-                };
-                (res, x)
+                (x.key().public_only(), x)
             })
             .filter(|x| x.0.is_some())
             .map(|(key, mut subkey)| {

@@ -324,14 +324,14 @@ impl Identity {
     }
 
     /// Set the root signing key on this identity.
-    pub fn set_root_key(mut self, master_key: &SecretKey, recovery_keypair: &SignKeypair, new_root_keypair: SignKeypair) -> Result<Self> {
-        self.set_keychain(self.keychain().clone().set_root_key(master_key, recovery_keypair, new_root_keypair)?);
+    pub fn set_root_key(mut self, master_key: &SecretKey, recovery_keypair: &SignKeypair, new_root_keypair: SignKeypair, revocation_reason: RevocationReason) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().set_root_key(master_key, recovery_keypair, new_root_keypair, revocation_reason)?);
         Ok(self)
     }
 
     /// Add a new subkey to our identity.
-    pub fn add_subkey(mut self, master_key: &SecretKey, key: Key) -> Result<Self> {
-        self.set_keychain(self.keychain().clone().add_subkey(master_key, key)?);
+    pub fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, title: T, description: T) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().add_subkey(master_key, key, title, description)?);
         Ok(self)
     }
 
