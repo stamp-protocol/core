@@ -32,6 +32,8 @@ impl_try_from_slice!(ed25519::PublicKey);
 impl_try_from_slice!(xsalsa20poly1305::Nonce);
 impl_try_from_slice!(xsalsa20poly1305::Key);
 impl_try_from_slice!(ed25519::Signature);
+impl_try_from_slice!(curve25519xsalsa20poly1305::Nonce);
+impl_try_from_slice!(curve25519xsalsa20poly1305::PublicKey);
 
 /// A symmetric encryption key nonce
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -229,6 +231,7 @@ impl From<SignKeypair> for SignKeypairPublic {
 /// An asymmetric signing keypair nonce.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CryptoKeypairNonce {
+    #[serde(with = "crate::util::ser::human_binary_from_slice")] 
     Curve25519Xsalsa20Poly1305(curve25519xsalsa20poly1305::Nonce),
 }
 
@@ -256,7 +259,7 @@ impl CryptoKeypairMessage {
 /// An asymmetric signing keypair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CryptoKeypair {
-    Curve25519Xsalsa20Poly1305(curve25519xsalsa20poly1305::PublicKey, Option<Private<curve25519xsalsa20poly1305::SecretKey>>),
+    Curve25519Xsalsa20Poly1305(#[serde(with = "crate::util::ser::human_binary_from_slice")] curve25519xsalsa20poly1305::PublicKey, Option<Private<curve25519xsalsa20poly1305::SecretKey>>),
 }
 
 impl CryptoKeypair {

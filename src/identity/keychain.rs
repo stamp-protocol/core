@@ -57,6 +57,8 @@ pub enum RevocationReason {
     Superseded,
     /// This key has been compromised.
     Compromised,
+    /// This key was signed by a compromised key and should never be used.
+    Invalid,
 }
 
 /// The inner data stored by a revocation, the signature of which is used as the
@@ -108,6 +110,12 @@ impl Revocation {
 /// An enum that holds any type of key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Key {
+    /// A policy key
+    Policy(SignKeypair),
+    /// A publish key
+    Publish(SignKeypair),
+    /// A root key
+    Root(SignKeypair),
     /// A signing key.
     Sign(SignKeypair),
     /// An asymmetric crypto key.
@@ -150,6 +158,9 @@ impl Key {
     /// Returns a version of this key without any private data. Useful for signing.
     pub(crate) fn public_only(&self) -> Option<Self> {
         match self {
+            Self::Policy(keypair) => Some(Self::Policy(keypair.public_only())),
+            Self::Publish(keypair) => Some(Self::Publish(keypair.public_only())),
+            Self::Root(keypair) => Some(Self::Root(keypair.public_only())),
             Self::Sign(keypair) => Some(Self::Sign(keypair.public_only())),
             Self::Crypto(keypair) => Some(Self::Crypto(keypair.public_only())),
             Self::Secret(_) => None,
@@ -278,6 +289,51 @@ impl Subkey {
     }
 }
 
+/// Holds a key that is either signed by the alpha key or has been recovered via
+/// the recovery policy system.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SignedOrRecoveredKeypair {
+    /// This key has been signed by the alpha key.
+    Signed(SignedValue<SignKeypair>),
+    /// This key is the result of a successful recovery policy execution, and
+    /// therefor is not signed by the alpha key. It's validity must be
+    /// determined through the identity's policy system.
+    Recovered(SignKeypair),
+}
+
+impl SignedOrRecoveredKeypair {
+    /// Verify the contained keypair with the given signing key. In the even the
+    /// key is recovered (nto signed) we return an error.
+    pub fn verify_signed(&self, sign_keypair: &SignKeypair) -> Result<()> {
+        match self {
+            Self::Signed(signed) => signed.verify_value(sign_keypair),
+            Self::Recovered(_) => Err(Error::CryptoSignatureVerificationFailed),
+        }
+    }
+
+    /// Return a clone of this keypair with all private data stripped.
+    pub fn strip_private(&self) -> Self {
+        match self {
+            Self::Signed(signed) => {
+                let mut signed_clone = signed.clone();
+                signed_clone.set_value(signed.public_only());
+                Self::Signed(signed_clone)
+            }
+            Self::Recovered(keypair) => Self::Recovered(keypair.public_only())
+        }
+    }
+}
+
+impl Deref for SignedOrRecoveredKeypair {
+    type Target = SignKeypair;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Signed(signed) => signed.deref(),
+            Self::Recovered(ref kp) => kp,
+        }
+    }
+}
+
 /// Holds the keys for our identity.
 ///
 /// This includes an always-present root signing key, and any number of other
@@ -297,31 +353,33 @@ pub struct Keychain {
     /// The alpha key. One key to rule them all.
     ///
     /// You really should never use this key without a REALLY good reason. This
-    /// key controls the policy and recovery keys, which should be all you'd
-    /// ever need, even in the case of a compromised identity.
+    /// key effectively controls all other keys in the identity, and should only
+    /// be used if a top-level key has been compromised.
     alpha: SignKeypair,
     /// Our policy signing key. Lets us create recovery policies. This is signed
     /// by the alpha key, which prevents tampering.
     policy: SignedValue<SignKeypair>,
-    /// The recovery key. If we have this, we can replace our root signing
-    /// keypair. This is signed by the alpha key.
-    recovery: SignedValue<SignKeypair>,
-    /// The identity's root signing key, signed by the recovery key.
-    root: SignedValue<SignKeypair>,
+    /// The publish key, signed by the alpha key. When we want to publish our
+    /// identity anywhere, for instance to our personal website, an identity
+    /// network, or anywhere else we might want others to find our identity, we
+    /// sign the published identity with our publish key.
+    publish: SignedOrRecoveredKeypair,
+    /// The identity's root signing key, signed by the alpha key.
+    root: SignedOrRecoveredKeypair,
     /// Holds our subkeys, signed with our root keypair.
     subkeys: Vec<Subkey>,
 }
 
 impl Keychain {
     /// Create a new keychain
-    pub(crate) fn new(master_key: &SecretKey, alpha_keypair: SignKeypair, policy_keypair: SignKeypair, recovery_keypair: SignKeypair, root_keypair: SignKeypair) -> Result<Self> {
-        let root = SignedValue::new(master_key, &recovery_keypair, root_keypair)?;
+    pub(crate) fn new(master_key: &SecretKey, alpha_keypair: SignKeypair, policy_keypair: SignKeypair, publish_keypair: SignKeypair, root_keypair: SignKeypair) -> Result<Self> {
         let policy = SignedValue::new(master_key, &alpha_keypair, policy_keypair)?;
-        let recovery = SignedValue::new(master_key, &alpha_keypair, recovery_keypair)?;
+        let publish = SignedOrRecoveredKeypair::Signed(SignedValue::new(master_key, &alpha_keypair, publish_keypair)?);
+        let root = SignedOrRecoveredKeypair::Signed(SignedValue::new(master_key, &alpha_keypair, root_keypair)?);
         Ok(Self {
             alpha: alpha_keypair,
             policy,
-            recovery,
+            publish,
             root,
             subkeys: Vec::new(),
         })
@@ -345,10 +403,47 @@ impl Keychain {
             .collect::<Vec<_>>()
     }
 
+    /// Replace our policy signing key.
+    ///
+    /// This moves the current policy key into the subkeys and revokes it.
+    pub(crate) fn set_policy_key(mut self, master_key: &SecretKey, alpha_keypair: &SignKeypair, new_policy_keypair: SignKeypair, reason: RevocationReason) -> Result<Self> {
+        let policy = self.policy().deref().clone();
+        let mut subkey = Subkey::new(master_key, alpha_keypair, Key::Policy(policy), "policy key", "revoked policy key")?;
+        subkey.revoke(master_key, self.root(), reason)?;
+        self.subkeys_mut().push(subkey);
+        self.set_policy(SignedValue::new(master_key, alpha_keypair, new_policy_keypair)?);
+        Ok(self)
+    }
+
+    /// Replace our publish signing key.
+    ///
+    /// This moves the current publish key into the subkeys and revokes it.
+    pub(crate) fn set_publish_key(mut self, master_key: &SecretKey, new_publish_keypair: SignedOrRecoveredKeypair, reason: RevocationReason) -> Result<Self> {
+        let publish = self.publish().deref().clone();
+        let mut subkey = Subkey::new(master_key, self.root(), Key::Publish(publish), "publish key", "revoked publish key")?;
+        subkey.revoke(master_key, &new_publish_keypair, reason)?;
+        self.subkeys_mut().push(subkey);
+        self.set_publish(new_publish_keypair);
+        Ok(self)
+    }
+
+    /// Replace our root signing key.
+    ///
+    /// This moves the current root key into the subkeys, revokes it, and
+    /// updates the signature on all the subkeys (including the old root key).
+    pub(crate) fn set_root_key(mut self, master_key: &SecretKey, new_root_keypair: SignedOrRecoveredKeypair, reason: RevocationReason) -> Result<Self> {
+        let root = self.root().deref().clone();
+        let mut subkey = Subkey::new(master_key, &new_root_keypair, Key::Root(root), "root key", "revoked root key")?;
+        subkey.revoke(master_key, &new_root_keypair, reason)?;
+        self.subkeys_mut().push(subkey);
+        self.set_root(new_root_keypair);
+        self.sign_subkeys(master_key)
+    }
+
     /// Add a new subkey to the keychain (and sign it).
     pub(crate) fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, title: T, description: T) -> Result<Self> {
-        let root = self.root().clone();
-        self.subkeys_mut().push(Subkey::new(master_key, &root, key, title, description)?);
+        let subkey = Subkey::new(master_key, self.root(), key, title, description)?;
+        self.subkeys_mut().push(subkey);
         Ok(self)
     }
 
@@ -359,19 +454,6 @@ impl Keychain {
             subkey.sign(master_key, &root)?;
         }
         Ok(self)
-    }
-
-    /// Replace our root signing key.
-    ///
-    /// This moves the current root key into the subkeys, revokes it, and
-    /// updates the signature on all the subkeys (including the old root key).
-    pub(crate) fn set_root_key(mut self, master_key: &SecretKey, recovery_key: &SignKeypair, new_root_keypair: SignKeypair, reason: RevocationReason) -> Result<Self> {
-        let root = self.root().deref().clone();
-        let mut subkey = Subkey::new(master_key, &new_root_keypair, Key::Sign(root), "root key", "deprecated root key")?;
-        subkey.revoke(master_key, &new_root_keypair, reason)?;
-        self.subkeys_mut().push(subkey);
-        self.set_root(SignedValue::new(master_key, recovery_key, new_root_keypair)?);
-        self.sign_subkeys(master_key)
     }
 
     /// Revoke a subkey.
@@ -398,9 +480,8 @@ impl Keychain {
         let mut keychain_clone = self.clone();
         keychain_clone.set_alpha(self.alpha().public_only());
         keychain_clone.policy_mut().set_value(self.policy().value().public_only());
-        keychain_clone.recovery_mut().set_value(self.recovery().value().public_only());
-        keychain_clone.root_mut().set_value(self.root().value().public_only());
-        //keychain_clone.subkeys().retain
+        keychain_clone.set_publish(self.publish().strip_private());
+        keychain_clone.set_root(self.root().strip_private());
         let subkeys = self.subkeys().clone().into_iter()
             .map(|x| {
                 (x.key().public_only(), x)

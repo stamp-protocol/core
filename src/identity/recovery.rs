@@ -1,28 +1,34 @@
-//! The recovery module provides methods for recovering an identity if it is
-//! "lost" or stolen (ie, the recovery keys are compromised in some way).
+//! The recovery system provides a method for replacing the recovery key (which
+//! has ultimate control over the keychain) in the event it is lost or stolen.
 //!
-//! The idea here is that while the recovery key has ultimate control over the
-//! identity, the management of the recovery key(s) require meeting predefined
-//! conditions (a recovery policy) that's *signed* by the current recovery key.
-//! In other words, if your recovery key is stolen, the thief might be able to
-//! masquerade as you for a while, but they will not be able to change the
-//! recovery key *without first completing the policy outlined in the recovery
-//! section of the identity*.
+//! The idea here is that using our policy keypair, we can create and sign a
+//! recovery policy that allows us to generate a new recovery keypair and
+//! assign it to our identity, provided that it is ratified by some combination
+//! of signatures from other keys. So let's say you create a recovery policy
+//! that requires you to have at least three signatures of the five public
+//! keys that you list (which might belong to family members, identity
+//! companies, or other trusted third parties). If you lose your recovery key,
+//! you can create a recovery request, sign it with the recovery key you hope
+//! to replace the lost one, and try to get three or more signatures on that
+//! request from your trusted circle. If you get the signatures you need, the
+//! protocol will "honor" the replacement request and grant you your new
+//! recovery key, which can be used to then rotate the keys in your keychain.
 //!
-//! This could be something like getting the new recovery key signed by two or
-//! more (pre-selected) trusted parties. Changes to the recovery policy itself
-//! require meeting the policy guidelines itself, otherwise the compromised
-//! recovery keypair could be used to just erase the policy.
+//! The recovery request can do two things: replace the recovery key, and also
+//! set a new policy to replace the old one. In essence, this allows you to
+//! manage most aspects of your identity even without having ready access to the
+//! recovery keypair or policy keypair, which allows them to be safely locked
+//! away (only to be used during emergencies).
 //!
-//! This acts as a safeguard against "identity theft."
-//! 
-//! As an example, you might create a policy that must be signed by two of three
-//! identities that you list as trusted. Or you could create a policy where
-//! either identity A must sign, OR identity B, C *and* D must sign.
+//! The policy itself can require any arbitrary combination of signatures, so
+//! it's really up to the identity holder to choose a policy they feel gives
+//! them the most benefit.
 //!
 //! It's important to weigh accessibilty and security here. You can say *all ten
 //! of the following identities must sign* in order to recover, but if one of
-//! those ten people dies, then you're SOL.
+//! those ten people dies, then you're SOL. If your policy is too difficult to
+//! actually satisfy, then you'll likely keep your recovery key or policy key
+//! hanging around, which might increase your attack surface.
 //!
 //! Another note: the recovery keys we list must be exact matches: signatures
 //! from a subkey of one of those keys won't work. A person must sign a recovery
@@ -36,23 +42,13 @@ use crate::{
         identity::IdentityID,
     },
     key::{SignKeypair, SignKeypairPublic, SignKeypairSignature},
-    //util::sign::SignedValue,
+    util::sign::SignedValue,
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 
-/// A unique identifier for recovery policies.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PolicyID(SignKeypairSignature);
-
-impl Deref for PolicyID {
-    type Target = SignKeypairSignature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
+/*
 /// A unique identifier for recovery requests.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RequestID(SignKeypairSignature);
@@ -79,17 +75,20 @@ pub enum PolicyCondition {
         /// The keys we're listing as identity recovery keys.
         pubkeys: Vec<SignKeypair>,
     },
+    /// A special condition that can never be satisfied. Useful for creating
+    /// policies that cannot be fulfilled.
+    Deny,
 }
 
-/// A recovery policy. Creates a set of conditions where in order for the policy
-/// to validate, we must get signatures from third-party identities.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct RecoveryPolicy {
-    /// Our policy ID, which is a signature of the policy itself.
-    id: PolicyID,
-    /// The conditions under which this policy is satisfied.
-    conditions: PolicyCondition,
+/// The actions we can take on a recovery request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PolicyRequestAction {
+    /// Replace the current recovery policy.
+    ReplacePolicy(PolicyCondition),
+    /// Replace the current recovery key.
+    ReplaceRecoveryKey(SignKeypairPublic),
+    /// Replace both the current policy *and* key.
+    ReplacePolicyAndRecoveryKey(PolicyCondition, SignKeypairPublic),
 }
 
 /// The inner data of a recovery request. This object is what our recovery
@@ -97,20 +96,41 @@ pub struct RecoveryPolicy {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct PolicyRequestEntry {
-    /// The ID of the identity we're trying to recover.
+    /// "The ID of the identity we're trying to recover," he said with a boyish
+    /// grin.
     identity_id: IdentityID,
-    /// The ID of the policy we're trying to satisfy.
-    policy_id: PolicyID,
-    /// The new recovery policy that will replace the curent one (if this
-    /// recovery request satisfies the policy).
-    new_policy: RecoveryPolicy,
-    /// The public key of the new recovery key we're hoping to use to replace
-    /// the old key (if the recovery request satisfies the policy).
-    new_recovery_key: SignKeypairPublic,
+    ///// The ID of the policy we're trying to satisfy.
+    //policy_id: PolicyID,
+    /// What exactly is it we're trying to do.
+    action: PolicyRequestAction,
+}
+
+/// A self-signed signature object. This doesn't need to satisfy the current
+/// recovery policy, because policy key signatures override policies. It does
+/// need to be verifiable even in the event that the policy keypair has been
+/// rotated, so we store the current alpha key's signature of the current policy
+/// key here so we can verify into the past.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct SelfSigned {
+
+}
+
+/// The object we use to sign our request. It can be a set of signatures that
+/// satisfy the conditions of the linked policy, or it can be self-signed by our
+/// policy keypair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PolicyRequestSignatures {
+    /// A set of signatures needed to satisfy a recovery policy, generally from
+    /// pre-selected trusted peer identity holders (like your grandparents).
+    Peer(Vec<SignKeypairSignature>),
+    /// A self-signed policy request (using our policy key, and the current
+    /// alpha keypair signature chain).
+    SelfSigned(SelfSigned),
 }
 
 /// A recovery request. Must be signed and validated according to the identity's
-/// current [recovery policy](crate::identity::recovery::RecoveryPolicy) to be
+/// current [recovery policy](RecoveryPolicy) to be
 /// considered valid.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
@@ -125,18 +145,33 @@ pub struct PolicyRequest {
     /// The signatures on this recovery request's `new_recovery_pubkey` field.
     /// These must satisfy the conditions of the current recovery policy before
     /// this request can be considered valid.
-    signatures: Vec<SignKeypairSignature>,
+    signatures: PolicyRequestSignatures,
 }
 
+/// An executed policy. Effectively, this is a [policy](RecoveryPolicy) matched
+/// with a [policy request](PolicyRequest). This must be signed with our new
+/// recovery keypair when stored.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct ExecutedPolicy {
+    policy: RecoveryPolicy,
+    request: PolicyRequest,
+}
+*/
 /// A collection of recovery requests and recovery policies.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Recovery {
+    /// The recoveries we've performed, each one signed by the replacement
+    /// recovery key instated by the policy request.
+    //executed: Vec<SignedValue<ExecutedPolicy>>,
+    executed: Vec<String>,
 }
 
 impl Recovery {
     pub fn new() -> Result<Self> {
         Ok(Self {
+            executed: vec![],
         })
     }
 }

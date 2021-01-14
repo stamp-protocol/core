@@ -18,7 +18,6 @@ use crate::{
         sign::{DateSigner, SignedValue},
         ser,
     },
-    IdentityVersion,
     VersionedIdentity,
 };
 use getset;
@@ -158,18 +157,34 @@ pub struct Identity {
 impl Identity {
     /// Create a new identity.
     pub fn new(master_key: &SecretKey, now: Timestamp) -> Result<Self> {
+        // top doge
         let alpha_keypair = SignKeypair::new_ed25519(master_key)?;
+        // controls recovery policies (and ultimately the recovery key)
         let policy_keypair = SignKeypair::new_ed25519(master_key)?;
-        let recovery_keypair = SignKeypair::new_ed25519(master_key)?;
+        // control publishing the identity
+        let publish_keypair = SignKeypair::new_ed25519(master_key)?;
+        // controls claims, stamping, the root signature, and signing subkeys
         let root_keypair = SignKeypair::new_ed25519(master_key)?;
+
+        // create our identity's ID
         let id_string = String::from("This is my stamp.");
         let datesigner = DateSigner::new(&now, &id_string);
         let ser = ser::serialize(&datesigner)?;
         let id = IdentityID(alpha_keypair.sign(master_key, &ser)?);
+
+        // create our first claim (the identity claim)
         let identity_claim = ClaimContainer::new(master_key, &root_keypair, now.clone(), ClaimSpec::Identity(id.clone()))?;
+
+        // create a recovery policy that cannot be satisfied.
         let recovery = Recovery::new()?;
-        let keychain = Keychain::new(master_key, alpha_keypair, policy_keypair, recovery_keypair, root_keypair)?;
+
+        // create a new keychain from our keys above.
+        let keychain = Keychain::new(master_key, alpha_keypair, policy_keypair, publish_keypair, root_keypair)?;
+
+        // init our extra data
         let extra_data = IdentityExtraData::new();
+
+        // create the identity
         let blank_root_signature = SignKeypairSignature::blank(keychain.root());
         let mut identity = Self {
             id,
@@ -180,7 +195,10 @@ impl Identity {
             claims: vec![identity_claim],
             extra_data,
         };
+        // ...and sign it with our root keypair
         identity.set_root_signature(identity.generate_root_signature(master_key)?);
+        // just making sure
+        identity.verify()?;
         Ok(identity)
     }
 
@@ -283,10 +301,11 @@ impl Identity {
         // verify our policy and recovery keys against the alpha key
         self.keychain().policy().verify_value(self.keychain().alpha())
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.policy")))?;
-        self.keychain().recovery().verify_value(self.keychain().alpha())
-            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.recovery")))?;
-        // verify the root signing key against the recovery key
-        self.keychain().root().verify_value(self.keychain().recovery())
+        self.keychain().publish().verify_signed(self.keychain().alpha())
+            // TODO: policy verification here
+            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.publish")))?;
+        self.keychain().root().verify_signed(self.keychain().alpha())
+            // TODO: policy verification here
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.root")))?;
 
         // verify our root signature
@@ -323,11 +342,11 @@ impl Identity {
         Ok(self)
     }
 
-    /// Set the root signing key on this identity.
-    pub fn set_root_key(mut self, master_key: &SecretKey, recovery_keypair: &SignKeypair, new_root_keypair: SignKeypair, revocation_reason: RevocationReason) -> Result<Self> {
-        self.set_keychain(self.keychain().clone().set_root_key(master_key, recovery_keypair, new_root_keypair, revocation_reason)?);
-        Ok(self)
-    }
+    ///// Set the root signing key on this identity.
+    //pub fn set_root_key(mut self, master_key: &SecretKey, recovery_keypair: &SignKeypair, new_root_keypair: SignKeypair, revocation_reason: RevocationReason) -> Result<Self> {
+        //self.set_keychain(self.keychain().clone().set_root_key(master_key, recovery_keypair, new_root_keypair, revocation_reason)?);
+        //Ok(self)
+    //}
 
     /// Add a new subkey to our identity.
     pub fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, title: T, description: T) -> Result<Self> {
@@ -368,9 +387,9 @@ impl Identity {
     }
 }
 
-impl VersionedIdentity for Identity {
-    fn version(self) -> IdentityVersion {
-        IdentityVersion::V1(self)
+impl From<Identity> for VersionedIdentity {
+    fn from(identity: Identity) -> Self {
+        VersionedIdentity::V1(identity)
     }
 }
 

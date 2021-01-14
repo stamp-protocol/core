@@ -55,6 +55,19 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> Private<T> {
         let obj: T = ser::deserialize(&open_bytes[..])?;
         Ok(obj)
     }
+
+    /// Re-encrypt the contained secret value with a new key.
+    pub fn rekey(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
+        let serialized = previous_seal_key.open(&self.sealed, &self.nonce)
+            .map_err(|_| Error::CryptoOpenFailed)?;
+        let nonce = new_seal_key.gen_nonce();
+        let sealed = new_seal_key.seal(&serialized, &nonce)?;
+        Ok(Self {
+            _phantom: PhantomData,
+            sealed,
+            nonce,
+        })
+    }
 }
 
 /// Holds the inner data for a `PrivateVerifiable` container.

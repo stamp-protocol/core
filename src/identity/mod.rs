@@ -19,6 +19,7 @@ pub mod stamp;
 pub mod identity;
 
 pub use keychain::*;
+pub use recovery::*;
 pub use claim::*;
 pub use stamp::*;
 pub use identity::*;
