@@ -131,6 +131,22 @@ pub enum Key {
 }
 
 impl Key {
+    /// Returns the `SignKeypair` if this is a policy key.
+    pub fn as_policykey(&self) -> Option<SignKeypair> {
+        match self {
+            Self::Policy(ref x) => Some(x.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns the `SignKeypair` if this is a root key.
+    pub fn as_rootkey(&self) -> Option<SignKeypair> {
+        match self {
+            Self::Root(ref x) => Some(x.clone()),
+            _ => None,
+        }
+    }
+
     /// Returns the `SignKeypair` if this is a signing key.
     pub fn as_signkey(&self) -> Option<SignKeypair> {
         match self {
@@ -307,7 +323,7 @@ impl SignedOrRecoveredKeypair {
     pub fn verify_signed(&self, sign_keypair: &SignKeypair) -> Result<()> {
         match self {
             Self::Signed(signed) => signed.verify_value(sign_keypair),
-            Self::Recovered(_) => Err(Error::CryptoSignatureVerificationFailed),
+            Self::Recovered(_) => Err(Error::SignatureMissing),
         }
     }
 
@@ -383,6 +399,24 @@ impl Keychain {
             root,
             subkeys: Vec::new(),
         })
+    }
+
+    /// Grab all root subkeys.
+    pub fn subkeys_policy(&self) -> Vec<SignKeypair> {
+        self.subkeys().iter()
+            .map(|x| x.key().as_policykey())
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect::<Vec<_>>()
+    }
+
+    /// Grab all root subkeys.
+    pub fn subkeys_root(&self) -> Vec<SignKeypair> {
+        self.subkeys().iter()
+            .map(|x| x.key().as_rootkey())
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect::<Vec<_>>()
     }
 
     /// Grab all signing subkeys.

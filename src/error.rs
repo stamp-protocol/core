@@ -60,10 +60,6 @@ pub enum Error {
     #[error("identity claim not found")]
     IdentityClaimNotFound,
 
-    /// The identity is missing one or more recovery key entries.
-    #[error("identity missing recovery key")]
-    IdentityRecoveryKeyMissing,
-
     /// The subkey being operated on wasn't found
     #[error("identity subkey not found")]
     IdentitySubkeyNotFound,
@@ -75,6 +71,10 @@ pub enum Error {
     /// An IO/net error
     #[error("io error {0:?}")]
     IoError(#[from] std::io::Error),
+
+    /// A key cannot be verified against the executed recovery policy chain.
+    #[error("policy verification of key failed")]
+    PolicyVerificationFailure,
 
     /// Tried to open a private container that has no data
     #[error("attempt to open private object which has no data")]
@@ -91,6 +91,10 @@ pub enum Error {
     #[cfg(test)]
     #[error("generic serialization error")]
     SerializeError,
+
+    /// We're trying to verify a signature on a value, but it's missing.
+    #[error("signature missing on a value")]
+    SignatureMissing,
 }
 
 impl PartialEq for Error {

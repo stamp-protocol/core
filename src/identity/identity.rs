@@ -8,7 +8,7 @@ use crate::{
     error::{Error, Result},
     identity::{
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
-        keychain::{RevocationReason, KeyID, Key, Keychain},
+        keychain::{RevocationReason, SignedOrRecoveredKeypair, KeyID, Key, Keychain},
         recovery::{Recovery},
         stamp::{StampID, Stamp, StampRevocation},
     },
@@ -265,11 +265,11 @@ impl Identity {
 
     /// Verify that a signature and a set of data used to generate that
     /// signature can be verified by at least one of our signing keys.
-    fn verify_signature_multi(&self, sig: &SignKeypairSignature, bytes_to_verify: &[u8]) -> Result<()> {
+    fn verify_signature_multi(&self, keylist: &Vec<SignKeypair>, sig: &SignKeypairSignature, bytes_to_verify: &[u8]) -> Result<()> {
         match self.keychain().root().verify(sig, bytes_to_verify) {
             Ok(_) => Ok(()),
             _ => {
-                for sign_keypair in self.keychain().subkeys_sign() {
+                for sign_keypair in keylist {
                     if sign_keypair.verify(sig, bytes_to_verify).is_ok() {
                         return Ok(());
                     }
@@ -298,24 +298,33 @@ impl Identity {
         self.keychain().alpha().verify(self.id(), &ser)
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.id")))?;
 
-        // verify our policy and recovery keys against the alpha key
+        // verify our policy and root keys against the alpha key and/or the
+        // recovery chain
         self.keychain().policy().verify_value(self.keychain().alpha())
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.policy")))?;
         self.keychain().publish().verify_signed(self.keychain().alpha())
-            // TODO: policy verification here
+            .or_else(|err| {
+                if err != Error::SignatureMissing { return Err(err); }
+                self.recovery().verify_publish(self.keychain().publish().deref())
+            })
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.publish")))?;
         self.keychain().root().verify_signed(self.keychain().alpha())
-            // TODO: policy verification here
+            .or_else(|err| {
+                if err != Error::SignatureMissing { return Err(err); }
+                self.recovery().verify_root(self.keychain().root().deref())
+            })
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.root")))?;
 
-        // verify our root signature
+        // verify our root signature with our root key
         self.keychain().root().verify(self.root_signature(), &ser::serialize(&self.sub_signatures())?)?;
 
-        // now check that our claims are signed with one of our sign keys
+        // now check that our claims are signed with one of our root keys
         for claim in self.claims() {
             let datesigner = DateSigner::new(claim.claim().created(), claim.claim().spec());
             let ser = ser::serialize(&datesigner)?;
-            self.verify_signature_multi(&claim.claim().id(), &ser)
+            let mut search_keys = vec![self.keychain().root().deref().clone()];
+            search_keys.append(&mut self.keychain().subkeys_root());
+            self.verify_signature_multi(&search_keys, &claim.claim().id(), &ser)
                 .map_err(|_| {
                     Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim.claim().id().to_hex()))
                 })?;
@@ -342,11 +351,27 @@ impl Identity {
         Ok(self)
     }
 
-    ///// Set the root signing key on this identity.
-    //pub fn set_root_key(mut self, master_key: &SecretKey, recovery_keypair: &SignKeypair, new_root_keypair: SignKeypair, revocation_reason: RevocationReason) -> Result<Self> {
-        //self.set_keychain(self.keychain().clone().set_root_key(master_key, recovery_keypair, new_root_keypair, revocation_reason)?);
-        //Ok(self)
-    //}
+    /// Set the policy signing key on this identity.
+    pub fn set_policy_key(mut self, master_key: &SecretKey, new_policy_keypair: SignKeypair, revocation_reason: RevocationReason) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().set_policy_key(master_key, self.keychain().alpha(), new_policy_keypair, revocation_reason)?);
+        Ok(self)
+    }
+
+    /// Set the publish signing key on this identity.
+    pub fn set_publish_key(mut self, master_key: &SecretKey, new_publish_keypair: SignKeypair, revocation_reason: RevocationReason) -> Result<Self> {
+        let signed = SignedValue::new(master_key, self.keychain().alpha(), new_publish_keypair)?;
+        let wrapped = SignedOrRecoveredKeypair::Signed(signed);
+        self.set_keychain(self.keychain().clone().set_publish_key(master_key, wrapped, revocation_reason)?);
+        Ok(self)
+    }
+
+    /// Set the root signing key on this identity.
+    pub fn set_root_key(mut self, master_key: &SecretKey, new_root_keypair: SignKeypair, revocation_reason: RevocationReason) -> Result<Self> {
+        let signed = SignedValue::new(master_key, self.keychain().alpha(), new_root_keypair)?;
+        let wrapped = SignedOrRecoveredKeypair::Signed(signed);
+        self.set_keychain(self.keychain().clone().set_root_key(master_key, wrapped, revocation_reason)?);
+        Ok(self)
+    }
 
     /// Add a new subkey to our identity.
     pub fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, title: T, description: T) -> Result<Self> {

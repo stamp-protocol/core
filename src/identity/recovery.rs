@@ -37,18 +37,27 @@
 //! available at the time of verification.
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     identity::{
         identity::IdentityID,
     },
     key::{SignKeypair, SignKeypairPublic, SignKeypairSignature},
-    util::sign::SignedValue,
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 
-/*
+/// A unique identifier for recovery policies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PolicyID(SignKeypairSignature);
+
+impl Deref for PolicyID {
+    type Target = SignKeypairSignature;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// A unique identifier for recovery requests.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RequestID(SignKeypairSignature);
@@ -91,6 +100,14 @@ pub enum PolicyRequestAction {
     ReplacePolicyAndRecoveryKey(PolicyCondition, SignKeypairPublic),
 }
 
+/// A recovery policy.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct RecoveryPolicy {
+    id: PolicyID,
+    conditions: PolicyCondition,
+}
+
 /// The inner data of a recovery request. This object is what our recovery
 /// compadres sign when they help us execute a recovery request.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
@@ -99,8 +116,8 @@ pub struct PolicyRequestEntry {
     /// "The ID of the identity we're trying to recover," he said with a boyish
     /// grin.
     identity_id: IdentityID,
-    ///// The ID of the policy we're trying to satisfy.
-    //policy_id: PolicyID,
+    /// The ID of the policy we're trying to satisfy.
+    policy_id: PolicyID,
     /// What exactly is it we're trying to do.
     action: PolicyRequestAction,
 }
@@ -157,7 +174,7 @@ pub struct ExecutedPolicy {
     policy: RecoveryPolicy,
     request: PolicyRequest,
 }
-*/
+
 /// A collection of recovery requests and recovery policies.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
@@ -173,6 +190,14 @@ impl Recovery {
         Ok(Self {
             executed: vec![],
         })
+    }
+
+    pub(crate) fn verify_publish(&self, _publish_keypair: &SignKeypair) -> Result<()> {
+        Err(Error::PolicyVerificationFailure)
+    }
+
+    pub(crate) fn verify_root(&self, _root_keypair: &SignKeypair) -> Result<()> {
+        Err(Error::PolicyVerificationFailure)
     }
 }
 
