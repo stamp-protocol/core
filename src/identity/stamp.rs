@@ -3,7 +3,7 @@
 use crate::{
     error::Result,
     identity::{
-        Claim,
+        {Claim, ClaimID},
         IdentityID,
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
@@ -37,6 +37,8 @@ impl Deref for StampID {
 pub struct StampEntry {
     /// The ID of the identity that is stamping.
     stamper: IdentityID,
+    /// The ID of the claim we're stamping.
+    claim_id: ClaimID,
     /// How much confidence the stamper has that the claim being stamped is
     /// valid. This is a value between 0 and 255, and is ultimately a ratio
     /// via `c / 255`, where 0.0 is "lowest confidence" and 1.0 is "ultimate
@@ -54,9 +56,10 @@ pub struct StampEntry {
 
 impl StampEntry {
     /// Create a new stamp entry.
-    fn new<T: Into<Timestamp>>(stamper: IdentityID, confidence: u8, date_signed: T, expires: Option<T>) -> Self {
+    fn new<T: Into<Timestamp>>(stamper: IdentityID, claim_id: ClaimID, confidence: u8, date_signed: T, expires: Option<T>) -> Self {
         Self {
             stamper,
+            claim_id,
             confidence,
             date_signed: date_signed.into(),
             expires: expires.map(|x| x.into()),
@@ -111,7 +114,7 @@ impl Stamp {
     /// This must be created by the identity validating the claim, using their
     /// private signing key.
     pub fn stamp<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: T, claim: &Claim, expires: Option<T>) -> Result<Self> {
-        let entry = StampEntry::new(stamper.clone(), confidence, now, expires);
+        let entry = StampEntry::new(stamper.clone(), claim.id().clone(), confidence, now, expires);
         let container = StampSignatureContainer::new(&entry, claim);
         let ser = ser::serialize(&container)?;
         let signature = sign_keypair.sign(master_key, &ser)?;
@@ -165,6 +168,15 @@ impl AcceptedStamp {
             recorded: now,
             signature,
         })
+    }
+
+    /// Verify the accepted stamp. Note that we cannot verify the stamp itself
+    /// without the signing identity being known, so for now we just verify the
+    /// acceptance.
+    pub fn verify(&self, sign_keypair: &SignKeypair) -> Result<()> {
+        let datesigner = DateSigner::new(self.recorded(), self.stamp());
+        let serialized = ser::serialize(&datesigner)?;
+        sign_keypair.verify(self.signature(), &serialized)
     }
 }
 

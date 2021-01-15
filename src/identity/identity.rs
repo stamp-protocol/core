@@ -10,7 +10,7 @@ use crate::{
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
         keychain::{RevocationReason, SignedOrRecoveredKeypair, KeyID, Key, Keychain},
         recovery::{Recovery},
-        stamp::{StampID, Stamp, StampRevocation},
+        stamp::{StampID, Stamp, StampRevocation, AcceptedStamp},
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
     util::{
@@ -265,18 +265,15 @@ impl Identity {
 
     /// Verify that a signature and a set of data used to generate that
     /// signature can be verified by at least one of our signing keys.
-    fn verify_signature_multi(&self, keylist: &Vec<SignKeypair>, sig: &SignKeypairSignature, bytes_to_verify: &[u8]) -> Result<()> {
-        match self.keychain().root().verify(sig, bytes_to_verify) {
-            Ok(_) => Ok(()),
-            _ => {
-                for sign_keypair in keylist {
-                    if sign_keypair.verify(sig, bytes_to_verify).is_ok() {
-                        return Ok(());
-                    }
-                }
-                Err(Error::CryptoSignatureVerificationFailed)
+    fn try_keys<F>(&self, keylist: &Vec<SignKeypair>, sigfn: F) -> Result<()>
+        where F: Fn(&SignKeypair) -> Result<()>,
+    {
+        for sign_keypair in keylist {
+            if sigfn(sign_keypair).is_ok() {
+                return Ok(());
             }
         }
+        Err(Error::CryptoSignatureVerificationFailed)
     }
 
     /// Verify that the portions of this identity that can be verified, mainly
@@ -316,18 +313,28 @@ impl Identity {
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.root")))?;
 
         // verify our root signature with our root key
-        self.keychain().root().verify(self.root_signature(), &ser::serialize(&self.sub_signatures())?)?;
+        self.keychain().root().verify(self.root_signature(), &ser::serialize(&self.sub_signatures())?)
+            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.root_signature")))?;
+
+        let root_keys = self.keychain().keys_root();
 
         // now check that our claims are signed with one of our root keys
         for claim in self.claims() {
             let datesigner = DateSigner::new(claim.claim().created(), claim.claim().spec());
             let ser = ser::serialize(&datesigner)?;
-            let mut search_keys = vec![self.keychain().root().deref().clone()];
-            search_keys.append(&mut self.keychain().subkeys_root());
-            self.verify_signature_multi(&search_keys, &claim.claim().id(), &ser)
+            self.try_keys(&root_keys, |sign_keypair| sign_keypair.verify(&claim.claim().id(), &ser))
                 .map_err(|_| {
-                    Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim.claim().id().to_hex()))
+                    let claim_id = base64::encode_config(claim.claim().id().as_ref(), base64::URL_SAFE_NO_PAD);
+                    Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim_id))
                 })?;
+            for stamp in claim.stamps() {
+                self.try_keys(&root_keys, |sign_keypair| stamp.verify(sign_keypair))
+                    .map_err(|_| {
+                        let claim_id = base64::encode_config(claim.claim().id().as_ref(), base64::URL_SAFE_NO_PAD);
+                        let stamp_id = base64::encode_config(stamp.stamp().id().as_ref(), base64::URL_SAFE_NO_PAD);
+                        Error::IdentityVerificationFailed(format!("identity.claims[{}].stamps[{}]", claim_id, stamp_id))
+                    })?;
+            }
         }
 
         Ok(())
@@ -341,13 +348,31 @@ impl Identity {
         Ok(self)
     }
 
+    /// Look up a claim by ID
+    pub fn find_claim(&self, claim_id: &ClaimID) -> Option<&ClaimContainer> {
+        self.claims().iter().find(|x| x.claim().id() == claim_id)
+    }
+
+    /// Accept a stamp on one of our claims
+    pub fn accept_stamp<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, stamp: Stamp) -> Result<Self> {
+        let claim_id = stamp.entry().claim_id();
+        let root_key = self.keychain().root().clone();
+        let claim = self.claims_mut().iter_mut().find(|x| x.claim().id() == claim_id)
+            .ok_or(Error::IdentityClaimNotFound)?;
+        let accepted = AcceptedStamp::accept(master_key, &root_key, stamp, now.into())?;
+        claim.stamps_mut().push(accepted);
+        self.set_root_signature(self.generate_root_signature(master_key)?);
+        Ok(self)
+    }
+
     /// Remove a claim from this identity, including any stamps it has received.
-    pub fn remove_claim(mut self, id: &ClaimID) -> Result<Self> {
+    pub fn remove_claim(mut self, master_key: &SecretKey, id: &ClaimID) -> Result<Self> {
         let exists = self.claims().iter().find(|x| x.claim().id() == id);
         if exists.is_none() {
             Err(Error::IdentityClaimNotFound)?;
         }
         self.claims_mut().retain(|x| x.claim().id() != id);
+        self.set_root_signature(self.generate_root_signature(master_key)?);
         Ok(self)
     }
 
@@ -370,24 +395,28 @@ impl Identity {
         let signed = SignedValue::new(master_key, self.keychain().alpha(), new_root_keypair)?;
         let wrapped = SignedOrRecoveredKeypair::Signed(signed);
         self.set_keychain(self.keychain().clone().set_root_key(master_key, wrapped, revocation_reason)?);
+        self.set_root_signature(self.generate_root_signature(master_key)?);
         Ok(self)
     }
 
     /// Add a new subkey to our identity.
     pub fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, title: T, description: T) -> Result<Self> {
         self.set_keychain(self.keychain().clone().add_subkey(master_key, key, title, description)?);
+        self.set_root_signature(self.generate_root_signature(master_key)?);
         Ok(self)
     }
 
     /// Revoke one of our subkeys, for instance if it has been compromised.
     pub fn revoke_subkey(mut self, master_key: &SecretKey, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
         self.set_keychain(self.keychain().clone().revoke_subkey(master_key, key_id, reason)?);
+        self.set_root_signature(self.generate_root_signature(master_key)?);
         Ok(self)
     }
 
     /// Remove a subkey from the keychain.
-    pub fn delete_subkey(mut self, key_id: &KeyID) -> Result<Self> {
+    pub fn delete_subkey(mut self, master_key: &SecretKey, key_id: &KeyID) -> Result<Self> {
         self.set_keychain(self.keychain().clone().delete_subkey(key_id)?);
+        self.set_root_signature(self.generate_root_signature(master_key)?);
         Ok(self)
     }
 
@@ -441,8 +470,15 @@ mod tests {
     #[test]
     fn verify() {
         let master_key = gen_master_key();
-        let now = Timestamp::now();
-        let identity = Identity::new(&master_key, now).unwrap();
+        let identity = Identity::new(&master_key, Timestamp::now()).unwrap();
+
+        let master_key2 = gen_master_key();
+        let identity2 = Identity::new(&master_key2, Timestamp::now()).unwrap();
+
+        let claim = identity.claims()[0].claim();
+        let stamp = identity2.stamp(&master_key2, 64, Timestamp::now(), claim, None).unwrap();
+
+        let identity = identity.accept_stamp(&master_key, Timestamp::now(), stamp).unwrap();
         assert_eq!(identity.verify(), Ok(()));
     }
 

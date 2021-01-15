@@ -401,7 +401,13 @@ impl Keychain {
         })
     }
 
-    /// Grab all root subkeys.
+    /// Grab all policy subkeys.
+    pub fn keys_policy(&self) -> Vec<SignKeypair> {
+        let mut search_keys = vec![self.policy().deref().clone()];
+        search_keys.append(&mut self.subkeys_policy());
+        search_keys
+    }
+
     pub fn subkeys_policy(&self) -> Vec<SignKeypair> {
         self.subkeys().iter()
             .map(|x| x.key().as_policykey())
@@ -410,8 +416,14 @@ impl Keychain {
             .collect::<Vec<_>>()
     }
 
-    /// Grab all root subkeys.
-    pub fn subkeys_root(&self) -> Vec<SignKeypair> {
+    /// Grab all root keys.
+    pub fn keys_root(&self) -> Vec<SignKeypair> {
+        let mut search_keys = vec![self.root().deref().clone()];
+        search_keys.append(&mut self.subkeys_root());
+        search_keys
+    }
+
+    fn subkeys_root(&self) -> Vec<SignKeypair> {
         self.subkeys().iter()
             .map(|x| x.key().as_rootkey())
             .filter(|x| x.is_some())
