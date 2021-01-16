@@ -64,12 +64,8 @@ pub(crate) mod human_bytes {
     {
         if serializer.is_human_readable() {
             serializer.serialize_str(&base64_encode(bytes.as_slice()))
-            //serializer.collect_str(&format!("0x{}", hex::encode(bytes.as_slice())))
-            //serializer.serialize_str(&base64::encode_config(bytes.as_slice(), base64::URL_SAFE_NO_PAD))
-            //serializer.collect_str(&base64::display::Base64Display::with_config(bytes.as_ref(), base64::URL_SAFE_NO_PAD))
         } else {
-            //serde_bytes::serialize(bytes, serializer)
-            serializer.serialize_bytes(bytes.as_ref())
+            serde_bytes::serialize(bytes, serializer)
         }
     }
 
@@ -78,13 +74,9 @@ pub(crate) mod human_bytes {
     {
         if deserializer.is_human_readable() {
             let s = <String>::deserialize(deserializer)?;
-            //hex::decode(&s[2..]).map_err(de::Error::custom)
-            //base64::decode_config(s, base64::URL_SAFE_NO_PAD).map_err(de::Error::custom)
             base64_decode(s).map_err(de::Error::custom)
         } else {
             serde_bytes::deserialize(deserializer)
-            //let slice = <Vec<u8>>::deserialize(deserializer)?;
-            //Ok(Vec::from(slice))
         }
     }
 }
@@ -98,8 +90,6 @@ pub(crate) mod human_binary_from_slice {
               T: AsRef<[u8]>,
     {
         if serializer.is_human_readable() {
-            //serializer.collect_str(&format!("0x{}", hex::encode(bytes.as_ref())))
-            //serializer.serialize_str(&base64::encode_config(bytes.as_ref(), base64::URL_SAFE_NO_PAD))
             serializer.serialize_str(&base64_encode(bytes))
         } else {
             serializer.serialize_bytes(bytes.as_ref())
@@ -112,8 +102,6 @@ pub(crate) mod human_binary_from_slice {
     {
         if deserializer.is_human_readable() {
             let s = <String>::deserialize(deserializer)?;
-            //let vec = hex::decode(&s[2..]).map_err(de::Error::custom)?;
-            //let vec = base64::decode_config(s, base64::URL_SAFE_NO_PAD).map_err(de::Error::custom)?;
             let vec = base64_decode(s).map_err(de::Error::custom)?;
             let val = T::try_from_slice(&vec[..]).map_err(|_| de::Error::custom(String::from("bad slice length")))?;
             Ok(val)
