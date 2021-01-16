@@ -56,6 +56,10 @@ pub enum Error {
     #[error("deserialization error")]
     Deserialize(#[from] rmp_serde::decode::Error),
 
+    /// An error while engaging in deserialization.
+    #[error("deserialization error")]
+    DeserializeBase64(#[from] base64::DecodeError),
+
     /// The claim being operated on wasn't found
     #[error("identity claim not found")]
     IdentityClaimNotFound,
@@ -89,7 +93,7 @@ pub enum Error {
     SerializeYaml(#[from] serde_yaml::Error),
 
     #[cfg(test)]
-    #[error("generic serialization error")]
+    #[error("generic (de)serialization error")]
     SerializeError,
 
     /// We're trying to verify a signature on a value, but it's missing.

@@ -155,22 +155,14 @@ pub struct Identity {
 }
 
 impl Identity {
-    /// Create a new identity.
-    pub fn new(master_key: &SecretKey, now: Timestamp) -> Result<Self> {
-        // top doge
-        let alpha_keypair = SignKeypair::new_ed25519(master_key)?;
+    /// Inner implementation of the identity creator.
+    fn new_impl(master_key: &SecretKey, now: Timestamp, alpha_keypair: SignKeypair, id: IdentityID) -> Result<Self> {
         // controls recovery policies (and ultimately the recovery key)
         let policy_keypair = SignKeypair::new_ed25519(master_key)?;
         // control publishing the identity
         let publish_keypair = SignKeypair::new_ed25519(master_key)?;
         // controls claims, stamping, the root signature, and signing subkeys
         let root_keypair = SignKeypair::new_ed25519(master_key)?;
-
-        // create our identity's ID
-        let id_string = String::from("This is my stamp.");
-        let datesigner = DateSigner::new(&now, &id_string);
-        let ser = ser::serialize(&datesigner)?;
-        let id = IdentityID(alpha_keypair.sign(master_key, &ser)?);
 
         // create our first claim (the identity claim)
         let identity_claim = ClaimContainer::new(master_key, &root_keypair, now.clone(), ClaimSpec::Identity(id.clone()))?;
@@ -200,6 +192,39 @@ impl Identity {
         // just making sure
         identity.verify()?;
         Ok(identity)
+    }
+
+    /// Create a new random identity.
+    pub fn new(master_key: &SecretKey, now: Timestamp) -> Result<Self> {
+        // top doge key
+        let alpha_keypair = SignKeypair::new_ed25519(master_key)?;
+
+        // create our identity's ID
+        let id_string = String::from("This is my stamp.");
+        let datesigner = DateSigner::new(&now, &id_string);
+        let ser = ser::serialize(&datesigner)?;
+        let id = IdentityID(alpha_keypair.sign(master_key, &ser)?);
+
+        Identity::new_impl(master_key, now, alpha_keypair, id)
+    }
+
+    /// Create a new identity with a vanity prefixed ID.
+    pub fn new_vanity(master_key: &SecretKey, now: Timestamp, prefix: &str) -> Result<Self> {
+        let mut alpha_keypair;
+        let mut id;
+        loop {
+            alpha_keypair = SignKeypair::new_ed25519(master_key)?;
+            let id_string = String::from("This is my stamp.");
+            let datesigner = DateSigner::new(&now, &id_string);
+            let ser = ser::serialize(&datesigner)?;
+            id = IdentityID(alpha_keypair.sign(master_key, &ser)?);
+            let based = ser::base64_encode(id.as_ref());
+            println!("- trying {}", based);
+            if based.starts_with(prefix) {
+                break;
+            }
+        }
+        Identity::new_impl(master_key, now, alpha_keypair, id)
     }
 
     /// Return a version of this identity without and private data (secret keys,

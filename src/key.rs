@@ -336,14 +336,14 @@ impl CryptoKeypair {
 
 
 /// Generate a master key from a passphrase/salt
-pub fn derive_master_key(passphrase: &[u8], salt: &[u8; argon2id13::SALTBYTES]) -> Result<SecretKey> {
+pub fn derive_master_key(passphrase: &[u8], salt: &[u8; argon2id13::SALTBYTES], ops: argon2id13::OpsLimit, mem: argon2id13::MemLimit) -> Result<SecretKey> {
     let len = xsalsa20poly1305::KEYBYTES;
     let mut key: Vec<u8> = vec![0; len];
     let salt_wrap = match argon2id13::Salt::from_slice(salt) {
         Some(x) => x,
         None => Err(Error::CryptoBadSalt)?,
     };
-    match argon2id13::derive_key(key.as_mut_slice(), passphrase, &salt_wrap, argon2id13::OPSLIMIT_MODERATE, argon2id13::MEMLIMIT_MODERATE) {
+    match argon2id13::derive_key(key.as_mut_slice(), passphrase, &salt_wrap, ops, mem) {
         Ok(x) => {
             let rawkey = xsalsa20poly1305::Key::from_slice(x).ok_or(Error::CryptoKDFFailed)?;
             let seckey = SecretKey::Xsalsa20Poly1305(rawkey);
@@ -423,8 +423,8 @@ mod tests {
         let id = util::hash("my key".as_bytes()).unwrap();
         let salt = util::hash(id.as_ref()).unwrap();
         let saltbytes: [u8; argon2id13::SALTBYTES] = salt.as_ref()[0..argon2id13::SALTBYTES].try_into().unwrap();
-        let master_key = derive_master_key("ZONING IS COMMUNISM".as_bytes(), &saltbytes).unwrap();
-        assert_eq!(master_key.as_ref(), &[191, 236, 76, 249, 25, 39, 71, 203, 144, 167, 11, 131, 221, 21, 4, 194, 6, 176, 163, 123, 238, 170, 148, 29, 236, 186, 130, 157, 51, 202, 207, 169]);
+        let master_key = derive_master_key("ZONING IS COMMUNISM".as_bytes(), &saltbytes, argon2id13::OPSLIMIT_INTERACTIVE, argon2id13::MEMLIMIT_INTERACTIVE).unwrap();
+        assert_eq!(master_key.as_ref(), &[148, 34, 57, 50, 168, 111, 176, 114, 120, 168, 159, 158, 96, 119, 14, 194, 52, 224, 58, 194, 77, 44, 168, 25, 54, 138, 172, 91, 164, 86, 190, 89]);
     }
 
     #[test]
