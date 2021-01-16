@@ -12,6 +12,7 @@
 
 use crate::{
     error::{Error, Result},
+    identity::Public,
     private::{Private},
     util::{
         ser::TryFromSlice,
@@ -141,15 +142,6 @@ impl SignKeypair {
         Ok(Self::Ed25519(public, Some(Private::seal(master_key, &secret)?)))
     }
 
-    /// Return a copy of this keypair with only the public key attached.
-    pub fn public_only(&self) -> Self {
-        match self {
-            Self::Ed25519(pubkey, _) => {
-                Self::Ed25519(pubkey.clone(), None)
-            }
-        }
-    }
-
     /// Convert this signing keypair into a signing public key.
     pub fn into_public(self) -> SignKeypairPublic {
         From::from(self)
@@ -178,6 +170,16 @@ impl SignKeypair {
                 } else {
                     Err(Error::CryptoSignatureVerificationFailed)
                 }
+            }
+        }
+    }
+}
+
+impl Public for SignKeypair {
+    fn strip_private(&self) -> Self {
+        match self {
+            Self::Ed25519(pubkey, _) => {
+                Self::Ed25519(pubkey.clone(), None)
             }
         }
     }
@@ -269,15 +271,6 @@ impl CryptoKeypair {
         Ok(Self::Curve25519Xsalsa20Poly1305(public, Some(Private::seal(master_key, &secret)?)))
     }
 
-    /// Return a copy of this keypair with only the public key attached.
-    pub fn public_only(&self) -> Self {
-        match self {
-            Self::Curve25519Xsalsa20Poly1305(ref pubkey, _) => {
-                Self::Curve25519Xsalsa20Poly1305(pubkey.clone(), None)
-            }
-        }
-    }
-
     /// Anonymously encrypt a message using the recipient's public key.
     pub fn seal_anonymous(their_pk: &CryptoKeypair, data: &[u8]) -> Result<Vec<u8>> {
         match their_pk {
@@ -334,6 +327,15 @@ impl CryptoKeypair {
     }
 }
 
+impl Public for CryptoKeypair {
+    fn strip_private(&self) -> Self {
+        match self {
+            Self::Curve25519Xsalsa20Poly1305(ref pubkey, _) => {
+                Self::Curve25519Xsalsa20Poly1305(pubkey.clone(), None)
+            }
+        }
+    }
+}
 
 /// Generate a master key from a passphrase/salt
 pub fn derive_master_key(passphrase: &[u8], salt: &[u8; argon2id13::SALTBYTES], ops: argon2id13::OpsLimit, mem: argon2id13::MemLimit) -> Result<SecretKey> {

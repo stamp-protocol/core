@@ -7,7 +7,10 @@
 //! readily supported by rust, we kind of have to take things into our own hands
 //! here and just make some serialization calls.
 
-use crate::error::Result;
+use crate::{
+    error::Result,
+    identity::Public,
+};
 use serde::{Serialize, de::DeserializeOwned};
 
 pub(crate) fn serialize<T: Serialize>(obj: &T) -> Result<Vec<u8>> {
@@ -16,8 +19,10 @@ pub(crate) fn serialize<T: Serialize>(obj: &T) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-pub(crate) fn serialize_human<T: Serialize>(obj: &T) -> Result<String> {
-    Ok(serde_yaml::to_string(obj)?)
+pub(crate) fn serialize_human<T>(obj: &T) -> Result<String>
+    where T: Serialize + Public
+{
+    Ok(serde_yaml::to_string(&obj.strip_private())?)
 }
 
 pub(crate) fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {

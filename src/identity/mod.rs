@@ -31,6 +31,17 @@ use crate::{
 };
 use serde_derive::{Serialize, Deserialize};
 
+pub(crate) trait Public: Clone {
+    /// Strip the private data from a object, returning only public data.
+    fn strip_private(&self) -> Self;
+}
+
+pub(crate) trait PublicMaybe: Clone {
+    /// Strip the private data from a object, unless the object is entirely
+    /// private in which case return None.
+    fn strip_private_maybe(&self) -> Option<Self>;
+}
+
 /// Allows identity formats to be versioned so as to not break compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VersionedIdentity {
@@ -52,6 +63,14 @@ impl VersionedIdentity {
     fn strip_private(&self) -> Self {
         match self {
             Self::V1(identity) => Self::V1(identity.strip_private()),
+        }
+    }
+}
+
+impl Public for VersionedIdentity {
+    fn strip_private(&self) -> Self {
+        match self {
+            Self::V1(id) => Self::V1(id.strip_private()),
         }
     }
 }
@@ -91,12 +110,20 @@ impl PublishedIdentity {
 
     /// Serialize this versioned identity into a human readable format
     pub fn serialize(&self) -> Result<String> {
-        ser::serialize_human(&self)
+        ser::serialize_human(self)
     }
 
     /// Deserialize this versioned identity from a byte vector.
     pub fn deserialize(slice: &[u8]) -> Result<Self> {
         ser::deserialize_human(slice)
+    }
+}
+
+impl Public for PublishedIdentity {
+    fn strip_private(&self) -> Self {
+        let mut clone = self.clone();
+        clone.set_identity(self.identity().strip_private());
+        clone
     }
 }
 

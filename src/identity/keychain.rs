@@ -14,6 +14,7 @@
 
 use crate::{
     error::{Error, Result},
+    identity::{Public, PublicMaybe},
     key::{SecretKey, SignKeypairSignature, SignKeypair, CryptoKeypair},
     private::Private,
     util::{ser, sign::SignedValue},
@@ -170,15 +171,16 @@ impl Key {
             _ => None,
         }
     }
+}
 
-    /// Returns a version of this key without any private data. Useful for signing.
-    pub(crate) fn public_only(&self) -> Option<Self> {
+impl PublicMaybe for Key {
+    fn strip_private_maybe(&self) -> Option<Self> {
         match self {
-            Self::Policy(keypair) => Some(Self::Policy(keypair.public_only())),
-            Self::Publish(keypair) => Some(Self::Publish(keypair.public_only())),
-            Self::Root(keypair) => Some(Self::Root(keypair.public_only())),
-            Self::Sign(keypair) => Some(Self::Sign(keypair.public_only())),
-            Self::Crypto(keypair) => Some(Self::Crypto(keypair.public_only())),
+            Self::Policy(keypair) => Some(Self::Policy(keypair.strip_private())),
+            Self::Publish(keypair) => Some(Self::Publish(keypair.strip_private())),
+            Self::Root(keypair) => Some(Self::Root(keypair.strip_private())),
+            Self::Sign(keypair) => Some(Self::Sign(keypair.strip_private())),
+            Self::Crypto(keypair) => Some(Self::Crypto(keypair.strip_private())),
             Self::Secret(_) => None,
             Self::ExtensionKeypair(public, _) => Some(Self::ExtensionKeypair(public.clone(), None)),
             Self::ExtensionSecret(_) => None,
@@ -211,11 +213,13 @@ impl KeyEntry {
             description,
         }
     }
+}
 
+impl PublicMaybe for KeyEntry {
     /// Returns a version of this key(entry) without any private data. Useful
     /// for signing.
-    pub(crate) fn public_only(&self) -> Option<Self> {
-        match self.key().public_only() {
+    fn strip_private_maybe(&self) -> Option<Self> {
+        match self.key().strip_private_maybe() {
             Some(x) => {
                 let mut clone = self.clone();
                 clone.set_key(x);
@@ -286,7 +290,7 @@ impl Subkey {
         // keys (and give them an id), but because we don't publish them there's
         // really no need to sign any kind of verifiable data (it's only used
         // for our own personal amusement).
-        let maybe_public = self.key().public_only();
+        let maybe_public = self.key().strip_private_maybe();
         let key = match maybe_public.as_ref() {
             Some(public) => public,
             None => self.key(),
@@ -332,10 +336,10 @@ impl SignedOrRecoveredKeypair {
         match self {
             Self::Signed(signed) => {
                 let mut signed_clone = signed.clone();
-                signed_clone.set_value(signed.public_only());
+                signed_clone.set_value(signed.strip_private());
                 Self::Signed(signed_clone)
             }
-            Self::Recovered(keypair) => Self::Recovered(keypair.public_only())
+            Self::Recovered(keypair) => Self::Recovered(keypair.strip_private())
         }
     }
 }
@@ -521,16 +525,18 @@ impl Keychain {
         self.subkeys_mut().retain(|x| x.id() != key_id);
         Ok(self)
     }
+}
 
-    pub(crate) fn strip_private(&self) -> Self {
+impl Public for Keychain {
+    fn strip_private(&self) -> Self {
         let mut keychain_clone = self.clone();
-        keychain_clone.set_alpha(self.alpha().public_only());
-        keychain_clone.policy_mut().set_value(self.policy().value().public_only());
+        keychain_clone.set_alpha(self.alpha().strip_private());
+        keychain_clone.policy_mut().set_value(self.policy().value().strip_private());
         keychain_clone.set_publish(self.publish().strip_private());
         keychain_clone.set_root(self.root().strip_private());
         let subkeys = self.subkeys().clone().into_iter()
             .map(|x| {
-                (x.key().public_only(), x)
+                (x.key().strip_private_maybe(), x)
             })
             .filter(|x| x.0.is_some())
             .map(|(key, mut subkey)| {

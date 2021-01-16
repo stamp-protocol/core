@@ -11,6 +11,9 @@ use crate::{
         keychain::{RevocationReason, SignedOrRecoveredKeypair, KeyID, Key, Keychain},
         recovery::{Recovery},
         stamp::{StampID, Stamp, StampRevocation, AcceptedStamp},
+
+        Public,
+        PublicMaybe,
         VersionedIdentity,
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
@@ -227,14 +230,6 @@ impl Identity {
         Identity::new_impl(master_key, now, alpha_keypair, id)
     }
 
-    /// Return a version of this identity without and private data (secret keys,
-    /// mainly).
-    pub(crate) fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        clone.set_keychain(self.keychain().clone().strip_private());
-        clone
-    }
-
     /// Grab a list of all our identity's sub-signatures.
     fn sub_signatures(&self) -> Vec<&SignKeypairSignature> {
         let mut signatures = vec![
@@ -247,7 +242,7 @@ impl Identity {
             // published and can be verified. secret keys are not published and
             // therefor cannot be verified (so we don't add them to verification
             // chain)..
-            match subkey.key().public_only() {
+            match subkey.key().strip_private_maybe() {
                 Some(_) => signatures.push(&subkey.id()),
                 None => {}
             }
@@ -463,6 +458,14 @@ impl Identity {
     /// that medium before accepting a stamped claim as given.
     pub fn revoke_stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, stamp_id: StampID, date_revoked: T) -> Result<StampRevocation> {
         StampRevocation::new(master_key, self.keychain().root(), self.id().clone(), stamp_id, date_revoked)
+    }
+}
+
+impl Public for Identity {
+    fn strip_private(&self) -> Self {
+        let mut clone = self.clone();
+        clone.set_keychain(self.keychain().clone().strip_private());
+        clone
     }
 }
 
