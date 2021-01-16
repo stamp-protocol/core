@@ -9,10 +9,11 @@ use sodiumoxide::{
 use std::ops::Deref;
 
 #[macro_use]
-pub mod ser;
+pub(crate) mod ser;
 pub(crate) mod sign;
 
 /// Hash arbitrary data using blake2b
+#[allow(dead_code)]
 pub fn hash(data: &[u8]) -> Result<generichash::Digest> {
     let mut state = generichash::State::new(generichash::DIGEST_MAX, None)
         .map_err(|_| Error::CryptoHashStateInitError)?;

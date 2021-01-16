@@ -11,6 +11,7 @@ use crate::{
         keychain::{RevocationReason, SignedOrRecoveredKeypair, KeyID, Key, Keychain},
         recovery::{Recovery},
         stamp::{StampID, Stamp, StampRevocation, AcceptedStamp},
+        VersionedIdentity,
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
     util::{
@@ -18,7 +19,6 @@ use crate::{
         sign::{DateSigner, SignedValue},
         ser,
     },
-    VersionedIdentity,
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};

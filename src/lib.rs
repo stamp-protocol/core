@@ -47,11 +47,11 @@
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM$VF*::::::::::::::*F$NMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMN$F**:::::::::::***::::**$NMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMNV****:**********************$NMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-// MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMN$*::*:***********FFFFFFFFF******VNMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-// MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMNF::::::**********FFFFFFFFFFFFFF*::*$MMMMMMMMMMMMMMMMMMMMMMMMMMMMM
-// MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMN*::::::::*************FFFFFFFFFFF*::*$MMMMMMMMMMMMMMMMMMMMMMMMMMMM
-// MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM$::::::::****************FFFFFFFFFF*::*MMMMMMMMMMMMMMMMMMMMMMMMMMMM
-// MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMN*::::::::****************FFFFFFFFFF*::*MMMMMMMMMMMMMMMMMMMMMMMMMMMM
+// MMMMM              MMMMMMMMMMMMMMMMN$*::*:***********FFFFFFFFF******VNMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+// MMMMM      IS      MMMMMMMMMMMMMMMNF::::::**********FFFFFFFFFFFFFF*::*$MMMMMMMMMMMMMMMMMMMMMMMMMMMMM
+// MMMMM      IT      MMMMMMMMMMMMMMN*::::::::*************FFFFFFFFFFF*::*$MMMMMMMMMMMMMMMMMMMMMMMMMMMM
+// MMMMM   STAMPED?   MMMMMMMMMMMMMM$::::::::****************FFFFFFFFFF*::*MMMMMMMMMMMMMMMMMMMMMMMMMMMM
+// MMMMM              MMMMMMMMMMMMMN*::::::::****************FFFFFFFFFF*::*MMMMMMMMMMMMMMMMMMMMMMMMMMMM
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMF::**:::::::****************FFFFFFF***:*$MMMMMMMMMMMMMMMMMMMMMMMMMMM
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMF:***::::::::::*******************FF***:IMMMMMMMMMMMMMMMMMMMMMMMMMMM
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM$*****:::::::::::*****************FFF***VMMMMMMMMMMMMMMMMMMMMMMMMMMM
@@ -90,110 +90,11 @@
 // ........:*FF*:FFVVVV*.:..:::***:..........................................................::..::.:::
 // .........:**...:FVVV*......::**:......:::::::...........................................::::..::::::
 // ................:***:......:::**....:::::::::::.........................................::::....::.:
-//
-// [Is it stamped?]
-
-use serde_derive::{Serialize, Deserialize};
 
 pub mod error;
 #[macro_use]
-pub mod util;
+pub(crate) mod util;
 pub mod private;
 pub mod key;
 pub mod identity;
-
-use crate::{
-    key::{SecretKey, SignKeypairSignature},
-};
-use error::Result;
-use util::ser;
-
-/// Allows identity formats to be versioned so as to not break compatibility.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum VersionedIdentity {
-    V1(identity::Identity),
-}
-
-impl VersionedIdentity {
-    /// Serialize this versioned identity into a byte vector.
-    pub fn serialize_binary(&self) -> Result<Vec<u8>> {
-        ser::serialize(self)
-    }
-
-    /// Deserialize this versioned identity from a byte vector.
-    pub fn deserialize_binary(slice: &[u8]) -> Result<Self> {
-        ser::deserialize(slice)
-    }
-
-    /// Strip all private data from this identity.
-    fn strip_private(&self) -> Self {
-        match self {
-            Self::V1(identity) => Self::V1(identity.strip_private()),
-        }
-    }
-}
-
-/// The container that is used to publish an identity. This is what otherswill
-/// import when they verify an identity, stamp the claim for an identity, send
-/// the identity a value for signing (for instance for logging in to an online
-/// service), etc.
-///
-/// The published identity must be signed by our publish keypair, which in turn
-/// is signed by our alpha keypair.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct PublishedIdentity {
-    /// The signature of this published identity, generated using our publish
-    /// keypair.
-    signature: SignKeypairSignature,
-    /// The versioned identity we're publishing.
-    identity: VersionedIdentity,
-}
-
-impl PublishedIdentity {
-    /// Takes an identity and creates a signed published identity object from
-    /// it.
-    pub fn publish<T: Into<VersionedIdentity>>(master_key: &SecretKey, identity: T) -> Result<Self> {
-        let versioned_identity: VersionedIdentity = identity.into();
-        let public_identity = versioned_identity.strip_private();
-        let serialized = ser::serialize(&public_identity)?;
-        let signature = match &versioned_identity {
-            VersionedIdentity::V1(id) => id.keychain().publish().sign(master_key, &serialized),
-        }?;
-        Ok(Self {
-            signature,
-            identity: public_identity,
-        })
-    }
-
-    /// Serialize this versioned identity into a human readable format
-    pub fn serialize(&self) -> Result<String> {
-        ser::serialize_human(&self)
-    }
-
-    /// Deserialize this versioned identity from a byte vector.
-    pub fn deserialize(slice: &[u8]) -> Result<Self> {
-        ser::deserialize_human(slice)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        identity::keychain,
-        key::CryptoKeypair,
-    };
-
-    #[test]
-    fn published() {
-        let master_key = key::SecretKey::new_xsalsa20poly1305();
-        let now = util::Timestamp::now();
-        let identity = identity::Identity::new(&master_key, now).unwrap()
-            .add_subkey(&master_key, keychain::Key::Crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap()), "Email", "Use this to send me emails.").unwrap();
-        let published = PublishedIdentity::publish(&master_key, identity).unwrap();
-        let human = published.serialize().unwrap();
-        println!("--- ser: human\n{}", human);
-    }
-}
 
