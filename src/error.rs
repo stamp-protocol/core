@@ -40,6 +40,14 @@ pub enum Error {
     #[error("crypto key missing")]
     CryptoKeyMissing,
 
+    /// Failed to obtain a memory lock
+    #[error("failed to obtain memory lock")]
+    CryptoMemLockFailed,
+
+    /// Failed to release a memory lock
+    #[error("failed to unlock memory")]
+    CryptoMemUnlockFailed,
+
     /// Failed to open a sealed message. This is a bummer, man.
     #[error("failed to open a sealed object")]
     CryptoOpenFailed,
@@ -75,6 +83,10 @@ pub enum Error {
     /// An IO/net error
     #[error("io error {0:?}")]
     IoError(#[from] std::io::Error),
+
+    /// Keygen failed
+    #[error("keygen failed")]
+    KeygenFailed,
 
     /// A key cannot be verified against the executed recovery policy chain.
     #[error("policy verification of key failed")]

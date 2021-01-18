@@ -93,7 +93,7 @@
 
 pub mod error;
 #[macro_use]
-pub(crate) mod util;
+pub mod util;
 pub mod private;
 pub mod key;
 pub mod identity;

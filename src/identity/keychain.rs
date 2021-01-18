@@ -171,6 +171,27 @@ impl Key {
             _ => None,
         }
     }
+
+    /// Consumes the key, and re-encryptes it with a new master key.
+    pub fn rekey(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        let key = match self {
+            Self::Policy(keypair) => Self::Policy(keypair.rekey(previous_master_key, new_master_key)?),
+            Self::Publish(keypair) => Self::Publish(keypair.rekey(previous_master_key, new_master_key)?),
+            Self::Root(keypair) => Self::Root(keypair.rekey(previous_master_key, new_master_key)?),
+            Self::Sign(keypair) => Self::Sign(keypair.rekey(previous_master_key, new_master_key)?),
+            Self::Crypto(keypair) => Self::Crypto(keypair.rekey(previous_master_key, new_master_key)?),
+            Self::Secret(secret) => Self::Secret(secret.rekey(previous_master_key, new_master_key)?),
+            Self::ExtensionKeypair(public, private_maybe) => {
+                if let Some(private) = private_maybe {
+                    Self::ExtensionKeypair(public, Some(private.rekey(previous_master_key, new_master_key)?))
+                } else {
+                    return Err(Error::CryptoKeyMissing)?;
+                }
+            }
+            Self::ExtensionSecret(secret) => Self::ExtensionSecret(secret.rekey(previous_master_key, new_master_key)?),
+        };
+        Ok(key)
+    }
 }
 
 impl PublicMaybe for Key {
@@ -197,8 +218,12 @@ pub struct KeyEntry {
     /// Alright, Parker, shut up. Thank you, Parker. Shut up. Thank you. Nobody
     /// thinks you're funny.
     key: Key,
-    /// The key's human-readable title, for example "Email"
-    title: String,
+    /// The key's human-readable name, for example "email".
+    ///
+    /// This should likely be unique if it's to be of any use, because people
+    /// can use this value to quickly find one of an identity's subkeys, for
+    /// instance on the command line.
+    name: String,
     /// The key's human-readable description, for example "Please send me
     /// encrypted emails using this key." Or "HAI THIS IS MY DOGECOIN ADDRESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS!!!1"
     description: String,
@@ -206,10 +231,10 @@ pub struct KeyEntry {
 
 impl KeyEntry {
     /// Create a new KeyEntry.
-    fn new(key: Key, title: String, description: String) -> Self {
+    fn new(key: Key, name: String, description: String) -> Self {
         Self {
             key,
-            title,
+            name,
             description,
         }
     }
@@ -262,13 +287,13 @@ pub struct Subkey {
 
 impl Subkey {
     /// Create a new subkey, signed by our root key.
-    fn new<T: Into<String>>(master_key: &SecretKey, sign_keypair: &SignKeypair, key: Key, title: T, description: T) -> Result<Self> {
+    fn new<T: Into<String>>(master_key: &SecretKey, sign_keypair: &SignKeypair, key: Key, name: T, description: T) -> Result<Self> {
         // create a blank signature we're going to use TEMPORARILY for the id
         // and signature fields.
         //
         // fake signature. Sad!
         let blank_signature = SignKeypairSignature::blank(sign_keypair);
-        let entry = KeyEntry::new(key, title.into(), description.into());
+        let entry = KeyEntry::new(key, name.into(), description.into());
         let mut subkey = Self {
             id: KeyID(blank_signature.clone()),
             signature: blank_signature,
@@ -491,8 +516,8 @@ impl Keychain {
     }
 
     /// Add a new subkey to the keychain (and sign it).
-    pub(crate) fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, title: T, description: T) -> Result<Self> {
-        let subkey = Subkey::new(master_key, self.root(), key, title, description)?;
+    pub(crate) fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, name: T, description: T) -> Result<Self> {
+        let subkey = Subkey::new(master_key, self.root(), key, name, description)?;
         self.subkeys_mut().push(subkey);
         Ok(self)
     }

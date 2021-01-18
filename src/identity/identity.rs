@@ -7,14 +7,14 @@
 use crate::{
     error::{Error, Result},
     identity::{
+        Public,
+        PublicMaybe,
+        VersionedIdentity,
+
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
         keychain::{RevocationReason, SignedOrRecoveredKeypair, KeyID, Key, Keychain},
         recovery::{Recovery},
         stamp::{StampID, Stamp, StampRevocation, AcceptedStamp},
-
-        Public,
-        PublicMaybe,
-        VersionedIdentity,
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
     util::{
@@ -41,6 +41,12 @@ impl Deref for IdentityID {
     type Target = SignKeypairSignature;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl From<&IdentityID> for String {
+    fn from(id: &IdentityID) -> String {
+        ser::base64_encode(id.as_ref())
     }
 }
 
@@ -104,11 +110,12 @@ pub struct IdentityExtraData {
     /// Note that this necessarily cannot be unique, so services that index the
     /// nickname will need to list *all* known identities using that shortname.
     /// Note that it will be possible to specify a hex ID in long or short-form,
-    /// such as `stamp://zefram-cochrane/b07f4429c5`.
+    /// such as `stamp://zefram-cochrane/s0yB0i-4y822` to narrow down the result
+    /// by the nickname *and* ID.
     ///
     /// It's up to users of the protocol to pick names that are unique enough to
     /// avoid accidental collisions, and any malicious immitations must be
-    /// weeded out by inclusion of an ID (prefix or full), stamp verification
+    /// weeded out by inclusion of an ID (prefix or full), stamp verification,
     /// and trust levels.
     nickname: Option<SignedValue<String>>,
     /// A canonical list of places this identity forwards to.
@@ -158,8 +165,19 @@ pub struct Identity {
 }
 
 impl Identity {
-    /// Inner implementation of the identity creator.
-    fn new_impl(master_key: &SecretKey, now: Timestamp, alpha_keypair: SignKeypair, id: IdentityID) -> Result<Self> {
+    /// Given an alpha key and a timestamp, create a (deterministic) identity ID.
+    pub fn create_id(master_key: &SecretKey, alpha_keypair: &SignKeypair, now: &Timestamp) -> Result<IdentityID> {
+        // create our identity's ID
+        let id_string = String::from("This is my stamp.");
+        let datesigner = DateSigner::new(now, &id_string);
+        let ser = ser::serialize(&datesigner)?;
+        let id = IdentityID(alpha_keypair.sign(master_key, &ser)?);
+        Ok(id)
+    }
+
+    /// Create a new identity from an existing alpha keypair, timestamp, and
+    /// identity ID.
+    pub fn new_with_alpha_and_id(master_key: &SecretKey, now: Timestamp, alpha_keypair: SignKeypair, id: IdentityID) -> Result<Self> {
         // controls recovery policies (and ultimately the recovery key)
         let policy_keypair = SignKeypair::new_ed25519(master_key)?;
         // control publishing the identity
@@ -201,33 +219,8 @@ impl Identity {
     pub fn new(master_key: &SecretKey, now: Timestamp) -> Result<Self> {
         // top doge key
         let alpha_keypair = SignKeypair::new_ed25519(master_key)?;
-
-        // create our identity's ID
-        let id_string = String::from("This is my stamp.");
-        let datesigner = DateSigner::new(&now, &id_string);
-        let ser = ser::serialize(&datesigner)?;
-        let id = IdentityID(alpha_keypair.sign(master_key, &ser)?);
-
-        Identity::new_impl(master_key, now, alpha_keypair, id)
-    }
-
-    /// Create a new identity with a vanity prefixed ID.
-    pub fn new_vanity(master_key: &SecretKey, now: Timestamp, prefix: &str) -> Result<Self> {
-        let mut alpha_keypair;
-        let mut id;
-        loop {
-            alpha_keypair = SignKeypair::new_ed25519(master_key)?;
-            let id_string = String::from("This is my stamp.");
-            let datesigner = DateSigner::new(&now, &id_string);
-            let ser = ser::serialize(&datesigner)?;
-            id = IdentityID(alpha_keypair.sign(master_key, &ser)?);
-            let based = ser::base64_encode(id.as_ref());
-            println!("- trying {}", based);
-            if based.starts_with(prefix) {
-                break;
-            }
-        }
-        Identity::new_impl(master_key, now, alpha_keypair, id)
+        let id = Identity::create_id(master_key, &alpha_keypair, &now)?;
+        Identity::new_with_alpha_and_id(master_key, now, alpha_keypair, id)
     }
 
     /// Grab a list of all our identity's sub-signatures.

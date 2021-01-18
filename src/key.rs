@@ -15,6 +15,8 @@ use crate::{
     identity::Public,
     private::{Private},
     util::{
+        Lockable,
+
         ser::TryFromSlice,
         sign::Signable,
     },
@@ -28,6 +30,7 @@ use sodiumoxide::{
         sign::ed25519,
     },
 };
+use std::convert::TryInto;
 
 impl_try_from_slice!(ed25519::PublicKey);
 impl_try_from_slice!(xsalsa20poly1305::Nonce);
@@ -88,6 +91,22 @@ impl SecretKey {
         match self {
             SecretKey::Xsalsa20Poly1305(ref key) => key.as_ref(),
         }
+    }
+}
+
+impl Lockable for SecretKey {
+    fn mem_lock(&mut self) -> Result<()> {
+        let res = match self {
+            Self::Xsalsa20Poly1305(ref mut inner) => sodiumoxide::utils::mlock(&mut inner.0),
+        };
+        res.map_err(|_| Error::CryptoMemLockFailed)
+    }
+
+    fn mem_unlock(&mut self) -> Result<()> {
+        let res = match self {
+            Self::Xsalsa20Poly1305(ref mut inner) => sodiumoxide::utils::munlock(&mut inner.0),
+        };
+        res.map_err(|_| Error::CryptoMemUnlockFailed)
     }
 }
 
@@ -171,6 +190,16 @@ impl SignKeypair {
                     Err(Error::CryptoSignatureVerificationFailed)
                 }
             }
+        }
+    }
+
+    /// Re-encrypt this signing keypair with a new master key.
+    pub fn rekey(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        match self {
+            Self::Ed25519(public, Some(private)) => {
+                Ok(Self::Ed25519(public, Some(private.rekey(previous_master_key, new_master_key)?)))
+            }
+            _ => Err(Error::CryptoKeyMissing),
         }
     }
 }
@@ -274,7 +303,7 @@ impl CryptoKeypair {
     /// Anonymously encrypt a message using the recipient's public key.
     pub fn seal_anonymous(their_pk: &CryptoKeypair, data: &[u8]) -> Result<Vec<u8>> {
         match their_pk {
-            CryptoKeypair::Curve25519Xsalsa20Poly1305(ref pubkey, _) => {
+            Self::Curve25519Xsalsa20Poly1305(ref pubkey, _) => {
                 Ok(sodiumoxide::crypto::sealedbox::curve25519blake2bxsalsa20poly1305::seal(data, pubkey))
             }
         }
@@ -284,7 +313,7 @@ impl CryptoKeypair {
     /// master key to open.
     pub fn open_anonymous(master_key: &SecretKey, our_keypair: &CryptoKeypair, data: &[u8]) -> Result<Vec<u8>> {
         match our_keypair {
-            CryptoKeypair::Curve25519Xsalsa20Poly1305(ref pubkey, ref seckey_opt) => {
+            Self::Curve25519Xsalsa20Poly1305(ref pubkey, ref seckey_opt) => {
                 let seckey_sealed = seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let seckey = seckey_sealed.open(master_key)?;
                 sodiumoxide::crypto::sealedbox::curve25519blake2bxsalsa20poly1305::open(data, pubkey, &seckey)
@@ -297,7 +326,7 @@ impl CryptoKeypair {
     /// key. Needs our master key to unlock our heroic private key.
     pub fn seal(our_master_key: &SecretKey, our_keypair: &CryptoKeypair, their_keypair: &CryptoKeypair, data: &[u8]) -> Result<CryptoKeypairMessage> {
         match (our_keypair, their_keypair) {
-            (CryptoKeypair::Curve25519Xsalsa20Poly1305(_, ref our_seckey_opt), CryptoKeypair::Curve25519Xsalsa20Poly1305(ref their_pubkey, _)) => {
+            (Self::Curve25519Xsalsa20Poly1305(_, ref our_seckey_opt), Self::Curve25519Xsalsa20Poly1305(ref their_pubkey, _)) => {
                 let our_seckey_sealed = our_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let our_seckey = our_seckey_sealed.open(our_master_key)?;
                 let nonce_raw = curve25519xsalsa20poly1305::gen_nonce();
@@ -313,7 +342,7 @@ impl CryptoKeypair {
     /// private key used to decrypt the message.
     pub fn open(our_master_key: &SecretKey, our_keypair: &CryptoKeypair, their_keypair: &CryptoKeypair, message: &CryptoKeypairMessage) -> Result<Vec<u8>> {
         match (our_keypair, their_keypair) {
-            (CryptoKeypair::Curve25519Xsalsa20Poly1305(_, ref our_seckey_opt), CryptoKeypair::Curve25519Xsalsa20Poly1305(ref their_pubkey, _)) => {
+            (Self::Curve25519Xsalsa20Poly1305(_, ref our_seckey_opt), CryptoKeypair::Curve25519Xsalsa20Poly1305(ref their_pubkey, _)) => {
                 let our_seckey_sealed = our_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let our_seckey = our_seckey_sealed.open(our_master_key)?;
                 let nonce = message.nonce();
@@ -323,6 +352,16 @@ impl CryptoKeypair {
                 curve25519xsalsa20poly1305::open(message.ciphertext(), nonce_raw, &their_pubkey, &our_seckey)
                     .map_err(|_| Error::CryptoOpenFailed)
             }
+        }
+    }
+
+    /// Re-encrypt this signing keypair with a new master key.
+    pub fn rekey(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        match self {
+            Self::Curve25519Xsalsa20Poly1305(public, Some(private)) => {
+                Ok(Self::Curve25519Xsalsa20Poly1305(public, Some(private.rekey(previous_master_key, new_master_key)?)))
+            }
+            _ => Err(Error::CryptoKeyMissing),
         }
     }
 }
@@ -338,14 +377,16 @@ impl Public for CryptoKeypair {
 }
 
 /// Generate a master key from a passphrase/salt
-pub fn derive_master_key(passphrase: &[u8], salt: &[u8; argon2id13::SALTBYTES], ops: argon2id13::OpsLimit, mem: argon2id13::MemLimit) -> Result<SecretKey> {
+pub fn derive_master_key(passphrase: &[u8], salt_bytes: &[u8], ops: usize, mem: usize) -> Result<SecretKey> {
     let len = xsalsa20poly1305::KEYBYTES;
+    let salt: &[u8; argon2id13::SALTBYTES] = salt_bytes[0..argon2id13::SALTBYTES].try_into()
+        .map_err(|_| Error::CryptoBadSalt)?;
     let mut key: Vec<u8> = vec![0; len];
     let salt_wrap = match argon2id13::Salt::from_slice(salt) {
         Some(x) => x,
         None => Err(Error::CryptoBadSalt)?,
     };
-    match argon2id13::derive_key(key.as_mut_slice(), passphrase, &salt_wrap, ops, mem) {
+    match argon2id13::derive_key(key.as_mut_slice(), passphrase, &salt_wrap, argon2id13::OpsLimit(ops), argon2id13::MemLimit(mem)) {
         Ok(x) => {
             let rawkey = xsalsa20poly1305::Key::from_slice(x).ok_or(Error::CryptoKDFFailed)?;
             let seckey = SecretKey::Xsalsa20Poly1305(rawkey);
@@ -359,7 +400,6 @@ pub fn derive_master_key(passphrase: &[u8], salt: &[u8; argon2id13::SALTBYTES], 
 mod tests {
     use super::*;
     use crate::util;
-    use std::convert::TryInto;
 
     #[test]
     fn secretkey_xsalsa20poly1305_enc_dec() {
@@ -424,8 +464,7 @@ mod tests {
     fn derives_master_key() {
         let id = util::hash("my key".as_bytes()).unwrap();
         let salt = util::hash(id.as_ref()).unwrap();
-        let saltbytes: [u8; argon2id13::SALTBYTES] = salt.as_ref()[0..argon2id13::SALTBYTES].try_into().unwrap();
-        let master_key = derive_master_key("ZONING IS COMMUNISM".as_bytes(), &saltbytes, argon2id13::OPSLIMIT_INTERACTIVE, argon2id13::MEMLIMIT_INTERACTIVE).unwrap();
+        let master_key = derive_master_key("ZONING IS COMMUNISM".as_bytes(), &salt.as_ref(), argon2id13::OPSLIMIT_INTERACTIVE.0, argon2id13::MEMLIMIT_INTERACTIVE.0).unwrap();
         assert_eq!(master_key.as_ref(), &[148, 34, 57, 50, 168, 111, 176, 114, 120, 168, 159, 158, 96, 119, 14, 194, 52, 224, 58, 194, 77, 44, 168, 25, 54, 138, 172, 91, 164, 86, 190, 89]);
     }
 

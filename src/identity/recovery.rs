@@ -95,9 +95,9 @@ pub enum PolicyRequestAction {
     /// Replace the current recovery policy.
     ReplacePolicy(PolicyCondition),
     /// Replace the current recovery key.
-    ReplaceRecoveryKey(SignKeypairPublic),
+    ReplaceRootKey(SignKeypairPublic),
     /// Replace both the current policy *and* key.
-    ReplacePolicyAndRecoveryKey(PolicyCondition, SignKeypairPublic),
+    ReplacePolicyAndRootKey(PolicyCondition, SignKeypairPublic),
 }
 
 /// A recovery policy.
@@ -181,8 +181,7 @@ pub struct ExecutedPolicy {
 pub struct Recovery {
     /// The recoveries we've performed, each one signed by the replacement
     /// recovery key instated by the policy request.
-    //executed: Vec<SignedValue<ExecutedPolicy>>,
-    executed: Vec<String>,
+    executed: Vec<ExecutedPolicy>,
 }
 
 impl Recovery {

@@ -9,11 +9,33 @@ use sodiumoxide::{
 use std::ops::Deref;
 
 #[macro_use]
-pub(crate) mod ser;
+pub mod ser;
 pub(crate) mod sign;
 
+pub use sodiumoxide::utils::{mlock, munlock};
+
+pub trait Lockable {
+    fn mem_lock(&mut self) -> Result<()>;
+    fn mem_unlock(&mut self) -> Result<()>;
+}
+
+impl Lockable for String {
+    fn mem_lock(&mut self) -> Result<()> {
+        unsafe {
+            sodiumoxide::utils::mlock(self.as_bytes_mut())
+                .map_err(|_| Error::CryptoMemLockFailed)
+        }
+    }
+
+    fn mem_unlock(&mut self) -> Result<()> {
+        unsafe {
+            sodiumoxide::utils::munlock(self.as_bytes_mut())
+                .map_err(|_| Error::CryptoMemUnlockFailed)
+        }
+    }
+}
+
 /// Hash arbitrary data using blake2b
-#[allow(dead_code)]
 pub fn hash(data: &[u8]) -> Result<generichash::Digest> {
     let mut state = generichash::State::new(generichash::DIGEST_MAX, None)
         .map_err(|_| Error::CryptoHashStateInitError)?;

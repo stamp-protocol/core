@@ -87,7 +87,7 @@ impl Public for VersionedIdentity {
 pub struct PublishedIdentity {
     /// The signature of this published identity, generated using our publish
     /// keypair.
-    signature: SignKeypairSignature,
+    publish_signature: SignKeypairSignature,
     /// The versioned identity we're publishing.
     identity: VersionedIdentity,
 }
@@ -103,7 +103,7 @@ impl PublishedIdentity {
             VersionedIdentity::V1(id) => id.keychain().publish().sign(master_key, &serialized),
         }?;
         Ok(Self {
-            signature,
+            publish_signature: signature,
             identity: public_identity,
         })
     }
@@ -143,8 +143,8 @@ mod tests {
         let identity = identity::Identity::new(&master_key, now).unwrap()
             .add_subkey(&master_key, keychain::Key::Crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap()), "Email", "Use this to send me emails.").unwrap();
         let published = PublishedIdentity::publish(&master_key, identity).unwrap();
-        let human = published.serialize().unwrap();
-        println!("--- ser: human\n{}", human);
+        let _human = published.serialize().unwrap();
+        // TODO: gen with deterministict params, serialize and deserialize
     }
 }
 
