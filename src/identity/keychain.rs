@@ -173,22 +173,22 @@ impl Key {
     }
 
     /// Consumes the key, and re-encryptes it with a new master key.
-    pub fn rekey(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let key = match self {
-            Self::Policy(keypair) => Self::Policy(keypair.rekey(previous_master_key, new_master_key)?),
-            Self::Publish(keypair) => Self::Publish(keypair.rekey(previous_master_key, new_master_key)?),
-            Self::Root(keypair) => Self::Root(keypair.rekey(previous_master_key, new_master_key)?),
-            Self::Sign(keypair) => Self::Sign(keypair.rekey(previous_master_key, new_master_key)?),
-            Self::Crypto(keypair) => Self::Crypto(keypair.rekey(previous_master_key, new_master_key)?),
-            Self::Secret(secret) => Self::Secret(secret.rekey(previous_master_key, new_master_key)?),
+            Self::Policy(keypair) => Self::Policy(keypair.reencrypt(previous_master_key, new_master_key)?),
+            Self::Publish(keypair) => Self::Publish(keypair.reencrypt(previous_master_key, new_master_key)?),
+            Self::Root(keypair) => Self::Root(keypair.reencrypt(previous_master_key, new_master_key)?),
+            Self::Sign(keypair) => Self::Sign(keypair.reencrypt(previous_master_key, new_master_key)?),
+            Self::Crypto(keypair) => Self::Crypto(keypair.reencrypt(previous_master_key, new_master_key)?),
+            Self::Secret(secret) => Self::Secret(secret.reencrypt(previous_master_key, new_master_key)?),
             Self::ExtensionKeypair(public, private_maybe) => {
                 if let Some(private) = private_maybe {
-                    Self::ExtensionKeypair(public, Some(private.rekey(previous_master_key, new_master_key)?))
+                    Self::ExtensionKeypair(public, Some(private.reencrypt(previous_master_key, new_master_key)?))
                 } else {
                     return Err(Error::CryptoKeyMissing)?;
                 }
             }
-            Self::ExtensionSecret(secret) => Self::ExtensionSecret(secret.rekey(previous_master_key, new_master_key)?),
+            Self::ExtensionSecret(secret) => Self::ExtensionSecret(secret.reencrypt(previous_master_key, new_master_key)?),
         };
         Ok(key)
     }
@@ -548,6 +548,67 @@ impl Keychain {
             Err(Error::IdentitySubkeyNotFound)?;
         }
         self.subkeys_mut().retain(|x| x.id() != key_id);
+        Ok(self)
+    }
+
+    /// REEEEEE-encrypt  the keys in this keychain with a new master key.
+    pub(crate) fn reencrypt(mut self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
+        match self.alpha().clone().reencrypt(current_key, new_key) {
+            Ok(alpha) => { self.set_alpha(alpha); },
+            Err(Error::CryptoKeyMissing) => {}
+            Err(err) => Err(err)?,
+        }
+        match self.policy().value().clone().reencrypt(current_key, new_key) {
+            Ok(policy) => { self.policy_mut().set_value(policy); },
+            Err(Error::CryptoKeyMissing) => {}
+            Err(err) => Err(err)?,
+        }
+        match self.publish().clone() {
+            SignedOrRecoveredKeypair::Signed(mut signed) => {
+                match signed.value().clone().reencrypt(current_key, new_key) {
+                    Ok(publish) => {
+                        signed.set_value(publish);
+                        self.set_publish(SignedOrRecoveredKeypair::Signed(signed));
+                    },
+                    Err(Error::CryptoKeyMissing) => {}
+                    Err(err) => Err(err)?,
+                }
+            }
+            SignedOrRecoveredKeypair::Recovered(keypair) => {
+                match keypair.clone().reencrypt(current_key, new_key) {
+                    Ok(publish) => {
+                        self.set_publish(SignedOrRecoveredKeypair::Recovered(publish));
+                    },
+                    Err(Error::CryptoKeyMissing) => {}
+                    Err(err) => Err(err)?,
+                }
+            }
+        }
+        match self.root().clone() {
+            SignedOrRecoveredKeypair::Signed(mut signed) => {
+                match signed.value().clone().reencrypt(current_key, new_key) {
+                    Ok(root) => {
+                        signed.set_value(root);
+                        self.set_root(SignedOrRecoveredKeypair::Signed(signed));
+                    },
+                    Err(Error::CryptoKeyMissing) => {}
+                    Err(err) => Err(err)?,
+                }
+            }
+            SignedOrRecoveredKeypair::Recovered(keypair) => {
+                match keypair.clone().reencrypt(current_key, new_key) {
+                    Ok(root) => {
+                        self.set_root(SignedOrRecoveredKeypair::Recovered(root));
+                    },
+                    Err(Error::CryptoKeyMissing) => {}
+                    Err(err) => Err(err)?,
+                }
+            }
+        }
+        for subkey in self.subkeys_mut() {
+            let rekeyed = subkey.key().key().clone().reencrypt(current_key, new_key)?;
+            subkey.key_mut().set_key(rekeyed);
+        }
         Ok(self)
     }
 }

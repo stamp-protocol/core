@@ -1,15 +1,16 @@
 //! Utilities. OBVIOUSLY.
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc, Local};
 use crate::error::{Error, Result};
 use serde_derive::{Serialize, Deserialize};
 use sodiumoxide::{
     crypto::generichash,
 };
 use std::ops::Deref;
+use std::str::FromStr;
 
 #[macro_use]
-pub mod ser;
+pub(crate) mod ser;
 pub(crate) mod sign;
 
 pub use sodiumoxide::utils::{mlock, munlock};
@@ -69,6 +70,10 @@ impl Timestamp {
     pub fn now() -> Self {
         Self(Utc::now())
     }
+
+    pub fn local(&self) -> DateTime<Local> {
+        DateTime::from(self.0)
+    }
 }
 
 impl Deref for Timestamp {
@@ -87,6 +92,14 @@ impl From<NaiveDateTime> for Timestamp {
 impl From<DateTime<Utc>> for Timestamp {
     fn from(date: DateTime<Utc>) -> Self {
         Self(date)
+    }
+}
+
+impl FromStr for Timestamp {
+    type Err = chrono::format::ParseError;
+    fn from_str(s: &str) -> std::result::Result<Timestamp, Self::Err> {
+        let datetime: DateTime<Utc> = s.parse()?;
+        Ok(Timestamp(datetime))
     }
 }
 

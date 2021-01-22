@@ -2,12 +2,9 @@
 //!
 //! The Stamp protocol is essentially a successor to PGP. It seeks to provide
 //! a meaningful cryptographic identity for a given person, which can be signed
-//! by either their peers or various institutions. This identity is meant to be
-//! long-lived *beyond the life of the keys*. Where PGP is a somewhat ephemeral
-//! master keypair and collection of subkeys, Stamp is a permanent marker of
-//! identity which offers various avenues for recovery in the case of lost keys.
+//! by either their peers or various institutions.
 //!
-//! Also, where Stamp deviates is that any number of claims can be made by a
+//! Stamp deviates from PGP in that any number of claims can be made by a
 //! Stamp identity, and any of them can be individually signed. For instance, an
 //! identity might claim ownership of an email address, and any person or 
 //! organization might "stamp" (verify) that claim by having the owner of the

@@ -17,6 +17,7 @@ use crate::{
         stamp::{StampID, Stamp, StampRevocation, AcceptedStamp},
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
+    private::MaybePrivate,
     util::{
         Timestamp,
         sign::{DateSigner, SignedValue},
@@ -47,6 +48,12 @@ impl Deref for IdentityID {
 impl From<&IdentityID> for String {
     fn from(id: &IdentityID) -> String {
         ser::base64_encode(id.as_ref())
+    }
+}
+
+impl std::string::ToString for IdentityID {
+    fn to_string(&self) -> String {
+        ser::base64_encode(self.as_ref())
     }
 }
 
@@ -223,6 +230,11 @@ impl Identity {
         Identity::new_with_alpha_and_id(master_key, now, alpha_keypair, id)
     }
 
+    /// Returns the human-serialized ID for this identity.
+    pub fn id_string(&self) -> String {
+        self.id().to_string()
+    }
+
     /// Grab a list of all our identity's sub-signatures.
     fn sub_signatures(&self) -> Vec<&SignKeypairSignature> {
         let mut signatures = vec![
@@ -274,6 +286,16 @@ impl Identity {
         let signatures = self.sub_signatures();
         let serialized = ser::serialize(&signatures)?;
         self.keychain().root().sign(master_key, &serialized)
+    }
+
+    /// Regenerate the root signature on this identity.
+    ///
+    /// This is mainly used for development to save an identity that's corrupt
+    /// due to buggy code. This should not be used as a regular feature, because
+    /// its entire need is based on a buggy stamp protocol implementation.
+    pub fn root_sign(mut self, master_key: &SecretKey) -> Result<Self> {
+        self.set_root_signature(self.generate_root_signature(master_key)?);
+        Ok(self)
     }
 
     /// Verify that a signature and a set of data used to generate that
@@ -353,11 +375,22 @@ impl Identity {
         Ok(())
     }
 
+    /// Re-encrypt this identity's keychain and private claims.
+    pub fn reencrypt(mut self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().reencrypt(current_key, new_key)?);
+        for claim in self.claims_mut() {
+            let new_spec = claim.claim().spec().clone().reencrypt(current_key, new_key)?;
+            claim.claim_mut().set_spec(new_spec);
+        }
+        Ok(self)
+    }
+
     /// Create a new claim from the given data, sign it, and attach it to this
     /// identity.
     pub fn make_claim<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, claim: ClaimSpec) -> Result<Self> {
         let claim_container = ClaimContainer::new(master_key, self.keychain().root(), now, claim)?;
         self.claims_mut().push(claim_container);
+        self.set_root_signature(self.generate_root_signature(master_key)?);
         Ok(self)
     }
 
@@ -451,6 +484,106 @@ impl Identity {
     /// that medium before accepting a stamped claim as given.
     pub fn revoke_stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, stamp_id: StampID, date_revoked: T) -> Result<StampRevocation> {
         StampRevocation::new(master_key, self.keychain().root(), self.id().clone(), stamp_id, date_revoked)
+    }
+
+    /// Grab this identity's nickname, if it has one.
+    pub fn nickname_maybe(&self) -> Option<String> {
+        self.extra_data().nickname().as_ref().map(|x| x.value().clone())
+    }
+
+    /// Return all emails associated with this identity.
+    pub fn emails(&self) -> Vec<String> {
+        let mut forwards = self.extra_data().forwards().iter()
+            .filter_map(|x| {
+                match x.value().val() {
+                    ForwardType::Email(ref email) => Some(email.clone()),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut claims = self.claims().iter()
+            .filter_map(|x| {
+                match x.claim().spec() {
+                    ClaimSpec::Email(MaybePrivate::Public(ref email)) => Some(email.clone()),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        forwards.append(&mut claims);
+        forwards
+    }
+
+    /// Grab this identity's primary email, if it has one.
+    pub fn email_maybe(&self) -> Option<String> {
+        // first search forwards for a default email. if that fails, check our
+        // claims department.
+        self.extra_data().forwards().iter()
+            .find_map(|x| {
+                match (x.value().is_default(), x.value().val()) {
+                    (true, ForwardType::Email(ref email)) => Some(email.clone()),
+                    _ => None,
+                }
+            })
+            .or_else(|| {
+                self.claims().iter()
+                    .find_map(|x| {
+                        match x.claim().spec() {
+                            ClaimSpec::Email(MaybePrivate::Public(ref email)) => Some(email.clone()),
+                            _ => None,
+                        }
+                    })
+            })
+    }
+
+    /// Return all names associated with this identity.
+    pub fn names(&self) -> Vec<String> {
+        self.claims().iter()
+            .filter_map(|x| {
+                match x.claim().spec() {
+                    ClaimSpec::Email(MaybePrivate::Public(ref email)) => Some(email.clone()),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>()
+    }
+
+    /// Grab this identity's primary name, if it has one.
+    pub fn name_maybe(&self) -> Option<String> {
+        self.claims().iter()
+            .find_map(|x| {
+                match x.claim().spec() {
+                    ClaimSpec::Name(MaybePrivate::Public(ref name)) => Some(name.clone()),
+                    _ => None,
+                }
+            })
+    }
+
+    /// Determine if this identity is owned (ie, we have the private keys stored
+    /// locally) or it is imported (ie, someone else's identity).
+    pub fn is_owned(&self) -> bool {
+        self.keychain().alpha().have_secret() ||
+            self.keychain().policy().have_secret() ||
+            self.keychain().publish().have_secret() ||
+            self.keychain().root().have_secret()
+    }
+
+    /// Test if a master key is correct.
+    pub fn test_master_key(&self, master_key: &SecretKey) -> Result<()> {
+        if !self.is_owned() {
+            Err(Error::IdentityNotOwned)?;
+        }
+
+        let test_bytes = sodiumoxide::randombytes::randombytes(32);
+        if self.keychain().alpha().have_secret() {
+            self.keychain().alpha().sign(master_key, test_bytes.as_slice())?;
+        } else if self.keychain().policy().have_secret() {
+            self.keychain().policy().sign(master_key, test_bytes.as_slice())?;
+        } else if self.keychain().publish().have_secret() {
+            self.keychain().publish().sign(master_key, test_bytes.as_slice())?;
+        } else if self.keychain().root().have_secret() {
+            self.keychain().root().sign(master_key, test_bytes.as_slice())?;
+        }
+        Ok(())
     }
 }
 

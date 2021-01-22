@@ -72,6 +72,10 @@ pub enum Error {
     #[error("identity claim not found")]
     IdentityClaimNotFound,
 
+    /// There were no private keys found in this identity.
+    #[error("identity is not owned, but we attempted an operation requiring ownership")]
+    IdentityNotOwned,
+
     /// The subkey being operated on wasn't found
     #[error("identity subkey not found")]
     IdentitySubkeyNotFound,

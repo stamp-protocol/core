@@ -161,9 +161,12 @@ impl SignKeypair {
         Ok(Self::Ed25519(public, Some(Private::seal(master_key, &secret)?)))
     }
 
-    /// Convert this signing keypair into a signing public key.
-    pub fn into_public(self) -> SignKeypairPublic {
-        From::from(self)
+    /// Check if we have this keypair's secret key.
+    pub fn have_secret(&self) -> bool {
+        match self {
+            Self::Ed25519(_, Some(_)) => true,
+            _ => false,
+        }
     }
 
     /// Sign a value with our secret signing key.
@@ -194,10 +197,10 @@ impl SignKeypair {
     }
 
     /// Re-encrypt this signing keypair with a new master key.
-    pub fn rekey(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         match self {
             Self::Ed25519(public, Some(private)) => {
-                Ok(Self::Ed25519(public, Some(private.rekey(previous_master_key, new_master_key)?)))
+                Ok(Self::Ed25519(public, Some(private.reencrypt(previous_master_key, new_master_key)?)))
             }
             _ => Err(Error::CryptoKeyMissing),
         }
@@ -356,10 +359,10 @@ impl CryptoKeypair {
     }
 
     /// Re-encrypt this signing keypair with a new master key.
-    pub fn rekey(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         match self {
             Self::Curve25519Xsalsa20Poly1305(public, Some(private)) => {
-                Ok(Self::Curve25519Xsalsa20Poly1305(public, Some(private.rekey(previous_master_key, new_master_key)?)))
+                Ok(Self::Curve25519Xsalsa20Poly1305(public, Some(private.reencrypt(previous_master_key, new_master_key)?)))
             }
             _ => Err(Error::CryptoKeyMissing),
         }

@@ -30,6 +30,7 @@ use crate::{
     util::ser,
 };
 use serde_derive::{Serialize, Deserialize};
+use std::ops::Deref;
 
 pub(crate) trait Public: Clone {
     /// Strip the private data from a object, returning only public data.
@@ -59,10 +60,39 @@ impl VersionedIdentity {
         ser::deserialize(slice)
     }
 
+    /// Re-encrypt this identity's keychain and private claims.
+    pub fn reencrypt(self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
+        match self {
+            Self::V1(id) => Ok(Self::V1(id.reencrypt(current_key, new_key)?)),
+        }
+    }
+
+    /// Regenerate the root signature on this identity.
+    ///
+    /// This is mainly used for development to save an identity that's corrupt
+    /// due to buggy code. This should not be used as a regular feature, because
+    /// its entire need is based on a buggy stamp protocol implementation.
+    pub fn root_sign(self, master_key: &SecretKey) -> Result<Self> {
+        match self {
+            Self::V1(id) => Ok(Self::V1(id.root_sign(master_key)?)),
+        }
+    }
+
     /// Strip all private data from this identity.
     fn strip_private(&self) -> Self {
         match self {
             Self::V1(identity) => Self::V1(identity.strip_private()),
+        }
+    }
+}
+
+// this makes it so we don't have to manually create a bunch of interfaces we
+// can otherwise pass through.
+impl Deref for VersionedIdentity {
+    type Target = Identity;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::V1(ref identity) => identity,
         }
     }
 }

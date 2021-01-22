@@ -134,6 +134,21 @@ impl ClaimSpec {
             Self::Extension(key, val) => Self::Extension(key.clone(), val.strip_private()),
         }
     }
+
+    /// Re-encrypt this claim spec's private data, if it has any
+    pub(crate) fn reencrypt(self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
+        let spec = match self.clone() {
+            Self::Name(MaybePrivate::Private(tag, Some(val))) => Self::Name(MaybePrivate::Private(tag, Some(val.reencrypt(current_key, new_key)?))),
+            Self::Email(MaybePrivate::Private(tag, Some(val))) => Self::Email(MaybePrivate::Private(tag, Some(val.reencrypt(current_key, new_key)?))),
+            Self::PGP(MaybePrivate::Private(tag, Some(val))) => Self::PGP(MaybePrivate::Private(tag, Some(val.reencrypt(current_key, new_key)?))),
+            Self::HomeAddress(MaybePrivate::Private(tag, Some(val))) => Self::HomeAddress(MaybePrivate::Private(tag, Some(val.reencrypt(current_key, new_key)?))),
+            Self::Relation(MaybePrivate::Private(tag, Some(val))) => Self::Relation(MaybePrivate::Private(tag, Some(val.reencrypt(current_key, new_key)?))),
+            Self::RelationExtension(MaybePrivate::Private(tag, Some(val))) => Self::RelationExtension(MaybePrivate::Private(tag, Some(val.reencrypt(current_key, new_key)?))),
+            Self::Extension(key, MaybePrivate::Private(tag, Some(val))) => Self::Extension(key, MaybePrivate::Private(tag, Some(val.reencrypt(current_key, new_key)?))),
+            _ => self,
+        };
+        Ok(spec)
+    }
 }
 
 /// A type used when signing a claim. Contains all data about the claim except
