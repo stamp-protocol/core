@@ -47,26 +47,14 @@ use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 
-/// A unique identifier for recovery policies.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PolicyID(SignKeypairSignature);
-
-impl Deref for PolicyID {
-    type Target = SignKeypairSignature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+object_id! {
+    /// A unique identifier for recovery policies.
+    PolicyID
 }
 
-/// A unique identifier for recovery requests.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RequestID(SignKeypairSignature);
-
-impl Deref for RequestID {
-    type Target = SignKeypairSignature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+object_id! {
+    /// A unique identifier for recovery requests.
+    RequestID
 }
 
 /// A condition that goes into a recovery policy.

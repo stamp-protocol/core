@@ -15,6 +15,40 @@ pub(crate) mod sign;
 
 pub use sodiumoxide::utils::{mlock, munlock};
 
+macro_rules! object_id {
+    (
+        $(#[$meta:meta])*
+        $name:ident
+    ) => {
+        #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+        pub struct $name(crate::key::SignKeypairSignature);
+
+        impl Deref for $name {
+            type Target = crate::key::SignKeypairSignature;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl std::convert::TryFrom<&$name> for String {
+            type Error = crate::error::Error;
+            fn try_from(id: &$name) -> std::result::Result<String, Self::Error> {
+                Ok(crate::util::ser::base64_encode(id.as_ref()))
+            }
+        }
+
+        impl std::convert::TryFrom<&str> for $name {
+            type Error = crate::error::Error;
+            fn try_from(id_str: &str) -> std::result::Result<Self, Self::Error> {
+                let bytes = crate::util::ser::base64_decode(id_str.as_bytes())?;
+                let sig = sodiumoxide::crypto::sign::ed25519::Signature::from_slice(bytes.as_slice())
+                    .ok_or(crate::error::Error::SignatureMissing)?;
+                Ok(Self(crate::key::SignKeypairSignature::Ed25519(sig)))
+            }
+        }
+    }
+}
+
 pub trait Lockable {
     fn mem_lock(&mut self) -> Result<()>;
     fn mem_unlock(&mut self) -> Result<()>;

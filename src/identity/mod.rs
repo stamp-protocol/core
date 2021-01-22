@@ -27,7 +27,7 @@ pub use identity::*;
 use crate::{
     error::Result,
     key::{SecretKey, SignKeypairSignature},
-    util::ser,
+    util::{Timestamp, ser},
 };
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
@@ -75,6 +75,14 @@ impl VersionedIdentity {
     pub fn root_sign(self, master_key: &SecretKey) -> Result<Self> {
         match self {
             Self::V1(id) => Ok(Self::V1(id.root_sign(master_key)?)),
+        }
+    }
+
+    /// Create a new claim from the given data, sign it, and attach it to this
+    /// identity.
+    pub fn make_claim<T: Into<Timestamp>>(self, master_key: &SecretKey, now: T, claim: ClaimSpec) -> Result<Self> {
+        match self {
+            Self::V1(id) => Ok(Self::V1(id.make_claim(master_key, now, claim)?)),
         }
     }
 

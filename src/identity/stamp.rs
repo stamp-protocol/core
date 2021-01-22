@@ -17,17 +17,11 @@ use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 
-/// A unique identifier for stamps.
-///
-/// A stamp is a signature on a claim, and this ID is that signature.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StampID(SignKeypairSignature);
-
-impl Deref for StampID {
-    type Target = SignKeypairSignature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+object_id! {
+    /// A unique identifier for stamps.
+    ///
+    /// A stamp is a signature on a claim, and this ID is that signature.
+    StampID
 }
 
 /// A set of data that is signed when a stamp is created that is stored
@@ -180,17 +174,11 @@ impl AcceptedStamp {
     }
 }
 
-/// A unique identifier for a stamp revocation.
-///
-/// A stamp is a signature on a claim, and this ID is that signature.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StampRevocationID(SignKeypairSignature);
-
-impl Deref for StampRevocationID {
-    type Target = SignKeypairSignature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+object_id! {
+    /// A unique identifier for a stamp revocation.
+    ///
+    /// A stamp is a signature on a claim, and this ID is that signature.
+    StampRevocationID
 }
 
 /// An object that contains a stamp revocation's inner data. Its signature is

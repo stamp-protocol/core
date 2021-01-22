@@ -28,33 +28,15 @@ use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 
-/// A unique identifier for identities.
-///
-/// We generate this by signing the string "This is my stamp." in a `DateSigner`
-/// using our initial private signing key.
-///
-/// `IdentityID`s are permanent and are not regenerated when the keysets are
-/// rotated.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct IdentityID(SignKeypairSignature);
-
-impl Deref for IdentityID {
-    type Target = SignKeypairSignature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<&IdentityID> for String {
-    fn from(id: &IdentityID) -> String {
-        ser::base64_encode(id.as_ref())
-    }
-}
-
-impl std::string::ToString for IdentityID {
-    fn to_string(&self) -> String {
-        ser::base64_encode(self.as_ref())
-    }
+object_id! {
+    /// A unique identifier for identities.
+    ///
+    /// We generate this by signing the string "This is my stamp." in a `DateSigner`
+    /// using our initial private signing key.
+    ///
+    /// `IdentityID`s are permanent and are not regenerated when the keysets are
+    /// rotated.
+    IdentityID
 }
 
 /// A set of forward types.
@@ -230,11 +212,6 @@ impl Identity {
         Identity::new_with_alpha_and_id(master_key, now, alpha_keypair, id)
     }
 
-    /// Returns the human-serialized ID for this identity.
-    pub fn id_string(&self) -> String {
-        self.id().to_string()
-    }
-
     /// Grab a list of all our identity's sub-signatures.
     fn sub_signatures(&self) -> Vec<&SignKeypairSignature> {
         let mut signatures = vec![
@@ -295,6 +272,7 @@ impl Identity {
     /// its entire need is based on a buggy stamp protocol implementation.
     pub fn root_sign(mut self, master_key: &SecretKey) -> Result<Self> {
         self.set_root_signature(self.generate_root_signature(master_key)?);
+        self.verify()?;
         Ok(self)
     }
 
@@ -391,6 +369,7 @@ impl Identity {
         let claim_container = ClaimContainer::new(master_key, self.keychain().root(), now, claim)?;
         self.claims_mut().push(claim_container);
         self.set_root_signature(self.generate_root_signature(master_key)?);
+        self.verify()?;
         Ok(self)
     }
 
@@ -408,6 +387,7 @@ impl Identity {
         let accepted = AcceptedStamp::accept(master_key, &root_key, stamp, now.into())?;
         claim.stamps_mut().push(accepted);
         self.set_root_signature(self.generate_root_signature(master_key)?);
+        self.verify()?;
         Ok(self)
     }
 
@@ -419,6 +399,7 @@ impl Identity {
         }
         self.claims_mut().retain(|x| x.claim().id() != id);
         self.set_root_signature(self.generate_root_signature(master_key)?);
+        self.verify()?;
         Ok(self)
     }
 
@@ -442,6 +423,7 @@ impl Identity {
         let wrapped = SignedOrRecoveredKeypair::Signed(signed);
         self.set_keychain(self.keychain().clone().set_root_key(master_key, wrapped, revocation_reason)?);
         self.set_root_signature(self.generate_root_signature(master_key)?);
+        self.verify()?;
         Ok(self)
     }
 
@@ -449,6 +431,7 @@ impl Identity {
     pub fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, title: T, description: T) -> Result<Self> {
         self.set_keychain(self.keychain().clone().add_subkey(master_key, key, title, description)?);
         self.set_root_signature(self.generate_root_signature(master_key)?);
+        self.verify()?;
         Ok(self)
     }
 
@@ -456,6 +439,7 @@ impl Identity {
     pub fn revoke_subkey(mut self, master_key: &SecretKey, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
         self.set_keychain(self.keychain().clone().revoke_subkey(master_key, key_id, reason)?);
         self.set_root_signature(self.generate_root_signature(master_key)?);
+        self.verify()?;
         Ok(self)
     }
 
@@ -463,6 +447,7 @@ impl Identity {
     pub fn delete_subkey(mut self, master_key: &SecretKey, key_id: &KeyID) -> Result<Self> {
         self.set_keychain(self.keychain().clone().delete_subkey(key_id)?);
         self.set_root_signature(self.generate_root_signature(master_key)?);
+        self.verify()?;
         Ok(self)
     }
 

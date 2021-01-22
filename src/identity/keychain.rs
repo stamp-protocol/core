@@ -23,30 +23,18 @@ use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 
-/// A unique identifier for a key. This is a signature of the key itself.
-///
-/// A bit different from other IDs in that it must be regenerated when the root
-/// keypair changes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct KeyID(SignKeypairSignature);
-
-impl Deref for KeyID {
-    type Target = SignKeypairSignature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+object_id! {
+    /// A unique identifier for a key. This is a signature of the key itself.
+    ///
+    /// A bit different from other IDs in that it must be regenerated when the root
+    /// keypair changes.
+    KeyID
 }
 
-/// A unique identifier for a key revocation. This is a signature of the
-/// revocation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RevocationID(SignKeypairSignature);
-
-impl Deref for RevocationID {
-    type Target = SignKeypairSignature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+object_id! {
+    /// A unique identifier for a key revocation. This is a signature of the
+    /// revocation.
+    RevocationID
 }
 
 /// Why we are deprecating a key.

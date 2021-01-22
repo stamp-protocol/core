@@ -12,7 +12,7 @@ use crate::{
         AcceptedStamp,
         IdentityID,
     },
-    key::{SecretKey, SignKeypairSignature, SignKeypair},
+    key::{SecretKey, SignKeypair},
     private::MaybePrivate,
     util::{
         Timestamp,
@@ -24,21 +24,15 @@ use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 
-/// A unique identifier for claims.
-///
-/// We generate this by signing the claim's data in a `DateSigner` with our
-/// current private signing key.
-///
-/// `IdentityID`s are permanent and are not regenerated when the keysets are
-/// rotated.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClaimID(SignKeypairSignature);
-
-impl Deref for ClaimID {
-    type Target = SignKeypairSignature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+object_id! {
+    /// A unique identifier for claims.
+    ///
+    /// We generate this by signing the claim's data in a `DateSigner` with our
+    /// current private signing key.
+    ///
+    /// `IdentityID`s are permanent and are not regenerated when the keysets are
+    /// rotated.
+    ClaimID
 }
 
 /// Various types of codified relationships, used in relationship claims.
@@ -67,6 +61,16 @@ pub struct Relationship<T> {
     relation: RelationshipType,
     /// Who the relationship is with.
     who: T,
+}
+
+impl<T> Relationship<T> {
+    /// Create a new relationship.
+    pub fn new(relation: RelationshipType, who: T) -> Self {
+        Self {
+            relation,
+            who,
+        }
+    }
 }
 
 /// A collection of known claims one can make about their identity.
