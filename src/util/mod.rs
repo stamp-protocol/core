@@ -33,17 +33,28 @@ macro_rules! object_id {
         impl std::convert::TryFrom<&$name> for String {
             type Error = crate::error::Error;
             fn try_from(id: &$name) -> std::result::Result<String, Self::Error> {
-                Ok(crate::util::ser::base64_encode(id.as_ref()))
+                let ser_val: u8 = match &id.0 {
+                    crate::key::SignKeypairSignature::Ed25519(_) => 0,
+                };
+                let mut bytes = Vec::from(id.as_ref());
+                bytes.push(ser_val);
+                Ok(crate::util::ser::base64_encode(&bytes))
             }
         }
 
         impl std::convert::TryFrom<&str> for $name {
             type Error = crate::error::Error;
             fn try_from(id_str: &str) -> std::result::Result<Self, Self::Error> {
-                let bytes = crate::util::ser::base64_decode(id_str.as_bytes())?;
-                let sig = sodiumoxide::crypto::sign::ed25519::Signature::from_slice(bytes.as_slice())
-                    .ok_or(crate::error::Error::SignatureMissing)?;
-                Ok(Self(crate::key::SignKeypairSignature::Ed25519(sig)))
+                let mut bytes = crate::util::ser::base64_decode(id_str.as_bytes())?;
+                let ser_val = bytes.pop().ok_or(crate::error::Error::SignatureMissing)?;
+                let id_sig = match ser_val {
+                    _ => {
+                        let sig = sodiumoxide::crypto::sign::ed25519::Signature::from_slice(bytes.as_slice())
+                            .ok_or(crate::error::Error::SignatureMissing)?;
+                        crate::key::SignKeypairSignature::Ed25519(sig)
+                    }
+                };
+                Ok(Self(id_sig))
             }
         }
     }

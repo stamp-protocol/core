@@ -333,7 +333,8 @@ impl Identity {
 
         // now check that our claims are signed with one of our root keys
         for claim in self.claims() {
-            let datesigner = DateSigner::new(claim.claim().created(), claim.claim().spec());
+            let stripped_spec = claim.claim().spec().strip_private();
+            let datesigner = DateSigner::new(claim.claim().created(), &stripped_spec);
             let ser = ser::serialize(&datesigner)?;
             self.try_keys(&root_keys, |sign_keypair| sign_keypair.verify(&claim.claim().id(), &ser))
                 .map_err(|_| {

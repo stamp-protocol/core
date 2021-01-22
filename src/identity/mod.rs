@@ -27,7 +27,11 @@ pub use identity::*;
 use crate::{
     error::Result,
     key::{SecretKey, SignKeypairSignature},
-    util::{Timestamp, ser},
+    util::{
+        Timestamp,
+        ser,
+        sign::DateSigner,
+    },
 };
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
@@ -126,6 +130,8 @@ pub struct PublishedIdentity {
     /// The signature of this published identity, generated using our publish
     /// keypair.
     publish_signature: SignKeypairSignature,
+    /// The date we published on.
+    publish_date: Timestamp,
     /// The versioned identity we're publishing.
     identity: VersionedIdentity,
 }
@@ -133,15 +139,17 @@ pub struct PublishedIdentity {
 impl PublishedIdentity {
     /// Takes an identity and creates a signed published identity object from
     /// it.
-    pub fn publish<T: Into<VersionedIdentity>>(master_key: &SecretKey, identity: T) -> Result<Self> {
+    pub fn publish<T: Into<VersionedIdentity>>(master_key: &SecretKey, now: Timestamp, identity: T) -> Result<Self> {
         let versioned_identity: VersionedIdentity = identity.into();
         let public_identity = versioned_identity.strip_private();
-        let serialized = ser::serialize(&public_identity)?;
+        let datesigner = DateSigner::new(&now, &versioned_identity);
+        let serialized = ser::serialize(&datesigner)?;
         let signature = match &versioned_identity {
             VersionedIdentity::V1(id) => id.keychain().publish().sign(master_key, &serialized),
         }?;
         Ok(Self {
             publish_signature: signature,
+            publish_date: now,
             identity: public_identity,
         })
     }
@@ -180,7 +188,8 @@ mod tests {
         let now = Timestamp::now();
         let identity = identity::Identity::new(&master_key, now).unwrap()
             .add_subkey(&master_key, keychain::Key::Crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap()), "Email", "Use this to send me emails.").unwrap();
-        let published = PublishedIdentity::publish(&master_key, identity).unwrap();
+        let now2 = Timestamp::now();
+        let published = PublishedIdentity::publish(&master_key, now2, identity).unwrap();
         let _human = published.serialize().unwrap();
         // TODO: gen with deterministict params, serialize and deserialize
     }

@@ -58,16 +58,16 @@ pub enum RelationshipType {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Relationship<T> {
     /// The type of relationship we have.
-    relation: RelationshipType,
+    ty: RelationshipType,
     /// Who the relationship is with.
     who: T,
 }
 
 impl<T> Relationship<T> {
     /// Create a new relationship.
-    pub fn new(relation: RelationshipType, who: T) -> Self {
+    pub fn new(ty: RelationshipType, who: T) -> Self {
         Self {
-            relation,
+            ty,
             who,
         }
     }
@@ -126,7 +126,7 @@ pub enum ClaimSpec {
 }
 
 impl ClaimSpec {
-    fn strip_private(&self) -> Self {
+    pub(crate) fn strip_private(&self) -> Self {
         match self {
             Self::Identity(id) => Self::Identity(id.clone()),
             Self::Name(val) => Self::Name(val.strip_private()),
