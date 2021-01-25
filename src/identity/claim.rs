@@ -11,6 +11,7 @@ use crate::{
     identity::{
         AcceptedStamp,
         IdentityID,
+        Public,
     },
     key::{SecretKey, SignKeypair},
     private::MaybePrivate,
@@ -126,19 +127,6 @@ pub enum ClaimSpec {
 }
 
 impl ClaimSpec {
-    pub(crate) fn strip_private(&self) -> Self {
-        match self {
-            Self::Identity(id) => Self::Identity(id.clone()),
-            Self::Name(val) => Self::Name(val.strip_private()),
-            Self::Email(val) => Self::Email(val.strip_private()),
-            Self::PGP(val) => Self::PGP(val.strip_private()),
-            Self::HomeAddress(val) => Self::HomeAddress(val.strip_private()),
-            Self::Relation(val) => Self::Relation(val.strip_private()),
-            Self::RelationExtension(val) => Self::RelationExtension(val.strip_private()),
-            Self::Extension(key, val) => Self::Extension(key.clone(), val.strip_private()),
-        }
-    }
-
     /// Re-encrypt this claim spec's private data, if it has any
     pub(crate) fn reencrypt(self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
         let spec = match self.clone() {
@@ -152,6 +140,21 @@ impl ClaimSpec {
             _ => self,
         };
         Ok(spec)
+    }
+}
+
+impl Public for ClaimSpec {
+    fn strip_private(&self) -> Self {
+        match self {
+            Self::Identity(id) => Self::Identity(id.clone()),
+            Self::Name(val) => Self::Name(val.strip_private()),
+            Self::Email(val) => Self::Email(val.strip_private()),
+            Self::PGP(val) => Self::PGP(val.strip_private()),
+            Self::HomeAddress(val) => Self::HomeAddress(val.strip_private()),
+            Self::Relation(val) => Self::Relation(val.strip_private()),
+            Self::RelationExtension(val) => Self::RelationExtension(val.strip_private()),
+            Self::Extension(key, val) => Self::Extension(key.clone(), val.strip_private()),
+        }
     }
 }
 
@@ -177,6 +180,14 @@ impl Claim {
             created: now,
             spec,
         }
+    }
+}
+
+impl Public for Claim {
+    fn strip_private(&self) -> Self {
+        let mut clone = self.clone();
+        clone.set_spec(clone.spec().strip_private());
+        clone
     }
 }
 
@@ -206,6 +217,15 @@ impl ClaimContainer {
             claim,
             stamps: Vec::new(),
         })
+    }
+
+}
+
+impl Public for ClaimContainer {
+    fn strip_private(&self) -> Self {
+        let mut clone = self.clone();
+        clone.set_claim(clone.claim().strip_private());
+        clone
     }
 }
 

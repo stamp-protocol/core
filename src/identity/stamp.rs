@@ -24,6 +24,27 @@ object_id! {
     StampID
 }
 
+/// The confidence of a stamp being made.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Confidence {
+    /// The stamp is being made with absolutely no verification whatsoever.
+    None,
+    /// Some verification of the claim happened, but it was quick and dirty.
+    Low,
+    /// We verified the claim using a decent amount of diligence. This could be
+    /// like checking someone's state-issued ID.
+    Medium,
+    /// The claim was extensively investigated: birth certificates, background
+    /// checks, photo verification.
+    High,
+    /// We climbed mountains, pulled teeth, interrogated family members, and are
+    /// absolutely positive that this claim is true in every way.
+    ///
+    /// This should really only be used between people who have known each other
+    /// for years (like family).
+    Extreme,
+}
+
 /// A set of data that is signed when a stamp is created that is stored
 /// alongside the signature itself.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
@@ -31,15 +52,17 @@ object_id! {
 pub struct StampEntry {
     /// The ID of the identity that is stamping.
     stamper: IdentityID,
+    /// The ID of the identity being stamped.
+    stampee: IdentityID,
     /// The ID of the claim we're stamping.
     claim_id: ClaimID,
     /// How much confidence the stamper has that the claim being stamped is
     /// valid. This is a value between 0 and 255, and is ultimately a ratio
     /// via `c / 255`, where 0.0 is "lowest confidence" and 1.0 is "ultimate
     /// confidence." Keep in mind that 0 here is not "absolutely zero
-    /// confidence" as otherwise the stamp wouldn't be occuring in the first
+    /// confidence" as otherwise the stamp wouldn't be occurring in the first
     /// place.
-    confidence: u8,
+    confidence: Confidence,
     /// Filled in by the stamper, the date the claim was stamped.
     date_signed: Timestamp,
     /// The date this stamp expires (if at all). The stamper can choose to set
@@ -50,9 +73,10 @@ pub struct StampEntry {
 
 impl StampEntry {
     /// Create a new stamp entry.
-    fn new<T: Into<Timestamp>>(stamper: IdentityID, claim_id: ClaimID, confidence: u8, date_signed: T, expires: Option<T>) -> Self {
+    fn new<T: Into<Timestamp>>(stamper: IdentityID, stampee: IdentityID, claim_id: ClaimID, confidence: Confidence, date_signed: T, expires: Option<T>) -> Self {
         Self {
             stamper,
+            stampee,
             claim_id,
             confidence,
             date_signed: date_signed.into(),
@@ -107,8 +131,8 @@ impl Stamp {
     ///
     /// This must be created by the identity validating the claim, using their
     /// private signing key.
-    pub fn stamp<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, confidence: u8, now: T, claim: &Claim, expires: Option<T>) -> Result<Self> {
-        let entry = StampEntry::new(stamper.clone(), claim.id().clone(), confidence, now, expires);
+    pub fn stamp<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, stampee: &IdentityID, confidence: Confidence, now: T, claim: &Claim, expires: Option<T>) -> Result<Self> {
+        let entry = StampEntry::new(stamper.clone(), stampee.clone(), claim.id().clone(), confidence, now, expires);
         let container = StampSignatureContainer::new(&entry, claim);
         let ser = ser::serialize(&container)?;
         let signature = sign_keypair.sign(master_key, &ser)?;
@@ -189,6 +213,8 @@ pub struct StampRevocationEntry {
     /// The identity ID of the original stamper (which must match the identity
     /// ID of the revoker).
     stamper: IdentityID,
+    /// The identity ID of the recipient of the original stamp.
+    stampee: IdentityID,
     /// The ID of the stamp we're revoking.
     stamp_id: StampID,
     /// Date revoked
@@ -197,9 +223,10 @@ pub struct StampRevocationEntry {
 
 impl StampRevocationEntry {
     /// Create a new stamp revocaiton entry.
-    fn new(stamper: IdentityID, stamp_id: StampID, date_revoked: Timestamp) -> Self {
+    fn new(stamper: IdentityID, stampee: IdentityID, stamp_id: StampID, date_revoked: Timestamp) -> Self {
         Self {
             stamper,
+            stampee,
             stamp_id,
             date_revoked,
         }
@@ -228,8 +255,8 @@ pub struct StampRevocation {
 
 impl StampRevocation {
     /// Create a new stamp revocation
-    pub fn new<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: IdentityID, stamp_id: StampID, date_revoked: T) -> Result<Self> {
-        let entry = StampRevocationEntry::new(stamper, stamp_id, date_revoked.into());
+    pub fn new<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: IdentityID, stampee: IdentityID, stamp_id: StampID, date_revoked: T) -> Result<Self> {
+        let entry = StampRevocationEntry::new(stamper, stampee, stamp_id, date_revoked.into());
         let serialized = ser::serialize(&entry)?;
         let sig = sign_keypair.sign(master_key, &serialized)?;
         Ok(Self {

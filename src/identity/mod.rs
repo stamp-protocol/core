@@ -90,6 +90,13 @@ impl VersionedIdentity {
         }
     }
 
+    /// Remove a claim from this identity, including any stamps it has received.
+    pub fn remove_claim(self, master_key: &SecretKey, claim_id: &ClaimID) -> Result<Self> {
+        match self {
+            Self::V1(id) => Ok(Self::V1(id.remove_claim(master_key, claim_id)?)),
+        }
+    }
+
     /// Strip all private data from this identity.
     fn strip_private(&self) -> Self {
         match self {
@@ -142,7 +149,7 @@ impl PublishedIdentity {
     pub fn publish<T: Into<VersionedIdentity>>(master_key: &SecretKey, now: Timestamp, identity: T) -> Result<Self> {
         let versioned_identity: VersionedIdentity = identity.into();
         let public_identity = versioned_identity.strip_private();
-        let datesigner = DateSigner::new(&now, &versioned_identity);
+        let datesigner = DateSigner::new(&now, &public_identity);
         let serialized = ser::serialize(&datesigner)?;
         let signature = match &versioned_identity {
             VersionedIdentity::V1(id) => id.keychain().publish().sign(master_key, &serialized),

@@ -14,7 +14,7 @@ use crate::{
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
         keychain::{RevocationReason, SignedOrRecoveredKeypair, KeyID, Key, Keychain},
         recovery::{Recovery},
-        stamp::{StampID, Stamp, StampRevocation, AcceptedStamp},
+        stamp::{Confidence, StampID, Stamp, StampRevocation, AcceptedStamp},
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
     private::MaybePrivate,
@@ -374,9 +374,16 @@ impl Identity {
         Ok(self)
     }
 
-    /// Look up a claim by ID
-    pub fn find_claim(&self, claim_id: &ClaimID) -> Option<&ClaimContainer> {
-        self.claims().iter().find(|x| x.claim().id() == claim_id)
+    /// Remove a claim from this identity, including any stamps it has received.
+    pub fn remove_claim(mut self, master_key: &SecretKey, id: &ClaimID) -> Result<Self> {
+        let exists = self.claims().iter().find(|x| x.claim().id() == id);
+        if exists.is_none() {
+            Err(Error::IdentityClaimNotFound)?;
+        }
+        self.claims_mut().retain(|x| x.claim().id() != id);
+        self.set_root_signature(self.generate_root_signature(master_key)?);
+        self.verify()?;
+        Ok(self)
     }
 
     /// Accept a stamp on one of our claims
@@ -387,18 +394,6 @@ impl Identity {
             .ok_or(Error::IdentityClaimNotFound)?;
         let accepted = AcceptedStamp::accept(master_key, &root_key, stamp, now.into())?;
         claim.stamps_mut().push(accepted);
-        self.set_root_signature(self.generate_root_signature(master_key)?);
-        self.verify()?;
-        Ok(self)
-    }
-
-    /// Remove a claim from this identity, including any stamps it has received.
-    pub fn remove_claim(mut self, master_key: &SecretKey, id: &ClaimID) -> Result<Self> {
-        let exists = self.claims().iter().find(|x| x.claim().id() == id);
-        if exists.is_none() {
-            Err(Error::IdentityClaimNotFound)?;
-        }
-        self.claims_mut().retain(|x| x.claim().id() != id);
         self.set_root_signature(self.generate_root_signature(master_key)?);
         self.verify()?;
         Ok(self)
@@ -453,8 +448,8 @@ impl Identity {
     }
 
     /// Stamp a claim with our identity.
-    pub fn stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, confidence: u8, now: T, claim: &Claim, expires: Option<T>) -> Result<Stamp> {
-        Stamp::stamp(master_key, self.keychain().root(), self.id(), confidence, now, claim, expires)
+    pub fn stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, confidence: Confidence, now: T, stampee: &IdentityID, claim: &Claim, expires: Option<T>) -> Result<Stamp> {
+        Stamp::stamp(master_key, self.keychain().root(), self.id(), stampee, confidence, now, claim, expires)
     }
 
     /// Revoke a stamp we've made.
@@ -468,8 +463,8 @@ impl Identity {
     /// belongs to, but instead we must publish this revocation on whatever
     /// medium we see fit, and it is up to people to check for revocations on
     /// that medium before accepting a stamped claim as given.
-    pub fn revoke_stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, stamp_id: StampID, date_revoked: T) -> Result<StampRevocation> {
-        StampRevocation::new(master_key, self.keychain().root(), self.id().clone(), stamp_id, date_revoked)
+    pub fn revoke_stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, stampee: IdentityID, stamp_id: StampID, date_revoked: T) -> Result<StampRevocation> {
+        StampRevocation::new(master_key, self.keychain().root(), self.id().clone(), stampee, stamp_id, date_revoked)
     }
 
     /// Grab this identity's nickname, if it has one.
@@ -577,6 +572,13 @@ impl Public for Identity {
     fn strip_private(&self) -> Self {
         let mut clone = self.clone();
         clone.set_keychain(self.keychain().clone().strip_private());
+        let claims = self.claims().clone().into_iter()
+            .map(|mut x| {
+                x.set_claim(x.claim().strip_private());
+                x
+            })
+            .collect::<Vec<_>>();
+        clone.set_claims(claims);
         clone
     }
 }

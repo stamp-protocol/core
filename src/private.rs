@@ -13,11 +13,41 @@
 use crate::{
     error::{Error, Result},
     key::{SecretKey, SecretKeyNonce},
-    util::ser,
+    util::ser::{self, TryFromSlice},
 };
 use serde_derive::{Serialize, Deserialize};
 use sodiumoxide::crypto::auth::hmacsha512;
 use std::marker::PhantomData;
+
+impl_try_from_slice!(hmacsha512::Tag);
+
+/// An HMAC hash
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Hmac {
+    #[serde(with = "crate::util::ser::human_binary_from_slice")]
+    HmacSha512(hmacsha512::Tag),
+}
+
+impl Hmac {
+    /// Create a new HMACSHA512 from a key and a set of data.
+    pub fn new_sha512(hmac_key: &hmacsha512::Key, data: &[u8]) -> Result<Self> {
+        let hmac = hmacsha512::authenticate(data, hmac_key);
+        Ok(Hmac::HmacSha512(hmac))
+    }
+
+    /// Verify an HMAC against a set of data.
+    pub fn verify(&self, hmac_key: &hmacsha512::Key, data: &[u8]) -> Result<()> {
+        match self {
+            Self::HmacSha512(hmac) => {
+                if !hmacsha512::verify(hmac, data, hmac_key) {
+                    // the data has been tampered with, my friend.
+                    Err(Error::CryptoHmacVerificationFailed)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Holds private data, which can only be opened if you have the special key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,10 +158,10 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> PrivateVerifiable<T> {
     /// HMAC and thus verify the public signature on the secret. However, the
     /// signature itself reveals nothing about the secret data because the HMAC
     /// obscures the data behind an encrypted key.
-    pub fn seal(seal_key: &SecretKey, data: &T) -> Result<(hmacsha512::Tag, Self)> {
+    pub fn seal(seal_key: &SecretKey, data: &T) -> Result<(Hmac, Self)> {
         // create a new random key and use it to HMAC our data
         let hmac_key = hmacsha512::gen_key();
-        let hmac = hmacsha512::authenticate(&ser::serialize(data)?, &hmac_key);
+        let hmac = Hmac::new_sha512(&hmac_key, &ser::serialize(data)?)?;
         // store our data alongside our HMAC key, allowing anybody with access
         // to this container to regenerate the HMAC.
         let inner = PrivateVerifiableInner { value: data, hmac_key: hmac_key };
@@ -152,7 +182,7 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> PrivateVerifiable<T> {
     ///
     /// If the data has been tampered with and the HMACs don't verify, then we
     /// return an error.
-    pub fn open_and_verify(&self, seal_key: &SecretKey, hmac: &hmacsha512::Tag) -> Result<T> {
+    pub fn open_and_verify(&self, seal_key: &SecretKey, hmac: &Hmac) -> Result<T> {
         // decrypt the secret value
         let open_bytes = seal_key.open(&self.sealed, &self.nonce)
             .map_err(|_| Error::CryptoOpenFailed)?;
@@ -160,10 +190,7 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> PrivateVerifiable<T> {
         let obj: PrivateVerifiableInner<T> = ser::deserialize(&open_bytes[..])?;
         let PrivateVerifiableInner { value, hmac_key } = obj;
         // verify our hmac against our decrypted data/hmac key
-        if !hmacsha512::verify(hmac, &ser::serialize(&value)?, &hmac_key) {
-            // the data has been tampered with, my friend.
-            Err(Error::CryptoHmacVerificationFailed)?;
-        }
+        hmac.verify(&hmac_key, &ser::serialize(&value)?)?;
         // success!
         Ok(value)
     }
@@ -193,7 +220,7 @@ pub enum MaybePrivate<T> {
     ///
     /// Make sure to check if this object has data via <MaybePrivate::has_data()>
     /// before trying to use it.
-    Private(hmacsha512::Tag, Option<PrivateVerifiable<T>>),
+    Private(Hmac, Option<PrivateVerifiable<T>>),
 }
 
 impl<T: serde::Serialize + serde::de::DeserializeOwned + Clone> MaybePrivate<T> {
@@ -262,9 +289,9 @@ mod tests {
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = MaybePrivate::Private(hmacsha512::authenticate(Vec::new().as_slice(), &fake_hmac_key), None);
+        let maybe3: MaybePrivate<String> = MaybePrivate::Private(Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(), None);
         let maybe2_tampered = match maybe2.clone() {
-            MaybePrivate::Private(_, data) => MaybePrivate::Private(hmacsha512::authenticate(String::from("loool").as_bytes(), &fake_hmac_key), data),
+            MaybePrivate::Private(_, data) => MaybePrivate::Private(Hmac::new_sha512(&fake_hmac_key, String::from("loool").as_bytes()).unwrap(), data),
             _ => panic!("bad maybeprivate given"),
         };
 
