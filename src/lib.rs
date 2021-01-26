@@ -33,8 +33,8 @@
 //! to verify that claim).
 //! 1. To allow the identity holder the ultimate control over their identity.
 //! 1. To remain as distributed as possible.
-//! 1. To be easy to use, by choosing sensible defaults and providing good UX
-//! wherever possible.
+//! 1. To be easy to use by choosing sensible defaults, providing good UX
+//! wherever possible, and being opinionated wherever needed.
 //! 1. To define paths for recovery that advertise their risks and benefits.
 //! 1. To act as a useful mechanism for discovery in other distributed or
 //! decentralized systems.

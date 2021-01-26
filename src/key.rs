@@ -205,6 +205,13 @@ impl SignKeypair {
             _ => Err(Error::CryptoKeyMissing),
         }
     }
+
+    /// Determines if this keypair has private data included (ie, a private key).
+    pub fn has_private(&self) -> bool {
+        match self {
+            Self::Ed25519(_, private_maybe) => private_maybe.is_some(),
+        }
+    }
 }
 
 impl Public for SignKeypair {
@@ -365,6 +372,13 @@ impl CryptoKeypair {
                 Ok(Self::Curve25519Xsalsa20Poly1305(public, Some(private.reencrypt(previous_master_key, new_master_key)?)))
             }
             _ => Err(Error::CryptoKeyMissing),
+        }
+    }
+
+    /// Determines if this keypair has private data included (ie, a private key).
+    pub fn has_private(&self) -> bool {
+        match self {
+            Self::Curve25519Xsalsa20Poly1305(_, private_maybe) => private_maybe.is_some(),
         }
     }
 }

@@ -64,6 +64,11 @@ impl VersionedIdentity {
         ser::deserialize(slice)
     }
 
+    /// Serialize this versioned identity into a human readable format
+    pub fn serialize(&self) -> Result<String> {
+        ser::serialize_human(self)
+    }
+
     /// Re-encrypt this identity's keychain and private claims.
     pub fn reencrypt(self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
         match self {
@@ -97,10 +102,31 @@ impl VersionedIdentity {
         }
     }
 
-    /// Strip all private data from this identity.
-    fn strip_private(&self) -> Self {
+    /// Accept a stamp on one of our claims
+    pub fn accept_stamp<T: Into<Timestamp>>(self, master_key: &SecretKey, now: T, stamping_identity: &VersionedIdentity, stamp: Stamp) -> Result<Self> {
         match self {
-            Self::V1(identity) => Self::V1(identity.strip_private()),
+            Self::V1(id) => Ok(Self::V1(id.accept_stamp(master_key, now, stamping_identity, stamp)?)),
+        }
+    }
+
+    /// Add a new subkey to our identity.
+    pub fn add_subkey<T: Into<String>>(self, master_key: &SecretKey, key: Key, name: T, description: Option<T>) -> Result<Self> {
+        match self {
+            Self::V1(id) => Ok(Self::V1(id.add_subkey(master_key, key, name, description)?)),
+        }
+    }
+
+    /// Revoke one of our subkeys, for instance if it has been compromised.
+    pub fn revoke_subkey(self, master_key: &SecretKey, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
+        match self {
+            Self::V1(id) => Ok(Self::V1(id.revoke_subkey(master_key, key_id, reason)?)),
+        }
+    }
+
+    /// Remove a subkey from the keychain.
+    pub fn delete_subkey(self, master_key: &SecretKey, key_id: &KeyID) -> Result<Self> {
+        match self {
+            Self::V1(id) => Ok(Self::V1(id.delete_subkey(master_key, key_id)?)),
         }
     }
 }
@@ -161,12 +187,12 @@ impl PublishedIdentity {
         })
     }
 
-    /// Serialize this versioned identity into a human readable format
+    /// Serialize this published identity into a human readable format
     pub fn serialize(&self) -> Result<String> {
         ser::serialize_human(self)
     }
 
-    /// Deserialize this versioned identity from a byte vector.
+    /// Deserialize this published identity from a byte vector.
     pub fn deserialize(slice: &[u8]) -> Result<Self> {
         ser::deserialize_human(slice)
     }

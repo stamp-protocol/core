@@ -180,6 +180,19 @@ impl Key {
         };
         Ok(key)
     }
+
+    pub fn has_private(&self) -> bool {
+        match self {
+            Self::Policy(keypair) => keypair.has_private(),
+            Self::Publish(keypair) => keypair.has_private(),
+            Self::Root(keypair) => keypair.has_private(),
+            Self::Sign(keypair) => keypair.has_private(),
+            Self::Crypto(keypair) => keypair.has_private(),
+            Self::Secret(_) => true,
+            Self::ExtensionKeypair(_, private_maybe) => private_maybe.is_some(),
+            Self::ExtensionSecret(_) => true,
+        }
+    }
 }
 
 impl PublicMaybe for Key {
@@ -214,12 +227,12 @@ pub struct KeyEntry {
     name: String,
     /// The key's human-readable description, for example "Please send me
     /// encrypted emails using this key." Or "HAI THIS IS MY DOGECOIN ADDRESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS!!!1"
-    description: String,
+    description: Option<String>,
 }
 
 impl KeyEntry {
     /// Create a new KeyEntry.
-    fn new(key: Key, name: String, description: String) -> Self {
+    fn new(key: Key, name: String, description: Option<String>) -> Self {
         Self {
             key,
             name,
@@ -275,13 +288,13 @@ pub struct Subkey {
 
 impl Subkey {
     /// Create a new subkey, signed by our root key.
-    fn new<T: Into<String>>(master_key: &SecretKey, sign_keypair: &SignKeypair, key: Key, name: T, description: T) -> Result<Self> {
+    fn new<T: Into<String>>(master_key: &SecretKey, sign_keypair: &SignKeypair, key: Key, name: T, description: Option<T>) -> Result<Self> {
         // create a blank signature we're going to use TEMPORARILY for the id
         // and signature fields.
         //
         // fake signature. Sad!
         let blank_signature = SignKeypairSignature::blank(sign_keypair);
-        let entry = KeyEntry::new(key, name.into(), description.into());
+        let entry = KeyEntry::new(key, name.into(), description.map(|x| x.into()));
         let mut subkey = Self {
             id: KeyID(blank_signature.clone()),
             signature: blank_signature,
@@ -471,7 +484,7 @@ impl Keychain {
     /// This moves the current policy key into the subkeys and revokes it.
     pub(crate) fn set_policy_key(mut self, master_key: &SecretKey, alpha_keypair: &SignKeypair, new_policy_keypair: SignKeypair, reason: RevocationReason) -> Result<Self> {
         let policy = self.policy().deref().clone();
-        let mut subkey = Subkey::new(master_key, alpha_keypair, Key::Policy(policy), "policy key", "revoked policy key")?;
+        let mut subkey = Subkey::new(master_key, alpha_keypair, Key::Policy(policy), "policy key", Some("revoked policy key"))?;
         subkey.revoke(master_key, self.root(), reason)?;
         self.subkeys_mut().push(subkey);
         self.set_policy(SignedValue::new(master_key, alpha_keypair, new_policy_keypair)?);
@@ -483,7 +496,7 @@ impl Keychain {
     /// This moves the current publish key into the subkeys and revokes it.
     pub(crate) fn set_publish_key(mut self, master_key: &SecretKey, new_publish_keypair: SignedOrRecoveredKeypair, reason: RevocationReason) -> Result<Self> {
         let publish = self.publish().deref().clone();
-        let mut subkey = Subkey::new(master_key, self.root(), Key::Publish(publish), "publish key", "revoked publish key")?;
+        let mut subkey = Subkey::new(master_key, self.root(), Key::Publish(publish), "publish key", Some("revoked publish key"))?;
         subkey.revoke(master_key, &new_publish_keypair, reason)?;
         self.subkeys_mut().push(subkey);
         self.set_publish(new_publish_keypair);
@@ -496,7 +509,7 @@ impl Keychain {
     /// updates the signature on all the subkeys (including the old root key).
     pub(crate) fn set_root_key(mut self, master_key: &SecretKey, new_root_keypair: SignedOrRecoveredKeypair, reason: RevocationReason) -> Result<Self> {
         let root = self.root().deref().clone();
-        let mut subkey = Subkey::new(master_key, &new_root_keypair, Key::Root(root), "root key", "revoked root key")?;
+        let mut subkey = Subkey::new(master_key, &new_root_keypair, Key::Root(root), "root key", Some("revoked root key"))?;
         subkey.revoke(master_key, &new_root_keypair, reason)?;
         self.subkeys_mut().push(subkey);
         self.set_root(new_root_keypair);
@@ -504,7 +517,7 @@ impl Keychain {
     }
 
     /// Add a new subkey to the keychain (and sign it).
-    pub(crate) fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, name: T, description: T) -> Result<Self> {
+    pub(crate) fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, name: T, description: Option<T>) -> Result<Self> {
         let subkey = Subkey::new(master_key, self.root(), key, name, description)?;
         self.subkeys_mut().push(subkey);
         Ok(self)

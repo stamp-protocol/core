@@ -52,7 +52,7 @@ pub enum ForwardType {
     Url(String),
     /// An extension type, can be used to implement any kind of forward you can
     /// think of.
-    Extension(Vec<u8>),
+    Extension(String, Vec<u8>),
 }
 
 /// A pointer to somewhere else.
@@ -387,12 +387,12 @@ impl Identity {
     }
 
     /// Accept a stamp on one of our claims
-    pub fn accept_stamp<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, stamp: Stamp) -> Result<Self> {
+    pub fn accept_stamp<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, stamping_identity: &VersionedIdentity, stamp: Stamp) -> Result<Self> {
         let claim_id = stamp.entry().claim_id();
         let root_key = self.keychain().root().clone();
         let claim = self.claims_mut().iter_mut().find(|x| x.claim().id() == claim_id)
             .ok_or(Error::IdentityClaimNotFound)?;
-        let accepted = AcceptedStamp::accept(master_key, &root_key, stamp, now.into())?;
+        let accepted = AcceptedStamp::accept(master_key, &root_key, stamping_identity, stamp, now.into())?;
         claim.stamps_mut().push(accepted);
         self.set_root_signature(self.generate_root_signature(master_key)?);
         self.verify()?;
@@ -424,8 +424,8 @@ impl Identity {
     }
 
     /// Add a new subkey to our identity.
-    pub fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, title: T, description: T) -> Result<Self> {
-        self.set_keychain(self.keychain().clone().add_subkey(master_key, key, title, description)?);
+    pub fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, name: T, description: Option<T>) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().add_subkey(master_key, key, name, description)?);
         self.set_root_signature(self.generate_root_signature(master_key)?);
         self.verify()?;
         Ok(self)
@@ -450,6 +450,12 @@ impl Identity {
     /// Stamp a claim with our identity.
     pub fn stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, confidence: Confidence, now: T, stampee: &IdentityID, claim: &Claim, expires: Option<T>) -> Result<Stamp> {
         Stamp::stamp(master_key, self.keychain().root(), self.id(), stampee, confidence, now, claim, expires)
+    }
+
+    /// Verify that the given stamp was actually signed by this identity.
+    pub fn verify_stamp(&self, stamp: &Stamp) -> Result<()> {
+        let root_keys = self.keychain().keys_root();
+        self.try_keys(&root_keys, |sign_keypair| stamp.verify(sign_keypair))
     }
 
     /// Revoke a stamp we've made.
@@ -521,7 +527,7 @@ impl Identity {
         self.claims().iter()
             .filter_map(|x| {
                 match x.claim().spec() {
-                    ClaimSpec::Email(MaybePrivate::Public(ref email)) => Some(email.clone()),
+                    ClaimSpec::Name(MaybePrivate::Public(ref name)) => Some(name.clone()),
                     _ => None,
                 }
             })
@@ -618,9 +624,10 @@ mod tests {
         let identity2 = Identity::new(&master_key2, Timestamp::now()).unwrap();
 
         let claim = identity.claims()[0].claim();
-        let stamp = identity2.stamp(&master_key2, 64, Timestamp::now(), claim, None).unwrap();
+        let stamp = identity2.stamp(&master_key2, Confidence::Medium, Timestamp::now(), identity.id(), claim, None).unwrap();
 
-        let identity = identity.accept_stamp(&master_key, Timestamp::now(), stamp).unwrap();
+        let versioned2 = identity2.into();
+        let identity = identity.accept_stamp(&master_key, Timestamp::now(), &versioned2, stamp).unwrap();
         assert_eq!(identity.verify(), Ok(()));
     }
 

@@ -123,7 +123,7 @@ pub enum ClaimSpec {
     ///
     /// Anything you can dream up that you wish to claim in any format can exist
     /// here.
-    Extension(Vec<u8>, MaybePrivate<Vec<u8>>),
+    Extension(String, MaybePrivate<Vec<u8>>),
 }
 
 impl ClaimSpec {

@@ -3,8 +3,10 @@
 use crate::{
     error::Result,
     identity::{
+        Public,
         {Claim, ClaimID},
         IdentityID,
+        VersionedIdentity,
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
     util::{
@@ -29,7 +31,8 @@ object_id! {
 pub enum Confidence {
     /// The stamp is being made with absolutely no verification whatsoever.
     None,
-    /// Some verification of the claim happened, but it was quick and dirty.
+    /// Some verification of the claim happened, but it was quick and
+    /// dirty.
     Low,
     /// We verified the claim using a decent amount of diligence. This could be
     /// like checking someone's state-issued ID.
@@ -85,31 +88,6 @@ impl StampEntry {
     }
 }
 
-/// A somewhat ephemeral container used specifically for signing a stamp entry
-/// along with the claim being stamped. This container is not stored anywhere,
-/// but rather we just store the resulting signature.
-///
-/// Note that in the case of a claim with private data being signed, the
-/// signature applies to the encrypted entry, not the decrypted entry, allowing
-/// anyone to verify that X stamped Y's claim without *knowing* Y's claim.
-#[derive(Debug, Clone, Serialize, getset::Getters, getset::MutGetters, getset::Setters)]
-pub struct StampSignatureContainer<'a, 'b> {
-    /// The stamp entry we're signing with this signature.
-    entry: &'a StampEntry,
-    /// The claim we're signing.
-    claim: &'b Claim,
-}
-
-impl<'a, 'b> StampSignatureContainer<'a, 'b> {
-    /// Create a new sig container
-    fn new(entry: &'a StampEntry, claim: &'b Claim) -> Self {
-        Self {
-            entry,
-            claim,
-        }
-    }
-}
-
 /// A stamp of approval on a claim.
 ///
 /// Effectively, this is a signature and a collection of stamp data.
@@ -133,8 +111,7 @@ impl Stamp {
     /// private signing key.
     pub fn stamp<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, stampee: &IdentityID, confidence: Confidence, now: T, claim: &Claim, expires: Option<T>) -> Result<Self> {
         let entry = StampEntry::new(stamper.clone(), stampee.clone(), claim.id().clone(), confidence, now, expires);
-        let container = StampSignatureContainer::new(&entry, claim);
-        let ser = ser::serialize(&container)?;
+        let ser = ser::serialize(&entry)?;
         let signature = sign_keypair.sign(master_key, &ser)?;
         Ok(Self {
             id: StampID(signature),
@@ -147,10 +124,25 @@ impl Stamp {
     /// Must have the stamper's public key, which can be obtained by querying
     /// whatever networks means are accessible for the `IdentityID` in the
     /// `entry.stamper` field.
-    pub fn verify(&self, sign_keypair: &SignKeypair, claim: &Claim) -> Result<()> {
-        let container = StampSignatureContainer::new(self.entry(), claim);
-        let ser = ser::serialize(&container)?;
+    pub fn verify(&self, sign_keypair: &SignKeypair) -> Result<()> {
+        let ser = ser::serialize(self.entry())?;
         sign_keypair.verify(&self.id, &ser)
+    }
+
+    /// Serialize this stamp in human-readable form.
+    pub fn serialize(&self) -> Result<String> {
+        ser::serialize_human(self)
+    }
+
+    /// Deserialize this stamp from a byte vector.
+    pub fn deserialize(slice: &[u8]) -> Result<Self> {
+        ser::deserialize_human(slice)
+    }
+}
+
+impl Public for Stamp {
+    fn strip_private(&self) -> Self {
+        self.clone()
     }
 }
 
@@ -177,7 +169,8 @@ pub struct AcceptedStamp {
 
 impl AcceptedStamp {
     /// Accept a stamp.
-    pub fn accept(master_key: &SecretKey, sign_keypair: &SignKeypair, stamp: Stamp, now: Timestamp) -> Result<Self> {
+    pub fn accept(master_key: &SecretKey, sign_keypair: &SignKeypair, stamping_identity: &VersionedIdentity, stamp: Stamp, now: Timestamp) -> Result<Self> {
+        stamping_identity.verify_stamp(&stamp)?;
         let datesigner = DateSigner::new(&now, &stamp);
         let serialized = ser::serialize(&datesigner)?;
         let signature = sign_keypair.sign(&master_key, &serialized)?;
