@@ -24,6 +24,7 @@ use crate::{
 use serde_derive::{Serialize, Deserialize};
 use sodiumoxide::{
     crypto::{
+        auth::hmacsha512,
         box_::curve25519xsalsa20poly1305,
         pwhash::argon2id13,
         secretbox::xsalsa20poly1305,
@@ -38,6 +39,8 @@ impl_try_from_slice!(xsalsa20poly1305::Key);
 impl_try_from_slice!(ed25519::Signature);
 impl_try_from_slice!(curve25519xsalsa20poly1305::Nonce);
 impl_try_from_slice!(curve25519xsalsa20poly1305::PublicKey);
+impl_try_from_slice!(hmacsha512::Tag);
+impl_try_from_slice!(hmacsha512::Key);
 
 /// A symmetric encryption key nonce
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -118,13 +121,6 @@ pub enum SignKeypairSignature {
 }
 
 impl SignKeypairSignature {
-    /// Convert this signature to hex
-    pub fn to_hex(&self) -> String {
-        match self {
-            Self::Ed25519(ref x) => sodiumoxide::hex::encode(x),
-        }
-    }
-
     /// Given a signing keypair, return a blank (ie, 0x0000000000...) signature
     /// that matches the key type.
     ///
@@ -159,14 +155,6 @@ impl SignKeypair {
     pub fn new_ed25519(master_key: &SecretKey) -> Result<Self> {
         let (public, secret) = ed25519::gen_keypair();
         Ok(Self::Ed25519(public, Some(Private::seal(master_key, &secret)?)))
-    }
-
-    /// Check if we have this keypair's secret key.
-    pub fn have_secret(&self) -> bool {
-        match self {
-            Self::Ed25519(_, Some(_)) => true,
-            _ => false,
-        }
     }
 
     /// Sign a value with our secret signing key.
@@ -289,7 +277,7 @@ pub struct CryptoKeypairMessage {
 
 impl CryptoKeypairMessage {
     /// Create a new message
-    pub fn new(nonce: CryptoKeypairNonce, ciphertext: Vec<u8>) -> Self {
+    fn new(nonce: CryptoKeypairNonce, ciphertext: Vec<u8>) -> Self {
         Self {
             nonce,
             ciphertext,
@@ -311,8 +299,8 @@ impl CryptoKeypair {
     }
 
     /// Anonymously encrypt a message using the recipient's public key.
-    pub fn seal_anonymous(their_pk: &CryptoKeypair, data: &[u8]) -> Result<Vec<u8>> {
-        match their_pk {
+    pub fn seal_anonymous(&self, data: &[u8]) -> Result<Vec<u8>> {
+        match self {
             Self::Curve25519Xsalsa20Poly1305(ref pubkey, _) => {
                 Ok(sodiumoxide::crypto::sealedbox::curve25519blake2bxsalsa20poly1305::seal(data, pubkey))
             }
@@ -321,8 +309,8 @@ impl CryptoKeypair {
 
     /// Open an anonymous message encrypted with our public key. Requires our
     /// master key to open.
-    pub fn open_anonymous(master_key: &SecretKey, our_keypair: &CryptoKeypair, data: &[u8]) -> Result<Vec<u8>> {
-        match our_keypair {
+    pub fn open_anonymous(&self, master_key: &SecretKey, data: &[u8]) -> Result<Vec<u8>> {
+        match self {
             Self::Curve25519Xsalsa20Poly1305(ref pubkey, ref seckey_opt) => {
                 let seckey_sealed = seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let seckey = seckey_sealed.open(master_key)?;
@@ -334,13 +322,13 @@ impl CryptoKeypair {
 
     /// Encrypt a message to a recipient, and sign it with our secret crypto
     /// key. Needs our master key to unlock our heroic private key.
-    pub fn seal(our_master_key: &SecretKey, our_keypair: &CryptoKeypair, their_keypair: &CryptoKeypair, data: &[u8]) -> Result<CryptoKeypairMessage> {
-        match (our_keypair, their_keypair) {
-            (Self::Curve25519Xsalsa20Poly1305(_, ref our_seckey_opt), Self::Curve25519Xsalsa20Poly1305(ref their_pubkey, _)) => {
-                let our_seckey_sealed = our_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let our_seckey = our_seckey_sealed.open(our_master_key)?;
+    pub fn seal(&self, sender_master_key: &SecretKey, sender_keypair: &CryptoKeypair, data: &[u8]) -> Result<CryptoKeypairMessage> {
+        match (sender_keypair, self) {
+            (Self::Curve25519Xsalsa20Poly1305(_, ref sender_seckey_opt), Self::Curve25519Xsalsa20Poly1305(ref receiver_pubkey, _)) => {
+                let sender_seckey_sealed = sender_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
+                let sender_seckey = sender_seckey_sealed.open(sender_master_key)?;
                 let nonce_raw = curve25519xsalsa20poly1305::gen_nonce();
-                let msg = curve25519xsalsa20poly1305::seal(data, &nonce_raw, &their_pubkey, &our_seckey);
+                let msg = curve25519xsalsa20poly1305::seal(data, &nonce_raw, &receiver_pubkey, &sender_seckey);
                 let nonce = CryptoKeypairNonce::Curve25519Xsalsa20Poly1305(nonce_raw);
                 Ok(CryptoKeypairMessage::new(nonce, msg))
             }
@@ -350,16 +338,16 @@ impl CryptoKeypair {
     /// Open a message encrypted with our public key and verify the sender of
     /// the message using their public key. Needs our master key to unlock the
     /// private key used to decrypt the message.
-    pub fn open(our_master_key: &SecretKey, our_keypair: &CryptoKeypair, their_keypair: &CryptoKeypair, message: &CryptoKeypairMessage) -> Result<Vec<u8>> {
-        match (our_keypair, their_keypair) {
-            (Self::Curve25519Xsalsa20Poly1305(_, ref our_seckey_opt), CryptoKeypair::Curve25519Xsalsa20Poly1305(ref their_pubkey, _)) => {
-                let our_seckey_sealed = our_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let our_seckey = our_seckey_sealed.open(our_master_key)?;
+    pub fn open(&self, receiver_master_key: &SecretKey, sender_keypair: &CryptoKeypair, message: &CryptoKeypairMessage) -> Result<Vec<u8>> {
+        match (self, sender_keypair) {
+            (Self::Curve25519Xsalsa20Poly1305(_, ref receiver_seckey_opt), CryptoKeypair::Curve25519Xsalsa20Poly1305(ref sender_pubkey, _)) => {
+                let receiver_seckey_sealed = receiver_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
+                let receiver_seckey = receiver_seckey_sealed.open(receiver_master_key)?;
                 let nonce = message.nonce();
                 let nonce_raw = match nonce {
                     CryptoKeypairNonce::Curve25519Xsalsa20Poly1305(ref x) => x,
                 };
-                curve25519xsalsa20poly1305::open(message.ciphertext(), nonce_raw, &their_pubkey, &our_seckey)
+                curve25519xsalsa20poly1305::open(message.ciphertext(), nonce_raw, &sender_pubkey, &receiver_seckey)
                     .map_err(|_| Error::CryptoOpenFailed)
             }
         }
@@ -390,6 +378,52 @@ impl Public for CryptoKeypair {
                 Self::Curve25519Xsalsa20Poly1305(pubkey.clone(), None)
             }
         }
+    }
+}
+
+/// A key for deriving an HMAC
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum HmacKey {
+    #[serde(with = "crate::util::ser::human_binary_from_slice")]
+    HmacSha512(hmacsha512::Key),
+}
+
+impl HmacKey {
+    /// Create a new sha512 HMAC key
+    pub fn new_sha512() -> Self {
+        Self::HmacSha512(hmacsha512::gen_key())
+    }
+}
+
+/// An HMAC hash
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Hmac {
+    #[serde(with = "crate::util::ser::human_binary_from_slice")]
+    HmacSha512(hmacsha512::Tag),
+}
+
+impl Hmac {
+    /// Create a new HMACSHA512 from a key and a set of data.
+    pub fn new_sha512(hmac_key: &HmacKey, data: &[u8]) -> Result<Self> {
+        match hmac_key {
+            HmacKey::HmacSha512(hmac_key) => {
+                let hmac = hmacsha512::authenticate(data, hmac_key);
+                Ok(Hmac::HmacSha512(hmac))
+            }
+        }
+    }
+
+    /// Verify an HMAC against a set of data.
+    pub fn verify(&self, hmac_key: &HmacKey, data: &[u8]) -> Result<()> {
+        match (self, hmac_key) {
+            (Self::HmacSha512(hmac), HmacKey::HmacSha512(hmac_key)) => {
+                if !hmacsha512::verify(hmac, data, hmac_key) {
+                    // the data has been tampered with, my friend.
+                    Err(Error::CryptoHmacVerificationFailed)?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -444,37 +478,130 @@ mod tests {
     }
 
     #[test]
+    fn signkeypair_ed25519_reencrypt() {
+        let master_key1 = SecretKey::new_xsalsa20poly1305();
+        let master_key2 = SecretKey::new_xsalsa20poly1305();
+        assert!(master_key1 != master_key2);    // lazy, but ok
+        let keypair = SignKeypair::new_ed25519(&master_key1).unwrap();
+        let data = vec![1, 2, 3, 4, 5];
+        let sig1 = keypair.sign(&master_key1, data.as_slice()).unwrap();
+        let keypair = keypair.reencrypt(&master_key1, &master_key2).unwrap();
+        let sig2 = keypair.sign(&master_key2, data.as_slice()).unwrap();
+        assert_eq!(sig1, sig2);
+        let res = keypair.clone().reencrypt(&master_key1, &master_key2);
+        assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
+        let res = keypair.sign(&master_key1, data.as_slice());
+        assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
+    }
+
+    #[test]
+    fn signkeypair_ed25519_blank() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let keypair1 = SignKeypair::new_ed25519(&master_key).unwrap();
+        let keypair2 = SignKeypair::new_ed25519(&master_key).unwrap();
+        let blank1 = SignKeypairSignature::blank(&keypair1);
+        let blank2 = SignKeypairSignature::blank(&keypair2);
+        assert_eq!(blank1, blank2);
+        assert_eq!(blank1.as_ref(), vec![0; ed25519::SIGNATUREBYTES].as_slice());
+    }
+
+    #[test]
+    fn signkeypair_ed25519_strip_has_private() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        match &keypair {
+            SignKeypair::Ed25519(_, Some(_)) => {
+                assert!(keypair.has_private());
+            }
+            _ => panic!("private mismatch"),
+        }
+        let keypair_pub = keypair.strip_private();
+        match &keypair_pub {
+            SignKeypair::Ed25519(_, None) => {
+                assert!(!keypair_pub.has_private());
+            }
+            _ => panic!("private mismatch"),
+        }
+    }
+
+    #[test]
+    fn signkeypair_ed25519_eq() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let keypair1 = SignKeypair::new_ed25519(&master_key).unwrap();
+        let keypair2 = keypair1.clone();
+        assert_eq!(keypair1, keypair2);
+        let keypair3 = SignKeypair::new_ed25519(&master_key).unwrap();
+        assert!(keypair1 != keypair3);
+    }
+
+    #[test]
     fn cryptokeypair_curve25519xsalsa20poly1305_anonymous_enc_dec() {
         let our_master_key = SecretKey::new_xsalsa20poly1305();
         let our_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&our_master_key).unwrap();
         let fake_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&our_master_key).unwrap();
 
         let message = String::from("HI JERRY I'M BUTCH");
-        let sealed = CryptoKeypair::seal_anonymous(&our_keypair, message.as_bytes()).unwrap();
-        let opened = CryptoKeypair::open_anonymous(&our_master_key, &our_keypair, &sealed).unwrap();
+        let sealed = our_keypair.seal_anonymous(message.as_bytes()).unwrap();
+        let opened = our_keypair.open_anonymous(&our_master_key, &sealed).unwrap();
 
         assert_eq!(&opened[..], message.as_bytes());
 
-        let opened2 = CryptoKeypair::open_anonymous(&our_master_key, &fake_keypair, &sealed);
+        let opened2 = fake_keypair.open_anonymous(&our_master_key, &sealed);
         assert_eq!(opened2, Err(Error::CryptoOpenFailed));
     }
 
     #[test]
     fn cryptokeypair_curve25519xsalsa20poly1305_enc_dec() {
-        let our_master_key = SecretKey::new_xsalsa20poly1305();
-        let our_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&our_master_key).unwrap();
-        let their_master_key = SecretKey::new_xsalsa20poly1305();
-        let their_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&their_master_key).unwrap();
-        let fake_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&their_master_key).unwrap();
+        let sender_master_key = SecretKey::new_xsalsa20poly1305();
+        let sender_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&sender_master_key).unwrap();
+        let receiver_master_key = SecretKey::new_xsalsa20poly1305();
+        let receiver_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&receiver_master_key).unwrap();
+        let fake_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&receiver_master_key).unwrap();
 
         let message = String::from("HI JERRY I'M BUTCH");
-        let sealed = CryptoKeypair::seal(&our_master_key, &our_keypair, &their_keypair, message.as_bytes()).unwrap();
-        let opened = CryptoKeypair::open(&our_master_key, &our_keypair, &their_keypair, &sealed).unwrap();
+        let sealed = receiver_keypair.seal(&sender_master_key, &sender_keypair, message.as_bytes()).unwrap();
+        let opened = receiver_keypair.open(&receiver_master_key, &sender_keypair, &sealed).unwrap();
 
         assert_eq!(&opened[..], message.as_bytes());
 
-        let opened2 = CryptoKeypair::open(&our_master_key, &our_keypair, &fake_keypair, &sealed);
+        let opened2 = sender_keypair.open(&sender_master_key, &fake_keypair, &sealed);
         assert_eq!(opened2, Err(Error::CryptoOpenFailed));
+    }
+
+    #[test]
+    fn cryptokeypair_curve25519xsalsa20poly1305_reencrypt() {
+        let master_key1 = SecretKey::new_xsalsa20poly1305();
+        let master_key2 = SecretKey::new_xsalsa20poly1305();
+        assert!(master_key1 != master_key2);
+        let keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key1).unwrap();
+        let message = String::from("get a job");
+        let sealed = keypair.seal_anonymous(message.as_bytes()).unwrap();
+        let keypair = keypair.reencrypt(&master_key1, &master_key2).unwrap();
+        let opened = keypair.open_anonymous(&master_key2, &sealed).unwrap();
+        assert_eq!(opened.as_slice(), message.as_bytes());
+        let res = keypair.clone().reencrypt(&master_key1, &master_key2);
+        assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
+        let res = keypair.open_anonymous(&master_key1, &sealed);
+        assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
+    }
+
+    #[test]
+    fn cryptokeypair_curve25519xsalsa20poly1305_strip_has_private() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
+        match &keypair {
+            CryptoKeypair::Curve25519Xsalsa20Poly1305(_, Some(_)) => {
+                assert!(keypair.has_private());
+            }
+            _ => panic!("private mismatch"),
+        }
+        let keypair_pub = keypair.strip_private();
+        match &keypair_pub {
+            CryptoKeypair::Curve25519Xsalsa20Poly1305(_, None) => {
+                assert!(!keypair_pub.has_private());
+            }
+            _ => panic!("private mismatch"),
+        }
     }
 
     #[test]
@@ -486,11 +613,19 @@ mod tests {
     }
 
     #[test]
-    fn blank_signature() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let blank = SignKeypairSignature::blank(&sign_keypair);
-        assert_eq!(blank.as_ref(), vec![0; ed25519::SIGNATUREBYTES].as_slice());
+    fn hmac_verify() {
+        let data1 = String::from("hai plz verify me. oh and could you verify my cousin too? he's just over there, with his wife and four children...if it's not too much trouble, maybe you could verify them as we...");
+        let data2 = String::from("hai plz verify me. oh and could you verify my cousin too? he's just over there, with his wife and seven children...if it's not too much trouble, maybe you could verify them as we...");
+        let hmac_key1 = HmacKey::new_sha512();
+        let hmac_key2 = HmacKey::new_sha512();
+        let hmac = Hmac::new_sha512(&hmac_key1, data1.as_bytes()).unwrap();
+        hmac.verify(&hmac_key1, data1.as_bytes()).unwrap();
+        let res = hmac.verify(&hmac_key2, data1.as_bytes());
+        assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
+        let res = hmac.verify(&hmac_key1, data2.as_bytes());
+        assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
+        let res = hmac.verify(&hmac_key2, data2.as_bytes());
+        assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
     }
 }
 

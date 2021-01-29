@@ -14,7 +14,7 @@ use crate::{
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
         keychain::{RevocationReason, SignedOrRecoveredKeypair, KeyID, Key, Keychain},
         recovery::{Recovery},
-        stamp::{Confidence, StampID, Stamp, StampRevocation, AcceptedStamp},
+        stamp::{Confidence, Stamp, StampRevocation, AcceptedStamp},
     },
     key::{SecretKey, SignKeypairSignature, SignKeypair},
     private::MaybePrivate,
@@ -276,19 +276,6 @@ impl Identity {
         Ok(self)
     }
 
-    /// Verify that a signature and a set of data used to generate that
-    /// signature can be verified by at least one of our signing keys.
-    fn try_keys<F>(&self, keylist: &Vec<SignKeypair>, sigfn: F) -> Result<()>
-        where F: Fn(&SignKeypair) -> Result<()>,
-    {
-        for sign_keypair in keylist {
-            if sigfn(sign_keypair).is_ok() {
-                return Ok(());
-            }
-        }
-        Err(Error::CryptoSignatureVerificationFailed)
-    }
-
     /// Verify that the portions of this identity that can be verified, mainly
     /// by using the identity's public signing key (or key*s* if we have revoked
     /// keys).
@@ -324,6 +311,8 @@ impl Identity {
                 self.recovery().verify_root(self.keychain().root().deref())
             })
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.root")))?;
+        self.keychain().verify_subkeys()
+            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.subkeys")))?;
 
         // verify our root signature with our root key
         self.keychain().root().verify(self.root_signature(), &ser::serialize(&self.sub_signatures())?)
@@ -336,13 +325,13 @@ impl Identity {
             let stripped_spec = claim.claim().spec().strip_private();
             let datesigner = DateSigner::new(claim.claim().created(), &stripped_spec);
             let ser = ser::serialize(&datesigner)?;
-            self.try_keys(&root_keys, |sign_keypair| sign_keypair.verify(&claim.claim().id(), &ser))
+            Keychain::try_keys(&root_keys, |sign_keypair| sign_keypair.verify(&claim.claim().id(), &ser))
                 .map_err(|_| {
                     let claim_id = base64::encode_config(claim.claim().id().as_ref(), base64::URL_SAFE_NO_PAD);
                     Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim_id))
                 })?;
             for stamp in claim.stamps() {
-                self.try_keys(&root_keys, |sign_keypair| stamp.verify(sign_keypair))
+                Keychain::try_keys(&root_keys, |sign_keypair| stamp.verify(sign_keypair))
                     .map_err(|_| {
                         let claim_id = base64::encode_config(claim.claim().id().as_ref(), base64::URL_SAFE_NO_PAD);
                         let stamp_id = base64::encode_config(stamp.stamp().id().as_ref(), base64::URL_SAFE_NO_PAD);
@@ -432,7 +421,7 @@ impl Identity {
     }
 
     /// Revoke one of our subkeys, for instance if it has been compromised.
-    pub fn revoke_subkey(mut self, master_key: &SecretKey, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
+    pub fn revoke_subkey(mut self, master_key: &SecretKey, key_id: &KeyID, reason: RevocationReason) -> Result<Self> {
         self.set_keychain(self.keychain().clone().revoke_subkey(master_key, key_id, reason)?);
         self.set_root_signature(self.generate_root_signature(master_key)?);
         self.verify()?;
@@ -455,7 +444,7 @@ impl Identity {
     /// Verify that the given stamp was actually signed by this identity.
     pub fn verify_stamp(&self, stamp: &Stamp) -> Result<()> {
         let root_keys = self.keychain().keys_root();
-        self.try_keys(&root_keys, |sign_keypair| stamp.verify(sign_keypair))
+        Keychain::try_keys(&root_keys, |sign_keypair| stamp.verify(sign_keypair))
     }
 
     /// Revoke a stamp we've made.
@@ -469,8 +458,11 @@ impl Identity {
     /// belongs to, but instead we must publish this revocation on whatever
     /// medium we see fit, and it is up to people to check for revocations on
     /// that medium before accepting a stamped claim as given.
-    pub fn revoke_stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, stampee: IdentityID, stamp_id: StampID, date_revoked: T) -> Result<StampRevocation> {
-        StampRevocation::new(master_key, self.keychain().root(), self.id().clone(), stampee, stamp_id, date_revoked)
+    pub fn revoke_stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, stamp: Stamp, date_revoked: T) -> Result<StampRevocation> {
+        if self.id() != stamp.entry().stamper() {
+            Err(Error::IdentityIDMismatch)?;
+        }
+        StampRevocation::new(master_key, self.keychain().root(), stamp, date_revoked)
     }
 
     /// Grab this identity's nickname, if it has one.
@@ -548,10 +540,10 @@ impl Identity {
     /// Determine if this identity is owned (ie, we have the private keys stored
     /// locally) or it is imported (ie, someone else's identity).
     pub fn is_owned(&self) -> bool {
-        self.keychain().alpha().have_secret() ||
-            self.keychain().policy().have_secret() ||
-            self.keychain().publish().have_secret() ||
-            self.keychain().root().have_secret()
+        self.keychain().alpha().has_private() ||
+            self.keychain().policy().has_private() ||
+            self.keychain().publish().has_private() ||
+            self.keychain().root().has_private()
     }
 
     /// Test if a master key is correct.
@@ -561,13 +553,13 @@ impl Identity {
         }
 
         let test_bytes = sodiumoxide::randombytes::randombytes(32);
-        if self.keychain().alpha().have_secret() {
+        if self.keychain().alpha().has_private() {
             self.keychain().alpha().sign(master_key, test_bytes.as_slice())?;
-        } else if self.keychain().policy().have_secret() {
+        } else if self.keychain().policy().has_private() {
             self.keychain().policy().sign(master_key, test_bytes.as_slice())?;
-        } else if self.keychain().publish().have_secret() {
+        } else if self.keychain().publish().has_private() {
             self.keychain().publish().sign(master_key, test_bytes.as_slice())?;
-        } else if self.keychain().root().have_secret() {
+        } else if self.keychain().root().has_private() {
             self.keychain().root().sign(master_key, test_bytes.as_slice())?;
         }
         Ok(())

@@ -23,6 +23,23 @@ macro_rules! object_id {
         #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
         pub struct $name(crate::key::SignKeypairSignature);
 
+        #[cfg(test)]
+        #[allow(dead_code)]
+        impl $name {
+            pub(crate) fn blank() -> Self {
+                let sigbytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+                let sig = crate::key::SignKeypairSignature::Ed25519(sodiumoxide::crypto::sign::ed25519::Signature::from_slice(sigbytes.as_slice()).unwrap());
+                $name(sig)
+            }
+
+            #[cfg(test)]
+            pub(crate) fn random() -> Self {
+                let sigbytes = sodiumoxide::randombytes::randombytes(64);
+                let sig = crate::key::SignKeypairSignature::Ed25519(sodiumoxide::crypto::sign::ed25519::Signature::from_slice(sigbytes.as_slice()).unwrap());
+                $name(sig)
+            }
+        }
+
         impl Deref for $name {
             type Target = crate::key::SignKeypairSignature;
             fn deref(&self) -> &Self::Target {
@@ -145,6 +162,39 @@ impl FromStr for Timestamp {
     fn from_str(s: &str) -> std::result::Result<Timestamp, Self::Err> {
         let datetime: DateTime<Utc> = s.parse()?;
         Ok(Timestamp(datetime))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        key::{SignKeypairSignature},
+    };
+    use std::convert::TryFrom;
+    use std::ops::Deref;
+
+    #[test]
+    fn object_id_deref_to_from_string() {
+        object_id! {
+            TestID
+        }
+
+        let sigbytes = vec![61, 47, 37, 255, 130, 49, 42, 60, 55, 247, 221, 146, 149, 13, 27, 227, 23, 228, 6, 170, 103, 177, 184, 3, 124, 102, 180, 148, 228, 67, 30, 140, 172, 59, 90, 94, 220, 123, 143, 239, 97, 164, 186, 213, 141, 217, 174, 43, 186, 16, 184, 236, 166, 130, 38, 5, 176, 33, 22, 5, 111, 171, 57, 2];
+        let sig = SignKeypairSignature::Ed25519(sodiumoxide::crypto::sign::ed25519::Signature::from_slice(sigbytes.as_slice()).unwrap());
+
+        let id = TestID(sig);
+
+        let string_id = String::try_from(&id).unwrap();
+        assert_eq!(&string_id, "PS8l_4IxKjw3992SlQ0b4xfkBqpnsbgDfGa0lORDHoysO1pe3HuP72GkutWN2a4ruhC47KaCJgWwIRYFb6s5AgA");
+
+        let id2 = TestID::try_from(string_id.as_str()).unwrap();
+        assert_eq!(id, id2);
+
+        match &id {
+            TestID(sig) => {
+                assert_eq!(sig, id.deref());
+            }
+        }
     }
 }
 

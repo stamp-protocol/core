@@ -117,7 +117,7 @@ impl VersionedIdentity {
     }
 
     /// Revoke one of our subkeys, for instance if it has been compromised.
-    pub fn revoke_subkey(self, master_key: &SecretKey, key_id: KeyID, reason: RevocationReason) -> Result<Self> {
+    pub fn revoke_subkey(self, master_key: &SecretKey, key_id: &KeyID, reason: RevocationReason) -> Result<Self> {
         match self {
             Self::V1(id) => Ok(Self::V1(id.revoke_subkey(master_key, key_id, reason)?)),
         }
@@ -220,7 +220,7 @@ mod tests {
         let master_key = SecretKey::new_xsalsa20poly1305();
         let now = Timestamp::now();
         let identity = identity::Identity::new(&master_key, now).unwrap()
-            .add_subkey(&master_key, keychain::Key::Crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap()), "Email", "Use this to send me emails.").unwrap();
+            .add_subkey(&master_key, keychain::Key::Crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap()), "Email", Some("Use this to send me emails.")).unwrap();
         let now2 = Timestamp::now();
         let published = PublishedIdentity::publish(&master_key, now2, identity).unwrap();
         let _human = published.serialize().unwrap();

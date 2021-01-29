@@ -1,4 +1,6 @@
 //! A stamp is a signed seal of approval on a [claim](crate::identity::Claim).
+//!
+//! Stamps form the network of the Stamp protocol: trust flows from them.
 
 use crate::{
     error::Result,
@@ -27,7 +29,7 @@ object_id! {
 }
 
 /// The confidence of a stamp being made.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Confidence {
     /// The stamp is being made with absolutely no verification whatsoever.
     None,
@@ -50,7 +52,7 @@ pub enum Confidence {
 
 /// A set of data that is signed when a stamp is created that is stored
 /// alongside the signature itself.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct StampEntry {
     /// The ID of the identity that is stamping.
@@ -94,7 +96,7 @@ impl StampEntry {
 ///
 /// This is created by the stamper, and it is up to the claim owner to save the
 /// stamp to their identity (using the `AcceptedStamp` object).
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Stamp {
     /// This stamp's signature, and by remarkable coincidence, also its unique
@@ -216,7 +218,10 @@ pub struct StampRevocationEntry {
 
 impl StampRevocationEntry {
     /// Create a new stamp revocaiton entry.
-    fn new(stamper: IdentityID, stampee: IdentityID, stamp_id: StampID, date_revoked: Timestamp) -> Self {
+    fn from_stamp(stamp: Stamp, date_revoked: Timestamp) -> Self {
+        let stamp_id = stamp.id().clone();
+        let stamper = stamp.entry().stamper().clone();
+        let stampee = stamp.entry().stampee().clone();
         Self {
             stamper,
             stampee,
@@ -248,14 +253,149 @@ pub struct StampRevocation {
 
 impl StampRevocation {
     /// Create a new stamp revocation
-    pub fn new<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: IdentityID, stampee: IdentityID, stamp_id: StampID, date_revoked: T) -> Result<Self> {
-        let entry = StampRevocationEntry::new(stamper, stampee, stamp_id, date_revoked.into());
+    pub fn new<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamp: Stamp, date_revoked: T) -> Result<Self> {
+        let entry = StampRevocationEntry::from_stamp(stamp, date_revoked.into());
         let serialized = ser::serialize(&entry)?;
         let sig = sign_keypair.sign(master_key, &serialized)?;
         Ok(Self {
             id: StampRevocationID(sig),
             entry,
         })
+    }
+
+    /// Verify this stamp revocation's integrity.
+    pub fn verify(&self, sign_keypair: &SignKeypair) -> Result<()> {
+        let serialized = ser::serialize(self.entry())?;
+        sign_keypair.verify(self.id(), &serialized)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        error::Error,
+        identity::{
+            ClaimSpec,
+            ClaimContainer,
+            Confidence,
+            IdentityID,
+            Identity,
+            VersionedIdentity,
+        },
+        key::{SecretKey, SignKeypair},
+        private::{Private, MaybePrivate},
+        util::Timestamp,
+    };
+    use std::convert::TryFrom;
+    use std::str::FromStr;
+
+    fn make_stamp(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, stampee: &IdentityID, ts: Option<Timestamp>) -> Stamp {
+        assert!(stamper != stampee);
+        let maybe = MaybePrivate::new_public(String::from("andrew"));
+        let ts = ts.unwrap_or(Timestamp::now());
+        // kind of stupid to sign the claim with the same key creating the stamp
+        // but it's also not incorrect.
+        let claim = ClaimContainer::new(&master_key, &sign_keypair, ts.clone(), ClaimSpec::Name(maybe)).unwrap();
+        Stamp::stamp(&master_key, &sign_keypair, &stamper, &stampee, Confidence::Medium, ts, claim.claim(), None).unwrap()
+    }
+
+    #[test]
+    fn stamp_verify() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        let mut stamp = make_stamp(&master_key, &sign_keypair, &IdentityID::random(), &IdentityID::random(), None);
+        stamp.verify(&sign_keypair).unwrap();
+
+        // let's modify the stamp. and set the confidence a bit higher. why not?
+        // OH BECAUSE NOW IT DOESN'T FUCKING VERIFY YOU DINGLEBERRY
+        stamp.entry_mut().set_confidence(Confidence::Extreme);
+        assert_eq!(stamp.verify(&sign_keypair), Err(Error::CryptoSignatureVerificationFailed));
+    }
+
+    #[test]
+    fn stamp_serde() {
+        let master_bytes = vec![58, 30, 74, 149, 49, 101, 115, 190, 250, 4, 99, 141, 245, 201, 209, 83, 46, 121, 28, 174, 1, 150, 149, 118, 181, 228, 215, 78, 226, 248, 53, 152];
+        let pub_bytes = vec![26, 106, 94, 179, 115, 143, 20, 33, 69, 141, 83, 70, 153, 34, 32, 255, 16, 247, 128, 73, 151, 32, 100, 94, 237, 70, 81, 136, 90, 207, 56, 198];
+        let priv_bytes = vec![83, 139, 41, 104, 20, 105, 245, 17, 35, 207, 94, 108, 93, 46, 156, 41, 62, 193, 147, 102, 144, 125, 4, 83, 21, 106, 181, 144, 243, 164, 48, 24, 26, 106, 94, 179, 115, 143, 20, 33, 69, 141, 83, 70, 153, 34, 32, 255, 16, 247, 128, 73, 151, 32, 100, 94, 237, 70, 81, 136, 90, 207, 56, 198];
+        let id1 = IdentityID::try_from("Q8LwXx3nZvCn13Y49OydJ0OioG8_2idvEZGlmYeiBd2VHr5GOa5C3vxE_l-zWzhc5KcMiV_enu8LxpP4TIpUqwA").unwrap();
+        let id2 = IdentityID::try_from("c1lZ31CxrYGk4D3jXWrbhtetQ93kigNtJmOm09cptryHhOfeX3PMltqZet6Gql-7A0CkELbaqu_u1qXW95DkgAA").unwrap();
+        let master_key = SecretKey::Xsalsa20Poly1305(sodiumoxide::crypto::secretbox::xsalsa20poly1305::Key::from_slice(master_bytes.as_ref()).unwrap());
+        let sign_keypair = SignKeypair::Ed25519(
+            sodiumoxide::crypto::sign::ed25519::PublicKey::from_slice(pub_bytes.as_slice()).unwrap(),
+            Some(Private::seal(&master_key, &sodiumoxide::crypto::sign::ed25519::SecretKey::from_slice(priv_bytes.as_slice()).unwrap()).unwrap())
+        );
+
+        let ts = Timestamp::from_str("2021-06-06T00:00:00-06:00").unwrap();
+        let stamp = make_stamp(&master_key, &sign_keypair, &id1, &id2, Some(ts));
+        let ser = stamp.serialize().unwrap();
+        assert_eq!(ser, r#"---
+id:
+  Ed25519: zA2wZGLUIRQUcNPcZfS5lllhL8TjorFSKZ5GpdE5Ss6Qhej4w-hpQFdgnc7q_lArYtXuTisszuonCdpIFR4xBg
+entry:
+  stamper:
+    Ed25519: Q8LwXx3nZvCn13Y49OydJ0OioG8_2idvEZGlmYeiBd2VHr5GOa5C3vxE_l-zWzhc5KcMiV_enu8LxpP4TIpUqw
+  stampee:
+    Ed25519: c1lZ31CxrYGk4D3jXWrbhtetQ93kigNtJmOm09cptryHhOfeX3PMltqZet6Gql-7A0CkELbaqu_u1qXW95DkgA
+  claim_id:
+    Ed25519: g-1Wm3zCfyHo-54MKAD6y69Ue5n6qH1XsCz9GDP0XVU_m3EBrhxFqXt9hjIOtTRxdarWrOR4An4HYdTxJZvCDw
+  confidence: Medium
+  date_signed: "2021-06-06T06:00:00Z"
+  expires: ~"#);
+        let des = Stamp::deserialize(ser.as_bytes()).unwrap();
+        assert_eq!(stamp, des);
+    }
+
+    #[test]
+    fn stamp_strip() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        let stamp = make_stamp(&master_key, &sign_keypair, &IdentityID::random(), &IdentityID::random(), None);
+        let stamp2 = stamp.strip_private();
+        // we only really need strip_private() so we can serialized_human, but
+        // stamps don't hold ANY private data at all, so a stripped stamp should
+        // equal an unstripped stamp.
+        assert_eq!(stamp, stamp2);
+    }
+
+    #[test]
+    fn accepted_accept_verify() {
+        let master_key_stamper = SecretKey::new_xsalsa20poly1305();
+        let master_key_accepter = SecretKey::new_xsalsa20poly1305();
+
+        let identity_stamper: VersionedIdentity = Identity::new(&master_key_stamper, Timestamp::now()).unwrap().into();
+
+        let sign_keypair_accepter = SignKeypair::new_ed25519(&master_key_accepter).unwrap();
+        let maybe = MaybePrivate::new_public(String::from("andrew"));
+        let claim = ClaimContainer::new(&master_key_accepter, &sign_keypair_accepter, Timestamp::now(), ClaimSpec::Name(maybe)).unwrap();
+        let stamp = Stamp::stamp(&master_key_stamper, identity_stamper.keychain().root(), &IdentityID::random(), &IdentityID::random(), Confidence::Medium, Timestamp::now(), claim.claim(), None).unwrap();
+
+        let accepted = AcceptedStamp::accept(&master_key_accepter, &sign_keypair_accepter, &identity_stamper, stamp, Timestamp::now()).unwrap();
+        accepted.verify(&sign_keypair_accepter.strip_private()).unwrap();
+
+        let mut accepted2 = accepted.clone();
+        let then = Timestamp::from_str("1999-01-01T00:00:00-06:00").unwrap();
+        accepted2.set_recorded(then);
+        assert_eq!(accepted2.verify(&sign_keypair_accepter.strip_private()), Err(Error::CryptoSignatureVerificationFailed));
+    }
+
+    #[test]
+    fn stamp_revocation_new_verify() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        let stamp = make_stamp(&master_key, &sign_keypair, &IdentityID::random(), &IdentityID::random(), None);
+
+        // oh no i stamped superman but meant to stamp batman gee willickers
+
+        // revocation should verify
+        let rev = StampRevocation::new(&master_key, &sign_keypair, stamp, Timestamp::now()).unwrap();
+        rev.verify(&sign_keypair).unwrap();
+
+        // let's modify the revocation. this should invalidate the sig.
+        let mut rev2 = rev.clone();
+        let then = Timestamp::from_str("1999-01-01T00:00:00-06:00").unwrap();
+        rev2.entry_mut().set_date_revoked(then);
+        assert_eq!(rev2.verify(&sign_keypair), Err(Error::CryptoSignatureVerificationFailed));
     }
 }
 

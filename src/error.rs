@@ -72,6 +72,11 @@ pub enum Error {
     #[error("identity claim not found")]
     IdentityClaimNotFound,
 
+    /// An operation is being performed on an object not owned by the current
+    /// identity
+    #[error("identity ID mismatch")]
+    IdentityIDMismatch,
+
     /// There were no private keys found in this identity.
     #[error("identity is not owned, but we attempted an operation requiring ownership")]
     IdentityNotOwned,
