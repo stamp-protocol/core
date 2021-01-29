@@ -1,4 +1,4 @@
-//! The private module locks data away via a [SecretKey](crate::key::SecretKey)
+//! The private module locks data away via a [SecretKey](crate::crypto::key::SecretKey)
 //! while never storing or serializing or displaying the locked (private) data.
 //! It can only be retrieved via the [open](crate::private::Private::open)
 //! method, given the correct unlocking key.
@@ -13,7 +13,7 @@
 use crate::{
     error::{Error, Result},
     identity::Public,
-    key::{SecretKey, SecretKeyNonce, Hmac, HmacKey},
+    crypto::key::{SecretKey, SecretKeyNonce, Hmac, HmacKey},
     util::ser,
 };
 use serde_derive::{Serialize, Deserialize};

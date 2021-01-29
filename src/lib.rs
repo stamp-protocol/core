@@ -92,6 +92,6 @@ pub mod error;
 #[macro_use]
 pub mod util;
 pub mod private;
-pub mod key;
+pub mod crypto;
 pub mod identity;
 

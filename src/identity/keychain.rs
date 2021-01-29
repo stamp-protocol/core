@@ -15,7 +15,7 @@
 use crate::{
     error::{Error, Result},
     identity::{Public, PublicMaybe},
-    key::{SecretKey, SignKeypairSignature, SignKeypair, CryptoKeypair},
+    crypto::key::{SecretKey, SignKeypairSignature, SignKeypair, CryptoKeypair},
     private::Private,
     util::{ser, sign::SignedValue},
 };
@@ -108,6 +108,15 @@ pub enum Key {
     /// A policy key
     Policy(SignKeypair),
     /// A publish key
+    ///
+    /// NOTE: although the idea of keeping a publish key in the subkeys is kind
+    /// of dumb (because a publish key is really only useful in the context of
+    /// an instance of a published identity and thus only needs to be validated
+    /// against the *current* publish key in all cases), we do want to keep it
+    /// around so that the revocation of the publish key can be made available.
+    /// this allows implementations to know if a published identity was made
+    /// with a revoked key, and under what circumstances the key was revoked,
+    /// which they can use to adjust their trust of that identity.
     Publish(SignKeypair),
     /// A root key
     Root(SignKeypair),
@@ -142,41 +151,41 @@ impl Key {
     }
 
     /// Returns the `SignKeypair` if this is a policy key.
-    pub fn as_policykey(&self) -> Option<SignKeypair> {
+    pub fn as_policykey(&self) -> Option<&SignKeypair> {
         match self {
-            Self::Policy(ref x) => Some(x.clone()),
+            Self::Policy(ref x) => Some(x),
             _ => None,
         }
     }
 
     /// Returns the `SignKeypair` if this is a root key.
-    pub fn as_rootkey(&self) -> Option<SignKeypair> {
+    pub fn as_rootkey(&self) -> Option<&SignKeypair> {
         match self {
-            Self::Root(ref x) => Some(x.clone()),
+            Self::Root(ref x) => Some(x),
             _ => None,
         }
     }
 
     /// Returns the `SignKeypair` if this is a signing key.
-    pub fn as_signkey(&self) -> Option<SignKeypair> {
+    pub fn as_signkey(&self) -> Option<&SignKeypair> {
         match self {
-            Self::Sign(ref x) => Some(x.clone()),
+            Self::Sign(ref x) => Some(x),
             _ => None,
         }
     }
 
     /// Returns the `SignKeypair` if this is a signing key.
-    pub fn as_cryptokey(&self) -> Option<CryptoKeypair> {
+    pub fn as_cryptokey(&self) -> Option<&CryptoKeypair> {
         match self {
-            Self::Crypto(ref x) => Some(x.clone()),
+            Self::Crypto(ref x) => Some(x),
             _ => None,
         }
     }
 
     /// Returns the `SignKeypair` if this is a signing key.
-    pub fn as_secretkey(&self) -> Option<Private<SecretKey>> {
+    pub fn as_secretkey(&self) -> Option<&Private<SecretKey>> {
         match self {
-            Self::Secret(ref x) => Some(x.clone()),
+            Self::Secret(ref x) => Some(x),
             _ => None,
         }
     }
@@ -476,7 +485,7 @@ impl Keychain {
 
     /// Verify that a signature and a set of data used to generate that
     /// signature can be verified by at least one of our signing keys.
-    pub(crate) fn try_keys<F>(keylist: &Vec<SignKeypair>, sigfn: F) -> Result<()>
+    pub(crate) fn try_keys<F>(keylist: &Vec<&SignKeypair>, sigfn: F) -> Result<()>
         where F: Fn(&SignKeypair) -> Result<()>,
     {
         for sign_keypair in keylist {
@@ -501,8 +510,8 @@ impl Keychain {
     }
 
     /// Grab all policy keys (active or retired).
-    pub fn keys_policy(&self) -> Vec<SignKeypair> {
-        let mut search_keys = vec![self.policy().deref().clone()];
+    pub fn keys_policy(&self) -> Vec<&SignKeypair> {
+        let mut search_keys = vec![self.policy().deref()];
         search_keys.append(&mut self.subkeys_policy());
         search_keys
     }
@@ -513,7 +522,7 @@ impl Keychain {
     }
 
     /// Grab all policy subkeys.
-    pub fn subkeys_policy(&self) -> Vec<SignKeypair> {
+    pub fn subkeys_policy(&self) -> Vec<&SignKeypair> {
         self.subkeys().iter()
             .map(|x| x.key().as_policykey())
             .filter(|x| x.is_some())
@@ -522,13 +531,13 @@ impl Keychain {
     }
 
     /// Grab all root keys.
-    pub fn keys_root(&self) -> Vec<SignKeypair> {
-        let mut search_keys = vec![self.root().deref().clone()];
+    pub fn keys_root(&self) -> Vec<&SignKeypair> {
+        let mut search_keys = vec![self.root().deref()];
         search_keys.append(&mut self.subkeys_root());
         search_keys
     }
 
-    fn subkeys_root(&self) -> Vec<SignKeypair> {
+    fn subkeys_root(&self) -> Vec<&SignKeypair> {
         self.subkeys().iter()
             .map(|x| x.key().as_rootkey())
             .filter(|x| x.is_some())
@@ -537,7 +546,7 @@ impl Keychain {
     }
 
     /// Grab all signing subkeys.
-    pub fn subkeys_sign(&self) -> Vec<SignKeypair> {
+    pub fn subkeys_sign(&self) -> Vec<&SignKeypair> {
         self.subkeys().iter()
             .map(|x| x.key().as_signkey())
             .filter(|x| x.is_some())
@@ -546,7 +555,7 @@ impl Keychain {
     }
 
     /// Grab all crypto subkeys.
-    pub fn subkeys_crypto(&self) -> Vec<CryptoKeypair> {
+    pub fn subkeys_crypto(&self) -> Vec<&CryptoKeypair> {
         self.subkeys().iter()
             .map(|x| x.key().as_cryptokey())
             .filter(|x| x.is_some())

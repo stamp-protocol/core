@@ -1,6 +1,8 @@
 //! A stamp is a signed seal of approval on a [claim](crate::identity::Claim).
 //!
-//! Stamps form the network of the Stamp protocol: trust flows from them.
+//! Stamps form the underlying trust network of the Stamp protocol. They are
+//! seals of approval, and depending on who you trust, allow you to determine if
+//! a particular identity is "real" or trusted.
 
 use crate::{
     error::Result,
@@ -10,7 +12,7 @@ use crate::{
         IdentityID,
         VersionedIdentity,
     },
-    key::{SecretKey, SignKeypairSignature, SignKeypair},
+    crypto::key::{SecretKey, SignKeypairSignature, SignKeypair},
     util::{
         Timestamp,
         sign::DateSigner,
@@ -26,6 +28,76 @@ object_id! {
     ///
     /// A stamp is a signature on a claim, and this ID is that signature.
     StampID
+}
+
+object_id! {
+    /// A unique identifier for a stamp revocation.
+    ///
+    /// A stamp is a signature on a claim, and this ID is that signature.
+    StampRevocationID
+}
+
+/// An object that contains a stamp revocation's inner data. Its signature is
+/// what gives the revocation its ID.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct StampRevocationEntry {
+    /// The identity ID of the original stamper (which must match the identity
+    /// ID of the revoker).
+    stamper: IdentityID,
+    /// The identity ID of the recipient of the original stamp.
+    stampee: IdentityID,
+    /// The ID of the stamp we're revoking.
+    stamp_id: StampID,
+    /// Date revoked
+    date_revoked: Timestamp,
+}
+
+impl StampRevocationEntry {
+    /// Create a new stamp revocaiton entry.
+    fn from_stamp(stamp: &Stamp, date_revoked: Timestamp) -> Self {
+        let stamp_id = stamp.id().clone();
+        let stamper = stamp.entry().stamper().clone();
+        let stampee = stamp.entry().stampee().clone();
+        Self {
+            stamper,
+            stampee,
+            stamp_id,
+            date_revoked,
+        }
+    }
+}
+
+/// An object published when a stamper wishes to revoke their stamp.
+///
+/// If this is not signed by the same identity that made the original stamp, it
+/// must be ignored. Note, however, that the original stamper's signing key may
+/// have changed since then, so we must look through their revoked keys when
+/// checking if this revocation is valid. If any of their signing keys match the
+/// original stamp, then it's a valid revocation.
+///
+/// Effectively, if the same identity can verify both the original stamp and the
+/// revocation, then the revocation is valid.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct StampRevocation {
+    /// The unique ID of this recovation, which also happens to be the signature
+    /// of the revocation.
+    id: StampRevocationID,
+    /// Holds the revocations inner data.
+    entry: StampRevocationEntry,
+}
+
+impl StampRevocation {
+    fn new(id: StampRevocationID, entry: StampRevocationEntry) -> Self {
+        Self { id, entry }
+    }
+
+    /// Verify this stamp revocation's integrity.
+    pub fn verify(&self, sign_keypair: &SignKeypair) -> Result<()> {
+        let serialized = ser::serialize(self.entry())?;
+        sign_keypair.verify(self.id(), &serialized)
+    }
 }
 
 /// The confidence of a stamp being made.
@@ -131,6 +203,14 @@ impl Stamp {
         sign_keypair.verify(&self.id, &ser)
     }
 
+    /// Create a new stamp revocation
+    pub fn revoke<T: Into<Timestamp>>(&self, master_key: &SecretKey, sign_keypair: &SignKeypair, date_revoked: T) -> Result<StampRevocation> {
+        let entry = StampRevocationEntry::from_stamp(self, date_revoked.into());
+        let serialized = ser::serialize(&entry)?;
+        let sig = sign_keypair.sign(master_key, &serialized)?;
+        Ok(StampRevocation::new(StampRevocationID(sig), entry))
+    }
+
     /// Serialize this stamp in human-readable form.
     pub fn serialize(&self) -> Result<String> {
         ser::serialize_human(self)
@@ -193,83 +273,6 @@ impl AcceptedStamp {
     }
 }
 
-object_id! {
-    /// A unique identifier for a stamp revocation.
-    ///
-    /// A stamp is a signature on a claim, and this ID is that signature.
-    StampRevocationID
-}
-
-/// An object that contains a stamp revocation's inner data. Its signature is
-/// what gives the revocation its ID.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct StampRevocationEntry {
-    /// The identity ID of the original stamper (which must match the identity
-    /// ID of the revoker).
-    stamper: IdentityID,
-    /// The identity ID of the recipient of the original stamp.
-    stampee: IdentityID,
-    /// The ID of the stamp we're revoking.
-    stamp_id: StampID,
-    /// Date revoked
-    date_revoked: Timestamp,
-}
-
-impl StampRevocationEntry {
-    /// Create a new stamp revocaiton entry.
-    fn from_stamp(stamp: Stamp, date_revoked: Timestamp) -> Self {
-        let stamp_id = stamp.id().clone();
-        let stamper = stamp.entry().stamper().clone();
-        let stampee = stamp.entry().stampee().clone();
-        Self {
-            stamper,
-            stampee,
-            stamp_id,
-            date_revoked,
-        }
-    }
-}
-
-/// An object published when a stamper wishes to revoke their stamp.
-///
-/// If this is not signed by the same identity that made the original stamp, it
-/// must be ignored. Note, however, that the original stamper's signing key may
-/// have changed since then, so we must look through their revoked keys when
-/// checking if this revocation is valid. If any of their signing keys match the
-/// original stamp, then it's a valid revocation.
-///
-/// Effectively, if the same identity can verify both the original stamp and the
-/// revocation, then the revocation is valid.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct StampRevocation {
-    /// The unique ID of this recovation, which also happens to be the signature
-    /// of the revocation.
-    id: StampRevocationID,
-    /// Holds the revocations inner data.
-    entry: StampRevocationEntry,
-}
-
-impl StampRevocation {
-    /// Create a new stamp revocation
-    pub fn new<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, stamp: Stamp, date_revoked: T) -> Result<Self> {
-        let entry = StampRevocationEntry::from_stamp(stamp, date_revoked.into());
-        let serialized = ser::serialize(&entry)?;
-        let sig = sign_keypair.sign(master_key, &serialized)?;
-        Ok(Self {
-            id: StampRevocationID(sig),
-            entry,
-        })
-    }
-
-    /// Verify this stamp revocation's integrity.
-    pub fn verify(&self, sign_keypair: &SignKeypair) -> Result<()> {
-        let serialized = ser::serialize(self.entry())?;
-        sign_keypair.verify(self.id(), &serialized)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,7 +286,7 @@ mod tests {
             Identity,
             VersionedIdentity,
         },
-        key::{SecretKey, SignKeypair},
+        crypto::key::{SecretKey, SignKeypair},
         private::{Private, MaybePrivate},
         util::Timestamp,
     };
@@ -380,7 +383,7 @@ entry:
     }
 
     #[test]
-    fn stamp_revocation_new_verify() {
+    fn stamp_revocation_create_verify() {
         let master_key = SecretKey::new_xsalsa20poly1305();
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let stamp = make_stamp(&master_key, &sign_keypair, &IdentityID::random(), &IdentityID::random(), None);
@@ -388,7 +391,7 @@ entry:
         // oh no i stamped superman but meant to stamp batman gee willickers
 
         // revocation should verify
-        let rev = StampRevocation::new(&master_key, &sign_keypair, stamp, Timestamp::now()).unwrap();
+        let rev = stamp.revoke(&master_key, &sign_keypair, Timestamp::now()).unwrap();
         rev.verify(&sign_keypair).unwrap();
 
         // let's modify the revocation. this should invalidate the sig.

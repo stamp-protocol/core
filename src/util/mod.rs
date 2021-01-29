@@ -21,27 +21,27 @@ macro_rules! object_id {
         $name:ident
     ) => {
         #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
-        pub struct $name(crate::key::SignKeypairSignature);
+        pub struct $name(crate::crypto::key::SignKeypairSignature);
 
         #[cfg(test)]
         #[allow(dead_code)]
         impl $name {
             pub(crate) fn blank() -> Self {
                 let sigbytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-                let sig = crate::key::SignKeypairSignature::Ed25519(sodiumoxide::crypto::sign::ed25519::Signature::from_slice(sigbytes.as_slice()).unwrap());
+                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(sodiumoxide::crypto::sign::ed25519::Signature::from_slice(sigbytes.as_slice()).unwrap());
                 $name(sig)
             }
 
             #[cfg(test)]
             pub(crate) fn random() -> Self {
                 let sigbytes = sodiumoxide::randombytes::randombytes(64);
-                let sig = crate::key::SignKeypairSignature::Ed25519(sodiumoxide::crypto::sign::ed25519::Signature::from_slice(sigbytes.as_slice()).unwrap());
+                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(sodiumoxide::crypto::sign::ed25519::Signature::from_slice(sigbytes.as_slice()).unwrap());
                 $name(sig)
             }
         }
 
         impl Deref for $name {
-            type Target = crate::key::SignKeypairSignature;
+            type Target = crate::crypto::key::SignKeypairSignature;
             fn deref(&self) -> &Self::Target {
                 &self.0
             }
@@ -51,7 +51,7 @@ macro_rules! object_id {
             type Error = crate::error::Error;
             fn try_from(id: &$name) -> std::result::Result<String, Self::Error> {
                 let ser_val: u8 = match &id.0 {
-                    crate::key::SignKeypairSignature::Ed25519(_) => 0,
+                    crate::crypto::key::SignKeypairSignature::Ed25519(_) => 0,
                 };
                 let mut bytes = Vec::from(id.as_ref());
                 bytes.push(ser_val);
@@ -68,7 +68,7 @@ macro_rules! object_id {
                     _ => {
                         let sig = sodiumoxide::crypto::sign::ed25519::Signature::from_slice(bytes.as_slice())
                             .ok_or(crate::error::Error::SignatureMissing)?;
-                        crate::key::SignKeypairSignature::Ed25519(sig)
+                        crate::crypto::key::SignKeypairSignature::Ed25519(sig)
                     }
                 };
                 Ok(Self(id_sig))
@@ -168,7 +168,7 @@ impl FromStr for Timestamp {
 #[cfg(test)]
 mod tests {
     use crate::{
-        key::{SignKeypairSignature},
+        crypto::key::{SignKeypairSignature},
     };
     use std::convert::TryFrom;
     use std::ops::Deref;

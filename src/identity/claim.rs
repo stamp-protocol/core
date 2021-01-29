@@ -13,7 +13,7 @@ use crate::{
         IdentityID,
         Public,
     },
-    key::{SecretKey, SignKeypair},
+    crypto::key::{SecretKey, SignKeypair},
     private::MaybePrivate,
     util::{
         Timestamp,

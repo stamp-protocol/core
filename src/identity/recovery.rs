@@ -41,7 +41,7 @@ use crate::{
     identity::{
         identity::IdentityID,
     },
-    key::{SignKeypair, SignKeypairPublic, SignKeypairSignature},
+    crypto::key::{SignKeypair, SignKeypairPublic, SignKeypairSignature},
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};

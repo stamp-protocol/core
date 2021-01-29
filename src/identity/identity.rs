@@ -16,7 +16,7 @@ use crate::{
         recovery::{Recovery},
         stamp::{Confidence, Stamp, StampRevocation, AcceptedStamp},
     },
-    key::{SecretKey, SignKeypairSignature, SignKeypair},
+    crypto::key::{SecretKey, SignKeypairSignature, SignKeypair},
     private::MaybePrivate,
     util::{
         Timestamp,
@@ -458,11 +458,29 @@ impl Identity {
     /// belongs to, but instead we must publish this revocation on whatever
     /// medium we see fit, and it is up to people to check for revocations on
     /// that medium before accepting a stamped claim as given.
-    pub fn revoke_stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, stamp: Stamp, date_revoked: T) -> Result<StampRevocation> {
+    pub fn revoke_stamp<T: Into<Timestamp>>(&self, master_key: &SecretKey, stamp: &Stamp, date_revoked: T) -> Result<StampRevocation> {
         if self.id() != stamp.entry().stamper() {
             Err(Error::IdentityIDMismatch)?;
         }
-        StampRevocation::new(master_key, self.keychain().root(), stamp, date_revoked)
+        stamp.revoke(master_key, self.keychain().root(), date_revoked)
+    }
+
+    /// Send a message to this identity.
+    ///
+    /// The message will be signed by a key belonging to the *sender*, allowing
+    /// the receiver to verify that the message came from the sender and not
+    /// some random troll. Opening will require having the sender's identity.
+    pub fn send_message(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Send an anonymous message to this identity.
+    ///
+    /// Anonymous messages are *not* signed by the sender, and thus do not
+    /// require having their identity available to open/verify. However, they
+    /// also do not provide any sort of proof as to the origin of the message.
+    pub fn send_anonymous_message(&self) -> Result<()> {
+        Ok(())
     }
 
     /// Grab this identity's nickname, if it has one.

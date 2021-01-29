@@ -7,9 +7,9 @@
 //! can point to other locations (for instance, your canonical email address,
 //! your personal domain, etc).
 //!
-//! This system relies heavily on the [key](crate::key) module, which provides
-//! all the mechanisms necessary for encryption, decryption, signing, and
-//! verification of data.
+//! This system relies heavily on the [key](crate::crypto::key) module, which
+//! provides all the mechanisms necessary for encryption, decryption, signing,
+//! and verification of data.
 
 
 pub mod keychain;
@@ -26,7 +26,7 @@ pub use identity::*;
 
 use crate::{
     error::Result,
-    key::{SecretKey, SignKeypairSignature},
+    crypto::key::{SecretKey, SignKeypairSignature},
     util::{
         Timestamp,
         ser,
@@ -187,6 +187,20 @@ impl PublishedIdentity {
         })
     }
 
+    /// Confirm that this published identity has indeed been signed by the
+    /// publish contained in the identity, and that the identity itself is
+    /// valid.
+    pub fn verify(&self) -> Result<()> {
+        // first verify the identity hasn't been tampered with.
+        self.identity().verify()?;
+
+        // now that we know the identity is valid, we can validate the publish
+        // signature against its publish key
+        let datesigner = DateSigner::new(self.publish_date(), self.identity());
+        let serialized = ser::serialize(&datesigner)?;
+        self.identity().keychain().publish().verify(self.publish_signature(), &serialized)
+    }
+
     /// Serialize this published identity into a human readable format
     pub fn serialize(&self) -> Result<String> {
         ser::serialize_human(self)
@@ -194,7 +208,9 @@ impl PublishedIdentity {
 
     /// Deserialize this published identity from a byte vector.
     pub fn deserialize(slice: &[u8]) -> Result<Self> {
-        ser::deserialize_human(slice)
+        let published: Self = ser::deserialize_human(slice)?;
+        published.verify()?;
+        Ok(published)
     }
 }
 
@@ -211,7 +227,7 @@ mod tests {
     use super::*;
     use crate::{
         identity::keychain,
-        key::CryptoKeypair,
+        crypto::key::CryptoKeypair,
         util::Timestamp,
     };
 

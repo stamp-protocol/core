@@ -2,7 +2,7 @@
 
 use crate::{
     error::Result,
-    key::{SecretKey, SignKeypairSignature, SignKeypair},
+    crypto::key::{SecretKey, SignKeypairSignature, SignKeypair},
     util::{
         Timestamp,
         ser,

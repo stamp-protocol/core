@@ -85,6 +85,10 @@ pub enum Error {
     #[error("identity subkey not found")]
     IdentitySubkeyNotFound,
 
+    /// The subkey being operated on is the wrong type
+    #[error("the given subkey cannot be used for the requested operation")]
+    IdentitySubkeyWrongType,
+
     /// Verification of an identity failed.
     #[error("Verification of identity failed: {0}")]
     IdentityVerificationFailed(String),
