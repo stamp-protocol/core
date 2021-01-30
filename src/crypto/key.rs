@@ -324,11 +324,11 @@ impl CryptoKeypair {
     /// key. Needs our master key to unlock our heroic private key.
     pub fn seal(&self, sender_master_key: &SecretKey, sender_keypair: &CryptoKeypair, data: &[u8]) -> Result<CryptoKeypairMessage> {
         match (sender_keypair, self) {
-            (Self::Curve25519Xsalsa20Poly1305(_, ref sender_seckey_opt), Self::Curve25519Xsalsa20Poly1305(ref receiver_pubkey, _)) => {
+            (Self::Curve25519Xsalsa20Poly1305(_, ref sender_seckey_opt), Self::Curve25519Xsalsa20Poly1305(ref recipient_pubkey, _)) => {
                 let sender_seckey_sealed = sender_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let sender_seckey = sender_seckey_sealed.open(sender_master_key)?;
                 let nonce_raw = curve25519xsalsa20poly1305::gen_nonce();
-                let msg = curve25519xsalsa20poly1305::seal(data, &nonce_raw, &receiver_pubkey, &sender_seckey);
+                let msg = curve25519xsalsa20poly1305::seal(data, &nonce_raw, &recipient_pubkey, &sender_seckey);
                 let nonce = CryptoKeypairNonce::Curve25519Xsalsa20Poly1305(nonce_raw);
                 Ok(CryptoKeypairMessage::new(nonce, msg))
             }
@@ -338,16 +338,16 @@ impl CryptoKeypair {
     /// Open a message encrypted with our public key and verify the sender of
     /// the message using their public key. Needs our master key to unlock the
     /// private key used to decrypt the message.
-    pub fn open(&self, receiver_master_key: &SecretKey, sender_keypair: &CryptoKeypair, message: &CryptoKeypairMessage) -> Result<Vec<u8>> {
+    pub fn open(&self, recipient_master_key: &SecretKey, sender_keypair: &CryptoKeypair, message: &CryptoKeypairMessage) -> Result<Vec<u8>> {
         match (self, sender_keypair) {
-            (Self::Curve25519Xsalsa20Poly1305(_, ref receiver_seckey_opt), CryptoKeypair::Curve25519Xsalsa20Poly1305(ref sender_pubkey, _)) => {
-                let receiver_seckey_sealed = receiver_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let receiver_seckey = receiver_seckey_sealed.open(receiver_master_key)?;
+            (Self::Curve25519Xsalsa20Poly1305(_, ref recipient_seckey_opt), CryptoKeypair::Curve25519Xsalsa20Poly1305(ref sender_pubkey, _)) => {
+                let recipient_seckey_sealed = recipient_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
+                let recipient_seckey = recipient_seckey_sealed.open(recipient_master_key)?;
                 let nonce = message.nonce();
                 let nonce_raw = match nonce {
                     CryptoKeypairNonce::Curve25519Xsalsa20Poly1305(ref x) => x,
                 };
-                curve25519xsalsa20poly1305::open(message.ciphertext(), nonce_raw, &sender_pubkey, &receiver_seckey)
+                curve25519xsalsa20poly1305::open(message.ciphertext(), nonce_raw, &sender_pubkey, &recipient_seckey)
                     .map_err(|_| Error::CryptoOpenFailed)
             }
         }
@@ -554,13 +554,13 @@ mod tests {
     fn cryptokeypair_curve25519xsalsa20poly1305_enc_dec() {
         let sender_master_key = SecretKey::new_xsalsa20poly1305();
         let sender_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&sender_master_key).unwrap();
-        let receiver_master_key = SecretKey::new_xsalsa20poly1305();
-        let receiver_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&receiver_master_key).unwrap();
-        let fake_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&receiver_master_key).unwrap();
+        let recipient_master_key = SecretKey::new_xsalsa20poly1305();
+        let recipient_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&recipient_master_key).unwrap();
+        let fake_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&recipient_master_key).unwrap();
 
         let message = String::from("HI JERRY I'M BUTCH");
-        let sealed = receiver_keypair.seal(&sender_master_key, &sender_keypair, message.as_bytes()).unwrap();
-        let opened = receiver_keypair.open(&receiver_master_key, &sender_keypair, &sealed).unwrap();
+        let sealed = recipient_keypair.seal(&sender_master_key, &sender_keypair, message.as_bytes()).unwrap();
+        let opened = recipient_keypair.open(&recipient_master_key, &sender_keypair, &sealed).unwrap();
 
         assert_eq!(&opened[..], message.as_bytes());
 
