@@ -60,6 +60,11 @@ pub enum Error {
     #[error("the given signature/public key/data combo does not verify")]
     CryptoSignatureVerificationFailed,
 
+    /// The message being operated on is the wrong type (for instance, trying to
+    /// `open()` a message created with `send_anonymous()`).
+    #[error("the given message is in the wrong format")]
+    CryptoWrongMessageType,
+
     /// An error while engaging in deserialization.
     #[error("deserialization error")]
     Deserialize(#[from] rmp_serde::decode::Error),
