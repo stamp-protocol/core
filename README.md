@@ -140,6 +140,9 @@ of transactions, allowing quick lookups of identity information without the BS.
   - [ ] Recovery system
   - [ ] Extra data management
   - [ ] Whole identity revocation
+  - [ ] Trust system
+    - [ ] Trust of specific identities
+    - [ ] Flow of trust through stamps, using confidence as control valve
 - [ ] CLI proof of concept
   - [ ] Interface all available functions of core
 - [ ] Formal specification of Stamp protocol
