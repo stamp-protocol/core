@@ -137,6 +137,10 @@ of transactions, allowing quick lookups of identity information without the BS.
   - [x] Identity versioning
   - [x] Identity human-readable serialization
   - [x] Publishing system and verfication
+  - [ ] Cryptographic utilities
+    - [x] Encrypted messages between identities
+    - [ ] Cryptographic signatures
+    - [ ] Personal data encryption/decryption
   - [ ] Recovery system
   - [ ] Extra data management
   - [ ] Whole identity revocation
