@@ -127,8 +127,18 @@ of transactions, allowing quick lookups of identity information without the BS.
       - [x] Revoke
       - [x] Delete
     - [x] Reencryption via new master key
-  - [x] Claims system
+  - [ ] Claims system
     - [x] Create, sign, verify claims
+    - [ ] Support multiple claim types
+      - [x] Identity
+      - [x] Name
+      - [x] Email
+      - [ ] Embedded photo
+      - [x] PGP
+      - [x] Home address,
+      - [x] Relationship to another stamp identity
+      - [x] Relationship to non-stamp identity
+      - [x] Extendable claim
     - [x] Private verifiable claims (via HMAC)
     - [x] Stamps
       - [x] Create, sign, verify stamps
