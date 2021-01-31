@@ -516,6 +516,11 @@ impl Keychain {
         search_keys
     }
 
+    /// Find a subkey by ID. Relieves a bit of tedium.
+    pub fn subkey_by_id(&self, id: &KeyID) -> Option<&Subkey> {
+        self.subkeys().iter().find(|x| x.id() == id)
+    }
+
     /// Find a subkey by name. Relieves a bit of tedium.
     pub fn subkey_by_name(&self, name: &str) -> Option<&Subkey> {
         self.subkeys().iter().find(|x| x.key().name() == name)
