@@ -13,6 +13,7 @@ use std::str::FromStr;
 pub(crate) mod ser;
 pub(crate) mod sign;
 
+pub use ser::{base64_encode, base64_decode};
 pub use sodiumoxide::utils::{mlock, munlock};
 
 macro_rules! object_id {
