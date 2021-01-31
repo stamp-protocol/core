@@ -22,6 +22,7 @@ macro_rules! object_id {
         $name:ident
     ) => {
         #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+        $(#[$meta])*
         pub struct $name(crate::crypto::key::SignKeypairSignature);
 
         #[cfg(test)]
