@@ -54,16 +54,6 @@ pub enum VersionedIdentity {
 }
 
 impl VersionedIdentity {
-    /// Serialize this versioned identity into a byte vector.
-    pub fn serialize_binary(&self) -> Result<Vec<u8>> {
-        ser::serialize(self)
-    }
-
-    /// Deserialize this versioned identity from a byte vector.
-    pub fn deserialize_binary(slice: &[u8]) -> Result<Self> {
-        ser::deserialize(slice)
-    }
-
     /// Serialize this versioned identity into a human readable format
     pub fn serialize(&self) -> Result<String> {
         ser::serialize_human(self)
@@ -130,6 +120,8 @@ impl VersionedIdentity {
         }
     }
 }
+
+impl ser::SerdeBinary for VersionedIdentity {}
 
 // this makes it so we don't have to manually create a bunch of interfaces we
 // can otherwise pass through.

@@ -49,6 +49,20 @@ pub fn base64_decode<T: AsRef<[u8]>>(bytes: T) -> Result<Vec<u8>> {
     Ok(base64::decode_config(bytes.as_ref(), base64::URL_SAFE_NO_PAD)?)
 }
 
+/// A default implementation for (de)serializing an object to or from binary
+/// format.
+pub trait SerdeBinary: Serialize + DeserializeOwned {
+    /// Serialize this message
+    fn serialize_binary(&self) -> Result<Vec<u8>> {
+        serialize(self)
+    }
+
+    /// Deserialize this message
+    fn deserialize_binary(slice: &[u8]) -> Result<Self> {
+        deserialize(slice)
+    }
+}
+
 macro_rules! impl_try_from_slice {
     ($class:ty) => {
         impl TryFromSlice for $class {

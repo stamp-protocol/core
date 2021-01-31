@@ -65,6 +65,11 @@ pub enum Error {
     #[error("the given message is in the wrong format")]
     CryptoWrongMessageType,
 
+    /// The signature being operated on is the wrong type (for instance, trying
+    /// to `verify()` a message created with `sign_attached()`).
+    #[error("the given signature is in the wrong format")]
+    CryptoWrongSignatureType,
+
     /// An error while engaging in deserialization.
     #[error("deserialization error")]
     Deserialize(#[from] rmp_serde::decode::Error),
