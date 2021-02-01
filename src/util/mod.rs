@@ -15,7 +15,7 @@ pub(crate) mod sign;
 #[cfg(test)]
 pub(crate) mod test;
 
-pub use ser::{base64_encode, base64_decode};
+pub use ser::{base64_encode, base64_decode, SerdeBinary};
 pub use sodiumoxide::utils::{mlock, munlock};
 
 macro_rules! object_id {
