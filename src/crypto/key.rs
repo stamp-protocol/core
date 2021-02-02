@@ -62,6 +62,11 @@ impl SecretKey {
         Self::Xsalsa20Poly1305(xsalsa20poly1305::gen_key())
     }
 
+    /// Try to create a SecretKey from a byte slice
+    pub fn new_xsalsa20poly1305_from_slice(bytes: &[u8]) -> Result<Self> {
+        Ok(Self::Xsalsa20Poly1305(xsalsa20poly1305::Key::from_slice(bytes).ok_or(Error::CryptoBadKey)?))
+    }
+
     /// Create a nonce for use with this secret key
     pub fn gen_nonce(&self) -> SecretKeyNonce {
         match self {
@@ -461,6 +466,15 @@ mod tests {
         let dec_bytes = key.open(&enc, &nonce).unwrap();
         let dec = String::from_utf8(dec_bytes).unwrap();
         assert_eq!(dec, String::from("get a job"));
+    }
+
+    #[test]
+    fn secretkey_xsalsa20poly1305_from_slice() {
+        let nonce: SecretKeyNonce = util::ser::deserialize(vec![129, 0, 196, 24, 33, 86, 38, 93, 180, 121, 32, 51, 21, 36, 74, 137, 32, 165, 2, 99, 111, 179, 32, 242, 56, 9, 254, 1].as_slice()).unwrap();
+        let enc: Vec<u8> = vec![147, 142, 48, 155, 76, 177, 2, 169, 183, 176, 53, 157, 237, 55, 40, 216, 37, 197, 216, 146, 107, 162, 57, 58, 145, 103, 32, 78, 238, 30, 104, 186];
+        let key = SecretKey::new_xsalsa20poly1305_from_slice(vec![120, 111, 109, 233, 7, 27, 205, 94, 55, 95, 248, 113, 138, 246, 244, 109, 147, 168, 117, 163, 48, 193, 100, 103, 43, 205, 212, 197, 110, 111, 105, 1].as_slice()).unwrap();
+        let dec = key.open(enc.as_slice(), &nonce).unwrap();
+        assert_eq!(dec.as_slice(), b"HI HUNGRY IM DAD");
     }
 
     #[test]

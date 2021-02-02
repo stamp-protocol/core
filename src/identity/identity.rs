@@ -20,7 +20,7 @@ use crate::{
     private::MaybePrivate,
     util::{
         Timestamp,
-        sign::{DateSigner, SignedValue},
+        sign::{DateSigner, Signable, SignedValue},
         ser,
     },
 };
@@ -81,6 +81,13 @@ pub struct Forward {
     is_default: bool,
 }
 
+impl Signable for Forward {
+    type Item = Forward;
+    fn signable(&self) -> Self::Item {
+        self.clone()
+    }
+}
+
 /// Extra public data that is attached to our identity.
 ///
 /// Each entry in this struct is signed by our root signing key. In the case
@@ -119,6 +126,22 @@ impl IdentityExtraData {
             forwards: Vec::new(),
         }
     }
+
+    /// Re-sign the extra data in this identity with a new root key.
+    fn resign(mut self, master_key: &SecretKey, root_key: &SignKeypair) -> Result<Self> {
+        match self.nickname_mut().as_mut() {
+            Some(x) => {
+                let val = x.value().clone();
+                *x = SignedValue::new(master_key, root_key, val)?;
+            }
+            None => {},
+        }
+        for forward in self.forwards_mut() {
+            let val = forward.value().clone();
+            *forward = SignedValue::new(master_key, root_key, val)?;
+        }
+        Ok(self)
+    }
 }
 
 /// An identity.
@@ -154,12 +177,16 @@ pub struct Identity {
 }
 
 impl Identity {
+    fn id_gen(now: &Timestamp) -> Result<Vec<u8>> {
+        let id_string = String::from("This is my stamp.");
+        let datesigner = DateSigner::new(now, &id_string);
+        ser::serialize(&datesigner)
+    }
+
     /// Given an alpha key and a timestamp, create a (deterministic) identity ID.
     pub fn create_id(master_key: &SecretKey, alpha_keypair: &SignKeypair, now: &Timestamp) -> Result<IdentityID> {
         // create our identity's ID
-        let id_string = String::from("This is my stamp.");
-        let datesigner = DateSigner::new(now, &id_string);
-        let ser = ser::serialize(&datesigner)?;
+        let ser = Self::id_gen(now)?;
         let id = IdentityID(alpha_keypair.sign(master_key, &ser)?);
         Ok(id)
     }
@@ -289,9 +316,7 @@ impl Identity {
     /// must not be stored alongside the signatures).
     pub fn verify(&self) -> Result<()> {
         // verify our identity ID against the alpha key.
-        let id_string = String::from("This is my stamp.");
-        let datesigner = DateSigner::new(self.created(), &id_string);
-        let ser = ser::serialize(&datesigner)?;
+        let ser = Self::id_gen(self.created())?;
         self.keychain().alpha().verify(self.id(), &ser)
             .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.id")))?;
 
@@ -408,6 +433,7 @@ impl Identity {
         let wrapped = SignedOrRecoveredKeypair::Signed(signed);
         self.set_keychain(self.keychain().clone().set_root_key(master_key, wrapped, revocation_reason)?);
         self.set_root_signature(self.generate_root_signature(master_key)?);
+        self.set_extra_data(self.extra_data().clone().resign(master_key, self.keychain().root())?);
         self.verify()?;
         Ok(self)
     }

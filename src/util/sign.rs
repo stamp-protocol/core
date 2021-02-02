@@ -42,6 +42,13 @@ pub trait Signable {
     fn signable(&self) -> Self::Item;
 }
 
+impl Signable for String {
+    type Item = String;
+    fn signable(&self) -> Self::Item {
+        self.clone()
+    }
+}
+
 /// A struct that wraps any type and requires it to be signed in order to be
 /// created or modified.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]

@@ -16,6 +16,10 @@ pub enum Error {
     #[error("incorrect salt given for kdf")]
     CryptoBadSalt,
 
+    /// Bad key.
+    #[error("key is invalid")]
+    CryptoBadKey,
+
     /// Error creating hash digest
     #[error("could not create hash digest")]
     CryptoHashStateDigestError,

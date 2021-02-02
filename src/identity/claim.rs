@@ -67,6 +67,31 @@ impl<T> Relationship<T> {
     }
 }
 
+/// A thin wrapper around binary data in claims. Obnoxious, but useful for
+/// (de)serialization.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClaimBin(#[serde(with = "crate::util::ser::human_bytes")] Vec<u8>);
+
+impl From<ClaimBin> for Vec<u8> {
+    fn from(val: ClaimBin) -> Self {
+        let ClaimBin(vec) = val;
+        vec
+    }
+}
+
+impl From<Vec<u8>> for ClaimBin {
+    fn from(val: Vec<u8>) -> Self {
+        Self(val)
+    }
+}
+
+impl Deref for ClaimBin {
+    type Target = Vec<u8>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// A collection of known claims one can make about their identity.
 ///
 /// Note that the claim type itself will always be public, but the data attached
@@ -82,8 +107,10 @@ pub enum ClaimSpec {
     Identity(IdentityID),
     /// A claim that the name attached to this identity is mine.
     Name(MaybePrivate<String>),
-    /// A claim that I own an email address
+    /// A claim that I own an email address.
     Email(MaybePrivate<String>),
+    /// A claim that the attached photo is a photo of me.
+    Photo(MaybePrivate<ClaimBin>),
     /// A claim that I own a PGP keypair
     ///
     /// NOTE: we *could* reimplement *all* of PGP and allow people to verify
@@ -100,7 +127,7 @@ pub enum ClaimSpec {
     /// etc). Can be used to assert relationships to entities outside of the
     /// Stamp protocol (although stamps on these relationships must be provided
     /// by Stamp protocol identities).
-    RelationExtension(MaybePrivate<Relationship<Vec<u8>>>),
+    RelationExtension(MaybePrivate<Relationship<ClaimBin>>),
     /// Any kind of claim of identity ownership or possession outside the
     /// defined types. This includes a public field (which could be used as a
     /// key) and a maybe-private field which would be a value (or a key and
@@ -116,7 +143,7 @@ pub enum ClaimSpec {
     ///
     /// Anything you can dream up that you wish to claim in any format can exist
     /// here.
-    Extension(String, MaybePrivate<Vec<u8>>),
+    Extension(String, MaybePrivate<ClaimBin>),
 }
 
 impl ClaimSpec {
@@ -304,10 +331,10 @@ mod tests {
         claim_reenc!{ PGP, String::from("12345") }
         claim_reenc!{ HomeAddress, String::from("111 blumps ln") }
         claim_reenc!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::blank()) }
-        claim_reenc!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, vec![1, 2, 3, 4, 5]) }
+        claim_reenc!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![1, 2, 3, 4, 5])) }
         claim_reenc!{
             Extension,
-            vec![7, 3, 2, 90],
+            ClaimBin(vec![7, 3, 2, 90]),
             |maybe| { ClaimSpec::Extension(String::from("id:state:ca"), maybe) },
             |spec: ClaimSpec| {
                 match spec {
@@ -363,10 +390,10 @@ mod tests {
         claim_pub_priv!{ PGP, String::from("I LIKE FOOTBALL") }
         claim_pub_priv!{ HomeAddress, String::from("I LIKE TO RUN") }
         claim_pub_priv!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::blank()) }
-        claim_pub_priv!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, vec![69,69,69]) }
+        claim_pub_priv!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
         claim_pub_priv!{
             Extension,
-            vec![42, 22],
+            ClaimBin(vec![42, 22]),
             |maybe| ClaimSpec::Extension(String::from("SOCIAL NETWORK WEB2.0"), maybe),
             |spec| {
                 match spec {
@@ -403,10 +430,10 @@ mod tests {
         thtrip!{ PGP, String::from("I PLAY FOOTBALL") }
         thtrip!{ HomeAddress, String::from("WITH MY DAD") }
         thtrip!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::blank()) }
-        thtrip!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, vec![69,69,69]) }
+        thtrip!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
         thtrip!{
             next,
-            vec![42, 17, 86],
+            ClaimBin(vec![42, 17, 86]),
             |maybe| { ClaimSpec::Extension(String::from("best poet ever"), maybe) }
         }
 

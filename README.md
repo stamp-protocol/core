@@ -133,12 +133,13 @@ of transactions, allowing quick lookups of identity information without the BS.
       - [x] Identity
       - [x] Name
       - [x] Email
-      - [ ] Embedded photo
+      - [x] Embedded photo
       - [x] PGP
       - [x] Home address,
       - [x] Relationship to another stamp identity
       - [x] Relationship to non-stamp identity
       - [x] Extendable claim
+    - [ ] Stamp requests (sending private claims to stamper)
     - [x] Private verifiable claims (via HMAC)
     - [x] Stamps
       - [x] Create, sign, verify stamps
@@ -149,10 +150,12 @@ of transactions, allowing quick lookups of identity information without the BS.
   - [x] Publishing system and verfication
   - [ ] Cryptographic utilities
     - [x] Encrypted messages between identities
-    - [ ] Cryptographic signatures
+    - [x] Cryptographic signatures
     - [ ] Personal data encryption/decryption
   - [ ] Recovery system
   - [ ] Extra data management
+    - [ ] Nickname
+    - [ ] Forwards
   - [ ] Whole identity revocation
   - [ ] Trust system
     - [ ] Trust of specific identities
