@@ -135,7 +135,9 @@ of transactions, allowing quick lookups of identity information without the BS.
       - [x] Email
       - [x] Embedded photo
       - [x] PGP
-      - [x] Home address,
+      - [x] Domain
+      - [x] URL
+      - [x] Home address
       - [x] Relationship to another stamp identity
       - [x] Relationship to non-stamp identity
       - [x] Extendable claim

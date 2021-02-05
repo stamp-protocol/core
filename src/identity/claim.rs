@@ -24,6 +24,7 @@ use crate::{
 use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
+use url::Url;
 
 object_id! {
     /// A unique identifier for claims.
@@ -104,6 +105,9 @@ pub enum ClaimSpec {
     /// A claim that this identity is mine (always public).
     ///
     /// This claim should be made any time a new identity is created.
+    ///
+    /// This can also be used to claim ownership of another identity, hopefully
+    /// stamped by that identity.
     Identity(IdentityID),
     /// A claim that the name attached to this identity is mine.
     Name(MaybePrivate<String>),
@@ -111,13 +115,76 @@ pub enum ClaimSpec {
     Email(MaybePrivate<String>),
     /// A claim that the attached photo is a photo of me.
     Photo(MaybePrivate<ClaimBin>),
-    /// A claim that I own a PGP keypair
+    /// A claim that I own a PGP keypair (using the key's ID as the value).
+    ///
+    /// In general, you would create this claim, sign the claim's ID with your
+    /// PGP keypair, then publish the signature somewhere it can be validated
+    /// by others.
     ///
     /// NOTE: we *could* reimplement *all* of PGP and allow people to verify
     /// this themselves via cross-signing, but seems more appropriate to keep
     /// the spec lean and instead require third-parties to verify the claim.
-    PGP(MaybePrivate<String>),
-    /// A claim that I reside at a physical address
+    Pgp(MaybePrivate<String>),
+    /// A claim that I own or have write access to an internet domain.
+    ///
+    /// This claim should be accompanied by a DNS TXT record on the domain that
+    /// has the full URL of the identity/claim. This takes the format
+    ///   stamp://[nickname.]<identityID>/claim/<claimID>
+    ///
+    /// For instance, if you want to claim ownership of killtheradio.net then
+    /// you could create a Domain claim with a value of "killtheradio.net". If
+    /// you have the identity ID:
+    ///
+    ///   o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA
+    ///
+    /// and the domain claim has an ID of:
+    ///
+    ///   cZVhuW0Of5aqaFa1aCf6J_1vS2XtNV94r1LxfgIgkK8tpZmzlVnA_Xb04LJrRWno--cVj5P8P9zOMMXmZe75AQA
+    ///
+    /// Then you would create a DNS TXT record on the killtheradio.net domain as
+    /// follows:
+    ///
+    ///   stamp://o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA/claim/cZVhuW0Of5aqaFa1aCf6J_1vS2XtNV94r1LxfgIgkK8tpZmzlVnA_Xb04LJrRWno--cVj5P8P9zOMMXmZe75AQA
+    ///
+    /// It's a mouthfull, I know. But now anybody who can read the domain DNS
+    /// can look up your identity and verify your claim. If you really want to,
+    /// you can use the short form URL:
+    ///
+    ///   stamp://o8AL10aawwthQIUR/claim/cZVhuW0Of5aqaFa1
+    Domain(MaybePrivate<String>),
+    /// A claim that I own or have write access to a specific URL.
+    ///
+    /// This claim can generally be validated by implementations themselves.
+    /// After creation of the claim, the ID of the claim should be published to
+    /// that URL and prepended with "stamp:" (a 16-character shortened ID can be
+    /// used if space is limited).
+    ///
+    /// For instance, if you want to claim ownership of https://killtheradio.net/
+    /// then you would create a Url claim with that URL as the value. Let's say
+    /// the resulting claim ID is:
+    ///
+    ///   0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
+    ///
+    /// You would then publish on https://killtheradio.net/ a string somewhere
+    /// on the homepage
+    ///
+    ///   stamp:0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
+    ///
+    /// or for stupid, useless, idiotic platforms like twitter, abbreviated:
+    ///
+    ///   stamp:0SgfsdQ2YNk6Nlre
+    ///
+    /// Long-form is preferred for security, but obviously not as hip.
+    ///
+    /// If whatever system you're using doesn't have the concept of a "profile"
+    /// with editable text you can update, and doesn't provide a predictable URL
+    /// format for new posts, and doesn't have editable posts, you will need a
+    /// third-party to stamp this claim.
+    Url(MaybePrivate<Url>),
+    /// A claim that I reside at a physical address.
+    ///
+    /// Must be stamped in-person. At the DMV. The one that's further away.
+    /// Sorry, that's the protocol.
     HomeAddress(MaybePrivate<String>),
     /// A claim that I am in a relationship with another identity, hopefully
     /// stamped by that identity ='[
@@ -133,8 +200,7 @@ pub enum ClaimSpec {
     /// key) and a maybe-private field which would be a value (or a key and
     /// value if the public field is empty).
     ///
-    /// This can be something like a state-issued identification, ownership over
-    /// an internet domain name, a social networking screen name, etc.
+    /// This can be something like a state-issued identification.
     ///
     /// Effectively, this exists as a catch-all and allows for many more types
     /// of claims than can be thought of here. This could be a JSON string with
@@ -150,14 +216,17 @@ impl ClaimSpec {
     /// Re-encrypt this claim spec's private data, if it has any
     pub(crate) fn reencrypt(self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
         let spec = match self.clone() {
+            Self::Identity(val) => Self::Identity(val),
             Self::Name(maybe) => Self::Name(maybe.reencrypt(current_key, new_key)?),
             Self::Email(maybe) => Self::Email(maybe.reencrypt(current_key, new_key)?),
-            Self::PGP(maybe) => Self::PGP(maybe.reencrypt(current_key, new_key)?),
+            Self::Photo(maybe) => Self::Photo(maybe.reencrypt(current_key, new_key)?),
+            Self::Pgp(maybe) => Self::Pgp(maybe.reencrypt(current_key, new_key)?),
+            Self::Domain(maybe) => Self::Domain(maybe.reencrypt(current_key, new_key)?),
+            Self::Url(maybe) => Self::Url(maybe.reencrypt(current_key, new_key)?),
             Self::HomeAddress(maybe) => Self::HomeAddress(maybe.reencrypt(current_key, new_key)?),
             Self::Relation(maybe) => Self::Relation(maybe.reencrypt(current_key, new_key)?),
             Self::RelationExtension(maybe) => Self::RelationExtension(maybe.reencrypt(current_key, new_key)?),
             Self::Extension(key, maybe) => Self::Extension(key, maybe.reencrypt(current_key, new_key)?),
-            _ => self,
         };
         Ok(spec)
     }
@@ -169,14 +238,17 @@ impl ClaimSpec {
     /// See [MaybePrivate::has_private](crate::private::MaybePrivate::has_private)
     pub(crate) fn has_private(&self) -> bool {
         match self {
+            Self::Identity(..) => false,
             Self::Name(val) => val.has_private(),
             Self::Email(val) => val.has_private(),
-            Self::PGP(val) => val.has_private(),
+            Self::Photo(val) => val.has_private(),
+            Self::Pgp(val) => val.has_private(),
+            Self::Domain(val) => val.has_private(),
+            Self::Url(val) => val.has_private(),
             Self::HomeAddress(val) => val.has_private(),
             Self::Relation(val) => val.has_private(),
             Self::RelationExtension(val) => val.has_private(),
             Self::Extension(_, val) => val.has_private(),
-            _ => false,
         }
     }
 }
@@ -184,14 +256,17 @@ impl ClaimSpec {
 impl Public for ClaimSpec {
     fn strip_private(&self) -> Self {
         match self {
+            Self::Identity(val) => Self::Identity(val.clone()),
             Self::Name(val) => Self::Name(val.strip_private()),
             Self::Email(val) => Self::Email(val.strip_private()),
-            Self::PGP(val) => Self::PGP(val.strip_private()),
+            Self::Photo(val) => Self::Photo(val.strip_private()),
+            Self::Pgp(val) => Self::Pgp(val.strip_private()),
+            Self::Domain(val) => Self::Domain(val.strip_private()),
+            Self::Url(val) => Self::Url(val.strip_private()),
             Self::HomeAddress(val) => Self::HomeAddress(val.strip_private()),
             Self::Relation(val) => Self::Relation(val.strip_private()),
             Self::RelationExtension(val) => Self::RelationExtension(val.strip_private()),
             Self::Extension(key, val) => Self::Extension(key.clone(), val.strip_private()),
-            _ => self.clone(),
         }
     }
 }
@@ -289,6 +364,20 @@ mod tests {
                 let private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
                 let spec = $createfn(private);
                 assert_eq!($getmaybe(spec.clone()).open(&master_key).unwrap(), val);
+                // really just here to make tests fail if we add more claims
+                match &spec {
+                    ClaimSpec::Identity(..) => {}
+                    ClaimSpec::Name(..) => {}
+                    ClaimSpec::Email(..) => {}
+                    ClaimSpec::Photo(..) => {}
+                    ClaimSpec::Pgp(..) => {}
+                    ClaimSpec::Domain(..) => {}
+                    ClaimSpec::Url(..) => {}
+                    ClaimSpec::HomeAddress(..) => {}
+                    ClaimSpec::Relation(..) => {}
+                    ClaimSpec::RelationExtension(..) => {}
+                    ClaimSpec::Extension(..) => {}
+                }
 
                 let master_key2 = SecretKey::new_xsalsa20poly1305();
                 assert!(master_key != master_key2);
@@ -328,7 +417,10 @@ mod tests {
         }
         claim_reenc!{ Name, String::from("Marty Malt") }
         claim_reenc!{ Email, String::from("marty@sids.com") }
-        claim_reenc!{ PGP, String::from("12345") }
+        claim_reenc!{ Photo, ClaimBin(vec![1, 2, 3]) }
+        claim_reenc!{ Pgp, String::from("12345") }
+        claim_reenc!{ Domain, String::from("slappy.com") }
+        claim_reenc!{ Url, Url::parse("https://killtheradio.net/").unwrap() }
         claim_reenc!{ HomeAddress, String::from("111 blumps ln") }
         claim_reenc!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::blank()) }
         claim_reenc!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![1, 2, 3, 4, 5])) }
@@ -353,6 +445,20 @@ mod tests {
                 let master_key = SecretKey::new_xsalsa20poly1305();
                 let private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
                 let spec = $createfn(private);
+                // really just here to make tests fail if we add more claims
+                match &spec {
+                    ClaimSpec::Identity(..) => {}
+                    ClaimSpec::Name(..) => {}
+                    ClaimSpec::Email(..) => {}
+                    ClaimSpec::Photo(..) => {}
+                    ClaimSpec::Pgp(..) => {}
+                    ClaimSpec::Domain(..) => {}
+                    ClaimSpec::Url(..) => {}
+                    ClaimSpec::HomeAddress(..) => {}
+                    ClaimSpec::Relation(..) => {}
+                    ClaimSpec::RelationExtension(..) => {}
+                    ClaimSpec::Extension(..) => {}
+                }
                 assert_eq!(spec.has_private(), true);
                 match $getmaybe(spec.clone()) {
                     MaybePrivate::Private(_, Some(_)) => {},
@@ -387,14 +493,17 @@ mod tests {
 
         claim_pub_priv!{ Name, String::from("I LIKE FOOTBALL") }
         claim_pub_priv!{ Email, String::from("IT@IS.FUN") }
-        claim_pub_priv!{ PGP, String::from("I LIKE FOOTBALL") }
-        claim_pub_priv!{ HomeAddress, String::from("I LIKE TO RUN") }
+        claim_pub_priv!{ Photo, ClaimBin(vec![1, 2, 3]) }
+        claim_pub_priv!{ Pgp, String::from("I LIKE FOOTBALL") }
+        claim_pub_priv!{ Domain, String::from("I-LIKE.TO.RUN") }
+        claim_pub_priv!{ Url, Url::parse("https://www.imdb.com/title/tt0101660/").unwrap() }
+        claim_pub_priv!{ HomeAddress, String::from("22334 FOOTBALL LANE, FOOTBALLSVILLE, CA 00001") }
         claim_pub_priv!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::blank()) }
         claim_pub_priv!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
         claim_pub_priv!{
             Extension,
             ClaimBin(vec![42, 22]),
-            |maybe| ClaimSpec::Extension(String::from("SOCIAL NETWORK WEB2.0"), maybe),
+            |maybe| ClaimSpec::Extension(String::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THIS POEM IS GREAT"), maybe),
             |spec| {
                 match spec {
                     ClaimSpec::Extension(_, maybe) => maybe,
@@ -413,6 +522,20 @@ mod tests {
                 let private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
                 let claimspec = $createfn(private);
                 let claimspec2 = claimspec.clone().strip_private();
+                // really just here to make tests fail if we add more claims
+                match &claimspec {
+                    ClaimSpec::Identity(..) => {}
+                    ClaimSpec::Name(..) => {}
+                    ClaimSpec::Email(..) => {}
+                    ClaimSpec::Photo(..) => {}
+                    ClaimSpec::Pgp(..) => {}
+                    ClaimSpec::Domain(..) => {}
+                    ClaimSpec::Url(..) => {}
+                    ClaimSpec::HomeAddress(..) => {}
+                    ClaimSpec::Relation(..) => {}
+                    ClaimSpec::RelationExtension(..) => {}
+                    ClaimSpec::Extension(..) => {}
+                }
                 assert_eq!(claimspec.has_private(), true);
                 assert_eq!(claimspec2.has_private(), false);
             };
@@ -427,14 +550,17 @@ mod tests {
 
         thtrip!{ Name, String::from("I LIKE FOOTBALL") }
         thtrip!{ Email, String::from("IT.MAKES@ME.GLAD") }
-        thtrip!{ PGP, String::from("I PLAY FOOTBALL") }
-        thtrip!{ HomeAddress, String::from("WITH MY DAD") }
+        thtrip!{ Photo, ClaimBin(vec![1, 2, 3]) }
+        thtrip!{ Pgp, String::from("I PLAY FOOTBALL") }
+        thtrip!{ Domain, String::from("WITH.MY.DAD") }
+        thtrip!{ Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap() }
+        thtrip!{ HomeAddress, String::from("445 Elite Football Sports Street, Football, KY 44666") }
         thtrip!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::blank()) }
         thtrip!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
         thtrip!{
             next,
             ClaimBin(vec![42, 17, 86]),
-            |maybe| { ClaimSpec::Extension(String::from("best poet ever"), maybe) }
+            |maybe| { ClaimSpec::Extension(String::from("best poem ever"), maybe) }
         }
 
         // for Identity, nothing will fundamentally change.

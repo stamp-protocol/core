@@ -18,6 +18,7 @@ serde_derive = "1.0"
 serde_yaml = "0.8"
 sodiumoxide = "0.2.6"
 thiserror = "1.0"
+url = { version = "2.2.0", features = ["serde"] }
 
 [dev-dependencies]
 rmpv = { version = "0.4", features = ["serde"] }
