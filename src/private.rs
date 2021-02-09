@@ -246,6 +246,14 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned + Clone> MaybePrivate<T> 
         }
     }
 
+    /// Get the data from this MaybePrivate if it is public
+    pub fn open_public(&self) -> Option<T> {
+        match self {
+            Self::Public(x) => Some(x.clone()),
+            _ => None,
+        }
+    }
+
     /// Reencrypt this MaybePrivate container with a new key.
     pub(crate) fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let maybe = match self {
@@ -364,6 +372,23 @@ mod tests {
         assert_eq!(maybe3.open(&seal_key), Err(Error::PrivateDataMissing));
         assert_eq!(maybe3.open(&fake_key), Err(Error::PrivateDataMissing));
         assert_eq!(maybe3.has_data(), false);
+    }
+
+    #[test]
+    fn maybe_private_open_public() {
+        let seal_key = SecretKey::new_xsalsa20poly1305();
+        let mut fake_key = SecretKey::new_xsalsa20poly1305();
+        // fake_key can never == seal_key. unfathomable, but possible.
+        while seal_key == fake_key { fake_key = SecretKey::new_xsalsa20poly1305(); }
+        let fake_hmac_key = HmacKey::new_sha512();
+
+        let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
+        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
+        let maybe3: MaybePrivate<String> = MaybePrivate::Private(Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(), None);
+
+        assert_eq!(maybe1.open_public().unwrap(), "hello");
+        assert_eq!(maybe2.open_public(), None);
+        assert_eq!(maybe3.open_public(), None);
     }
 
     #[test]
