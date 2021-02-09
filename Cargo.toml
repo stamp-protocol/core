@@ -7,10 +7,9 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-base64 = "0.13.0"
+base64 = "0.13"
 chrono = { version = "0.4", features = ["serde"] }
 getset = "0.1"
-hex = "0.4.2"
 rmp-serde = "0.15"
 serde = "1.0"
 serde_bytes = "0.11"
@@ -18,7 +17,7 @@ serde_derive = "1.0"
 serde_yaml = "0.8"
 sodiumoxide = "0.2.6"
 thiserror = "1.0"
-url = { version = "2.2.0", features = ["serde"] }
+url = { version = "2.2", features = ["serde"] }
 
 [dev-dependencies]
 rmpv = { version = "0.4", features = ["serde"] }
