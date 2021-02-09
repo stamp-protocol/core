@@ -27,6 +27,13 @@ macro_rules! object_id {
         $(#[$meta])*
         pub struct $name(crate::crypto::key::SignKeypairSignature);
 
+        impl $name {
+            /// Take a full string id and return the shortened ID
+            pub fn short(full_id: &str) -> String {
+                String::from(&full_id[0..16])
+            }
+        }
+
         #[cfg(test)]
         #[allow(dead_code)]
         impl $name {
