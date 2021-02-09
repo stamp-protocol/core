@@ -7,7 +7,7 @@
 //! [stamped](crate::identity::stamp) by someone withing your trust network.
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     identity::{
         AcceptedStamp,
         IdentityID,
@@ -23,6 +23,7 @@ use crate::{
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
+use std::convert::TryFrom;
 use std::ops::Deref;
 use url::Url;
 
@@ -129,7 +130,7 @@ pub enum ClaimSpec {
     ///
     /// This claim should be accompanied by a DNS TXT record on the domain that
     /// has the full URL of the identity/claim. This takes the format
-    ///   stamp://[nickname.]<identityID>/claim/<claimID>
+    ///   stamp://<identityID>/claim/<claimID>
     ///
     /// For instance, if you want to claim ownership of killtheradio.net then
     /// you could create a Domain claim with a value of "killtheradio.net". If
@@ -175,6 +176,16 @@ pub enum ClaimSpec {
     ///   stamp:0SgfsdQ2YNk6Nlre
     ///
     /// Long-form is preferred for security, but obviously not as hip.
+    ///
+    /// It's also possible, although very unstylish, to use the full URL of the
+    /// claim itself, in the format
+    ///   stamp://<identityID>/claim/<claimID>
+    ///
+    /// This can be specified either with long-form IDs or short-form, 16-char
+    /// abbreviated IDs:
+    ///
+    ///   stamp://o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA/claim/0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
+    ///   stamp://o8AL10aawwthQIUR/claim/0SgfsdQ2YNk6Nlre
     ///
     /// If whatever system you're using doesn't have the concept of a "profile"
     /// with editable text you can update, and doesn't provide a predictable URL
@@ -292,6 +303,47 @@ impl Claim {
             id,
             created: now,
             spec,
+        }
+    }
+
+    /// Given a claim we want to "instant verify" (ie, any claim type that can
+    /// be verified automatically), return the possible values for that claim's
+    /// automatic validation. If one of these values is present in the body of
+    /// the resource being checked, then the claim is valid and verified.
+    ///
+    /// Some claims, such as your name, date of birth, email, etc will need
+    /// external verification. However, some claims will not, and we can verify
+    /// them automatically!
+    ///
+    /// For instance, if you claim you own a URL, we can immediately verify that
+    /// claim by reading that URL (provided it's a protocol we understand, like
+    /// HTTP[S]) and checking if the claim is included in the response.
+    ///
+    /// The following claim types can currently be automated:
+    ///
+    /// - `Url`
+    /// - `Domain`
+    pub fn instant_verify_allowed_values(&self, identity_id: &IdentityID) -> Result<Vec<String>> {
+        match self.spec() {
+            ClaimSpec::Domain(_) => {
+                let identity_id_str = String::try_from(identity_id)?;
+                let claim_id_str = String::try_from(self.id())?;
+                Ok(vec![
+                    format!("stamp://{}/claim/{}", identity_id_str, claim_id_str),
+                    format!("stamp://{}/claim/{}", IdentityID::short(&identity_id_str), ClaimID::short(&claim_id_str)),
+                ])
+            }
+            ClaimSpec::Url(_) => {
+                let identity_id_str = String::try_from(identity_id)?;
+                let claim_id_str = String::try_from(self.id())?;
+                Ok(vec![
+                    format!("stamp:{}", claim_id_str),
+                    format!("stamp:{}", ClaimID::short(&claim_id_str)),
+                    format!("stamp://{}/claim/{}", identity_id_str, claim_id_str),
+                    format!("stamp://{}/claim/{}", IdentityID::short(&identity_id_str), ClaimID::short(&claim_id_str)),
+                ])
+            }
+            _ => Err(Error::IdentityClaimVerificationNotAllowed),
         }
     }
 }

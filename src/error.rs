@@ -82,6 +82,10 @@ pub enum Error {
     #[error("deserialization error")]
     DeserializeBase64(#[from] base64::DecodeError),
 
+    /// The claim being operated on cannot be verified automatically
+    #[error("this claim cannot be automatically verified")]
+    IdentityClaimVerificationNotAllowed,
+
     /// The claim being operated on wasn't found
     #[error("identity claim not found")]
     IdentityClaimNotFound,
