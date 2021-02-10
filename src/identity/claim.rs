@@ -17,6 +17,7 @@ use crate::{
     private::MaybePrivate,
     util::{
         Timestamp,
+        Date,
         sign::DateSigner,
         ser,
     },
@@ -112,6 +113,8 @@ pub enum ClaimSpec {
     Identity(IdentityID),
     /// A claim that the name attached to this identity is mine.
     Name(MaybePrivate<String>),
+    /// A claim I was born on a certain day.
+    Birthday(MaybePrivate<Date>),
     /// A claim that I own an email address.
     Email(MaybePrivate<String>),
     /// A claim that the attached photo is a photo of me.
@@ -229,6 +232,7 @@ impl ClaimSpec {
         let spec = match self.clone() {
             Self::Identity(val) => Self::Identity(val),
             Self::Name(maybe) => Self::Name(maybe.reencrypt(current_key, new_key)?),
+            Self::Birthday(maybe) => Self::Birthday(maybe.reencrypt(current_key, new_key)?),
             Self::Email(maybe) => Self::Email(maybe.reencrypt(current_key, new_key)?),
             Self::Photo(maybe) => Self::Photo(maybe.reencrypt(current_key, new_key)?),
             Self::Pgp(maybe) => Self::Pgp(maybe.reencrypt(current_key, new_key)?),
@@ -251,6 +255,7 @@ impl ClaimSpec {
         match self {
             Self::Identity(..) => false,
             Self::Name(val) => val.has_private(),
+            Self::Birthday(val) => val.has_private(),
             Self::Email(val) => val.has_private(),
             Self::Photo(val) => val.has_private(),
             Self::Pgp(val) => val.has_private(),
@@ -269,6 +274,7 @@ impl Public for ClaimSpec {
         match self {
             Self::Identity(val) => Self::Identity(val.clone()),
             Self::Name(val) => Self::Name(val.strip_private()),
+            Self::Birthday(val) => Self::Birthday(val.strip_private()),
             Self::Email(val) => Self::Email(val.strip_private()),
             Self::Photo(val) => Self::Photo(val.strip_private()),
             Self::Pgp(val) => Self::Pgp(val.strip_private()),
@@ -406,6 +412,7 @@ mod tests {
         identity::IdentityID,
         util::Timestamp,
     };
+    use std::str::FromStr;
 
     #[test]
     fn claimspec_reencrypt() {
@@ -420,6 +427,7 @@ mod tests {
                 match &spec {
                     ClaimSpec::Identity(..) => {}
                     ClaimSpec::Name(..) => {}
+                    ClaimSpec::Birthday(..) => {}
                     ClaimSpec::Email(..) => {}
                     ClaimSpec::Photo(..) => {}
                     ClaimSpec::Pgp(..) => {}
@@ -468,6 +476,7 @@ mod tests {
             _ => panic!("Bad claim type: Identity"),
         }
         claim_reenc!{ Name, String::from("Marty Malt") }
+        claim_reenc!{ Birthday, Date::from_str("2010-01-03").unwrap() }
         claim_reenc!{ Email, String::from("marty@sids.com") }
         claim_reenc!{ Photo, ClaimBin(vec![1, 2, 3]) }
         claim_reenc!{ Pgp, String::from("12345") }
@@ -501,6 +510,7 @@ mod tests {
                 match &spec {
                     ClaimSpec::Identity(..) => {}
                     ClaimSpec::Name(..) => {}
+                    ClaimSpec::Birthday(..) => {}
                     ClaimSpec::Email(..) => {}
                     ClaimSpec::Photo(..) => {}
                     ClaimSpec::Pgp(..) => {}
@@ -544,6 +554,7 @@ mod tests {
         assert_eq!(spec.has_private(), false);
 
         claim_pub_priv!{ Name, String::from("I LIKE FOOTBALL") }
+        claim_pub_priv!{ Birthday, Date::from_str("1990-03-04").unwrap() }
         claim_pub_priv!{ Email, String::from("IT@IS.FUN") }
         claim_pub_priv!{ Photo, ClaimBin(vec![1, 2, 3]) }
         claim_pub_priv!{ Pgp, String::from("I LIKE FOOTBALL") }
@@ -578,6 +589,7 @@ mod tests {
                 match &claimspec {
                     ClaimSpec::Identity(..) => {}
                     ClaimSpec::Name(..) => {}
+                    ClaimSpec::Birthday(..) => {}
                     ClaimSpec::Email(..) => {}
                     ClaimSpec::Photo(..) => {}
                     ClaimSpec::Pgp(..) => {}
@@ -601,6 +613,7 @@ mod tests {
         }
 
         thtrip!{ Name, String::from("I LIKE FOOTBALL") }
+        thtrip!{ Birthday, Date::from_str("1967-12-03").unwrap() }
         thtrip!{ Email, String::from("IT.MAKES@ME.GLAD") }
         thtrip!{ Photo, ClaimBin(vec![1, 2, 3]) }
         thtrip!{ Pgp, String::from("I PLAY FOOTBALL") }

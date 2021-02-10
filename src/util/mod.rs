@@ -1,6 +1,6 @@
 //! Utilities. OBVIOUSLY.
 
-use chrono::{DateTime, NaiveDateTime, Utc, Local};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc, Local};
 use crate::error::{Error, Result};
 use serde_derive::{Serialize, Deserialize};
 use sodiumoxide::{
@@ -173,6 +173,30 @@ impl FromStr for Timestamp {
     fn from_str(s: &str) -> std::result::Result<Timestamp, Self::Err> {
         let datetime: DateTime<Utc> = s.parse()?;
         Ok(Timestamp(datetime))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Date(NaiveDate);
+
+impl Deref for Date {
+    type Target = NaiveDate;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<NaiveDate> for Date {
+    fn from(naive: NaiveDate) -> Self {
+        Self(naive)
+    }
+}
+
+impl FromStr for Date {
+    type Err = chrono::format::ParseError;
+    fn from_str(s: &str) -> std::result::Result<Date, Self::Err> {
+        let date: NaiveDate = s.parse()?;
+        Ok(Date(date))
     }
 }
 
