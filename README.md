@@ -129,10 +129,10 @@ of transactions, allowing quick lookups of identity information without the BS.
     - [x] Reencryption via new master key
   - [ ] Claims system
     - [x] Create, sign, verify claims
-    - [ ] Support multiple claim types
+    - [x] Support multiple claim types
       - [x] Identity
       - [x] Name
-      - [ ] DOB
+      - [x] Birthday
       - [x] Email
       - [x] Embedded photo
       - [x] PGP
