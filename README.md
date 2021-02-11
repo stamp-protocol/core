@@ -148,9 +148,9 @@ of transactions, allowing quick lookups of identity information without the BS.
       - [x] Create, sign, verify stamps
       - [x] Accept and sign stamps
       - [x] Revocation
-    - [ ] Automatic claim verification
-      - [ ] Domain TXT claim verification
-      - [ ] URL (https) claim verification
+    - [x] Automatic claim verification
+      - [x] Domain TXT claim verification
+      - [x] URL (https) claim verification
   - [x] Identity versioning
   - [x] Identity human-readable serialization
   - [x] Publishing system and verfication
