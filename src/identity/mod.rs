@@ -224,15 +224,73 @@ mod tests {
     };
 
     #[test]
-    fn published() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
-        let now = Timestamp::now();
-        let identity = identity::Identity::new(&master_key, now).unwrap()
-            .add_subkey(&master_key, keychain::Key::Crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap()), "Email", Some("Use this to send me emails.")).unwrap();
-        let now2 = Timestamp::now();
-        let published = PublishedIdentity::publish(&master_key, now2, identity).unwrap();
-        let _human = published.serialize().unwrap();
-        // TODO: gen with deterministict params, serialize and deserialize
+    fn versioned_serialize() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn versioned_reencrypt() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn versioned_root_sign() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn versioned_make_claim() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn versioned_remove_claim() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn versioned_accept_stamp() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn versioned_add_subkey() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn versioned_revoke_subkey() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn versioned_delete_subkey() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn versioned_strip_private() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn published_publish() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn published_verify() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn published_serde() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn published_strip_private() {
+        unimplemented!();
     }
 }
 

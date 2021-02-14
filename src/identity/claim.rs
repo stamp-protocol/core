@@ -73,7 +73,7 @@ impl<T> Relationship<T> {
 /// A thin wrapper around binary data in claims. Obnoxious, but useful for
 /// (de)serialization.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClaimBin(#[serde(with = "crate::util::ser::human_bytes")] Vec<u8>);
+pub struct ClaimBin(#[serde(with = "crate::util::ser::human_bytes")] pub Vec<u8>);
 
 impl From<ClaimBin> for Vec<u8> {
     fn from(val: ClaimBin) -> Self {
@@ -267,6 +267,26 @@ impl ClaimSpec {
             Self::Extension(_, val) => val.has_private(),
         }
     }
+
+    /// Convert this spec into a public one, assuming we have the correct
+    /// decrypt key.
+    fn into_public(self, open_key: &SecretKey) -> Result<Self> {
+        let spec = match self.clone() {
+            Self::Identity(val) => Self::Identity(val),
+            Self::Name(maybe) => Self::Name(maybe.into_public(open_key)?),
+            Self::Birthday(maybe) => Self::Birthday(maybe.into_public(open_key)?),
+            Self::Email(maybe) => Self::Email(maybe.into_public(open_key)?),
+            Self::Photo(maybe) => Self::Photo(maybe.into_public(open_key)?),
+            Self::Pgp(maybe) => Self::Pgp(maybe.into_public(open_key)?),
+            Self::Domain(maybe) => Self::Domain(maybe.into_public(open_key)?),
+            Self::Url(maybe) => Self::Url(maybe.into_public(open_key)?),
+            Self::HomeAddress(maybe) => Self::HomeAddress(maybe.into_public(open_key)?),
+            Self::Relation(maybe) => Self::Relation(maybe.into_public(open_key)?),
+            Self::RelationExtension(maybe) => Self::RelationExtension(maybe.into_public(open_key)?),
+            Self::Extension(key, maybe) => Self::Extension(key, maybe.into_public(open_key)?),
+        };
+        Ok(spec)
+    }
 }
 
 impl Public for ClaimSpec {
@@ -312,6 +332,14 @@ impl Claim {
         }
     }
 
+    /// Verify that the signature of this claim matches the content.
+    pub fn verify(&self, sign_keypair: &SignKeypair) -> Result<()> {
+        let stripped_spec = self.spec().strip_private();
+        let datesigner = DateSigner::new(self.created(), &stripped_spec);
+        let serialized = ser::serialize(&datesigner)?;
+        sign_keypair.verify(self.id(), &serialized)
+    }
+
     /// Given a claim we want to "instant verify" (ie, any claim type that can
     /// be verified automatically), return the possible values for that claim's
     /// automatic validation. If one of these values is present in the body of
@@ -351,6 +379,14 @@ impl Claim {
             }
             _ => Err(Error::IdentityClaimVerificationNotAllowed),
         }
+    }
+
+    /// Whether this is a public claim or a private claim, return a public claim
+    /// (assuming we have the correct decrypting key).
+    pub fn as_public(&self, open_key: &SecretKey) -> Result<Self> {
+        let mut claim = self.clone();
+        claim.set_spec(claim.spec().clone().into_public(open_key)?);
+        Ok(claim)
     }
 }
 
@@ -414,67 +450,60 @@ mod tests {
     };
     use std::str::FromStr;
 
+    macro_rules! make_specs {
+        ($claimmaker:expr, $val:expr) => {{
+            let master_key = SecretKey::new_xsalsa20poly1305();
+            let root_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+            let val = $val;
+            let maybe_private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
+            let maybe_public = MaybePrivate::new_public(val.clone());
+            let spec_private = $claimmaker(maybe_private, val.clone());
+            let spec_public = $claimmaker(maybe_public, val.clone());
+            (master_key, root_keypair, spec_private, spec_public)
+        }}
+    }
+
     #[test]
     fn claimspec_reencrypt() {
         macro_rules! claim_reenc {
-            ($claimtype:ident, $val:expr, $createfn:expr, $getmaybe:expr) => {
+            (raw, $claimmaker:expr, $val:expr, $get_maybe:expr) => {
                 let val = $val;
-                let master_key = SecretKey::new_xsalsa20poly1305();
-                let private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
-                let spec = $createfn(private);
-                assert_eq!($getmaybe(spec.clone()).open(&master_key).unwrap(), val);
-                // really just here to make tests fail if we add more claims
-                match &spec {
-                    ClaimSpec::Identity(..) => {}
-                    ClaimSpec::Name(..) => {}
-                    ClaimSpec::Birthday(..) => {}
-                    ClaimSpec::Email(..) => {}
-                    ClaimSpec::Photo(..) => {}
-                    ClaimSpec::Pgp(..) => {}
-                    ClaimSpec::Domain(..) => {}
-                    ClaimSpec::Url(..) => {}
-                    ClaimSpec::HomeAddress(..) => {}
-                    ClaimSpec::Relation(..) => {}
-                    ClaimSpec::RelationExtension(..) => {}
-                    ClaimSpec::Extension(..) => {}
-                }
-
+                let (master_key, _root_keypair, spec_private, spec_public) = make_specs!($claimmaker, val.clone());
+                assert_eq!($get_maybe(spec_private.clone()).open(&master_key).unwrap(), val);
                 let master_key2 = SecretKey::new_xsalsa20poly1305();
                 assert!(master_key != master_key2);
-                let spec2 = spec.reencrypt(&master_key, &master_key2).unwrap();
-                let maybe2 = $getmaybe(spec2);
-                assert_eq!(maybe2.open(&master_key), Err(Error::CryptoOpenFailed));
-                assert_eq!(maybe2.open(&master_key2).unwrap(), val);
+                let spec_private2 = spec_private.reencrypt(&master_key, &master_key2).unwrap();
+                let maybe_private2 = $get_maybe(spec_private2);
+                assert_eq!(maybe_private2.open(&master_key), Err(Error::CryptoOpenFailed));
+                assert_eq!(maybe_private2.open(&master_key2).unwrap(), val);
 
-                let public = MaybePrivate::new_public(val.clone());
-                let spec = $createfn(public);
-                let spec2 = spec.clone().reencrypt(&master_key, &master_key2).unwrap();
-                match ($getmaybe(spec), $getmaybe(spec2)) {
+                let spec_public2 = spec_public.clone().reencrypt(&master_key, &master_key2).unwrap();
+                match ($get_maybe(spec_public), $get_maybe(spec_public2)) {
                     (MaybePrivate::Public(val), MaybePrivate::Public(val2)) => {
                         assert_eq!(val, val2);
                     }
                     _ => panic!("Bad claim type {}", stringify!($claimtype)),
                 }
             };
-            ($claimtype:ident, $val:expr) => {
-                claim_reenc!{
-                    $claimtype,
+
+            ($claimty:ident, $val:expr) => {
+                claim_reenc! {
+                    raw,
+                    |maybe, _| ClaimSpec::$claimty(maybe),
                     $val,
-                    |maybe| { ClaimSpec::$claimtype(maybe) },
-                    |spec: ClaimSpec| if let ClaimSpec::$claimtype(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+                    |spec: ClaimSpec| if let ClaimSpec::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
                 }
             };
         }
 
-        // first test Identity claims, which our dumb macro above doesn't handle
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let (master_key, _root_keypair, _, spec) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
         let master_key2 = SecretKey::new_xsalsa20poly1305();
-        let spec = ClaimSpec::Identity(IdentityID::blank());
         let spec2 = spec.clone().reencrypt(&master_key, &master_key2).unwrap();
         match (spec, spec2) {
             (ClaimSpec::Identity(id), ClaimSpec::Identity(id2)) => assert_eq!(id, id2),
             _ => panic!("Bad claim type: Identity"),
         }
+
         claim_reenc!{ Name, String::from("Marty Malt") }
         claim_reenc!{ Birthday, Date::from_str("2010-01-03").unwrap() }
         claim_reenc!{ Email, String::from("marty@sids.com") }
@@ -483,44 +512,21 @@ mod tests {
         claim_reenc!{ Domain, String::from("slappy.com") }
         claim_reenc!{ Url, Url::parse("https://killtheradio.net/").unwrap() }
         claim_reenc!{ HomeAddress, String::from("111 blumps ln") }
-        claim_reenc!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::blank()) }
+        claim_reenc!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
         claim_reenc!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![1, 2, 3, 4, 5])) }
         claim_reenc!{
-            Extension,
+            raw,
+            |maybe, _| ClaimSpec::Extension(String::from("id:state:ca"), maybe),
             ClaimBin(vec![7, 3, 2, 90]),
-            |maybe| { ClaimSpec::Extension(String::from("id:state:ca"), maybe) },
-            |spec: ClaimSpec| {
-                match spec {
-                    ClaimSpec::Extension(_, maybe) => maybe,
-                    _ => panic!("bad claim type: {}", stringify!($claimtype)),
-                }
-            }
+            |spec: ClaimSpec| if let ClaimSpec::Extension(_, maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }
     }
 
     #[test]
     fn claimcontainer_claimspec_has_private() {
         macro_rules! claim_pub_priv {
-            ($claimtype:ident, $val:expr, $createfn:expr, $getmaybe:expr) => {
-                let val = $val;
-                let master_key = SecretKey::new_xsalsa20poly1305();
-                let private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
-                let spec = $createfn(private);
-                // really just here to make tests fail if we add more claims
-                match &spec {
-                    ClaimSpec::Identity(..) => {}
-                    ClaimSpec::Name(..) => {}
-                    ClaimSpec::Birthday(..) => {}
-                    ClaimSpec::Email(..) => {}
-                    ClaimSpec::Photo(..) => {}
-                    ClaimSpec::Pgp(..) => {}
-                    ClaimSpec::Domain(..) => {}
-                    ClaimSpec::Url(..) => {}
-                    ClaimSpec::HomeAddress(..) => {}
-                    ClaimSpec::Relation(..) => {}
-                    ClaimSpec::RelationExtension(..) => {}
-                    ClaimSpec::Extension(..) => {}
-                }
+            (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
+                let (master_key, _root_keypair, spec, spec2) = make_specs!($claimmaker, $val);
                 assert_eq!(spec.has_private(), true);
                 match $getmaybe(spec.clone()) {
                     MaybePrivate::Private(_, Some(_)) => {},
@@ -531,26 +537,24 @@ mod tests {
                 let claim = ClaimContainer::new(&master_key, &sign_keypair, now, spec).unwrap();
                 assert_eq!(claim.has_private(), true);
 
-                let public = MaybePrivate::new_public(val.clone());
-                let spec2 = $createfn(public);
                 assert_eq!(spec2.has_private(), false);
                 let now2 = Timestamp::now();
                 let sign_keypair2 = SignKeypair::new_ed25519(&master_key).unwrap();
                 let claim2 = ClaimContainer::new(&master_key, &sign_keypair2, now2, spec2).unwrap();
                 assert_eq!(claim2.has_private(), false);
             };
-            ($claimtype:ident, $val:expr) => {
+            ($claimty:ident, $val:expr) => {
                 claim_pub_priv!{
-                    $claimtype,
+                    raw,
+                    |maybe, _| ClaimSpec::$claimty(maybe),
                     $val,
-                    |maybe| { ClaimSpec::$claimtype(maybe) },
-                    |spec: ClaimSpec| if let ClaimSpec::$claimtype(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+                    |spec: ClaimSpec| if let ClaimSpec::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
                 }
             };
         }
 
         // as usual, Identity is special
-        let spec = ClaimSpec::Identity(IdentityID::blank());
+        let spec = ClaimSpec::Identity(IdentityID::random());
         assert_eq!(spec.has_private(), false);
 
         claim_pub_priv!{ Name, String::from("I LIKE FOOTBALL") }
@@ -561,12 +565,12 @@ mod tests {
         claim_pub_priv!{ Domain, String::from("I-LIKE.TO.RUN") }
         claim_pub_priv!{ Url, Url::parse("https://www.imdb.com/title/tt0101660/").unwrap() }
         claim_pub_priv!{ HomeAddress, String::from("22334 FOOTBALL LANE, FOOTBALLSVILLE, CA 00001") }
-        claim_pub_priv!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::blank()) }
+        claim_pub_priv!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
         claim_pub_priv!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
         claim_pub_priv!{
-            Extension,
+            raw,
+            |maybe, _| ClaimSpec::Extension(String::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THIS POEM IS GREAT"), maybe),
             ClaimBin(vec![42, 22]),
-            |maybe| ClaimSpec::Extension(String::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THIS POEM IS GREAT"), maybe),
             |spec| {
                 match spec {
                     ClaimSpec::Extension(_, maybe) => maybe,
@@ -577,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn claimcontainer_claimspec_strip() {
+    fn claimspec_strip() {
         macro_rules! thtrip {
             (next, $val:expr, $createfn:expr) => {
                 let val = $val;
@@ -585,21 +589,6 @@ mod tests {
                 let private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
                 let claimspec = $createfn(private);
                 let claimspec2 = claimspec.clone().strip_private();
-                // really just here to make tests fail if we add more claims
-                match &claimspec {
-                    ClaimSpec::Identity(..) => {}
-                    ClaimSpec::Name(..) => {}
-                    ClaimSpec::Birthday(..) => {}
-                    ClaimSpec::Email(..) => {}
-                    ClaimSpec::Photo(..) => {}
-                    ClaimSpec::Pgp(..) => {}
-                    ClaimSpec::Domain(..) => {}
-                    ClaimSpec::Url(..) => {}
-                    ClaimSpec::HomeAddress(..) => {}
-                    ClaimSpec::Relation(..) => {}
-                    ClaimSpec::RelationExtension(..) => {}
-                    ClaimSpec::Extension(..) => {}
-                }
                 assert_eq!(claimspec.has_private(), true);
                 assert_eq!(claimspec2.has_private(), false);
             };
@@ -620,7 +609,7 @@ mod tests {
         thtrip!{ Domain, String::from("WITH.MY.DAD") }
         thtrip!{ Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap() }
         thtrip!{ HomeAddress, String::from("445 Elite Football Sports Street, Football, KY 44666") }
-        thtrip!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::blank()) }
+        thtrip!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
         thtrip!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
         thtrip!{
             next,
@@ -629,7 +618,7 @@ mod tests {
         }
 
         // for Identity, nothing will fundamentally change.
-        let claimspec = ClaimSpec::Identity(IdentityID::blank());
+        let claimspec = ClaimSpec::Identity(IdentityID::random());
         let claimspec2 = claimspec.clone().strip_private();
         match (&claimspec, &claimspec2) {
             (ClaimSpec::Identity(id), ClaimSpec::Identity(id2)) => {
@@ -637,6 +626,195 @@ mod tests {
             }
             _ => panic!("Bad claim type: Identity"),
         }
+    }
+
+    #[test]
+    fn claim_instant_verify() {
+        macro_rules! match_container {
+            ($container:expr, $expected:expr) => {
+                let identity_id = IdentityID::random();
+                let identity_id_str = String::try_from(&identity_id).unwrap();
+                let identity_id_str_short = IdentityID::short(&identity_id_str);
+                let claim_id_str = String::try_from($container.claim().id()).unwrap();
+                let claim_id_str_short = ClaimID::short(&claim_id_str);
+                match $container.claim().spec() {
+                    ClaimSpec::Domain(..) | ClaimSpec::Url(..) => {
+                        let instant_vals = $container.claim().instant_verify_allowed_values(&identity_id).unwrap();
+                        let compare: Vec<String> = $expected.into_iter()
+                            .map(|x: String| {
+                                x
+                                    .replace("{{identity_id}}", &identity_id_str)
+                                    .replace("{{claim_id}}", &claim_id_str)
+                                    .replace("{{identity_id_short}}", &identity_id_str_short)
+                                    .replace("{{claim_id_short}}", &claim_id_str_short)
+                            })
+                            .collect::<Vec<_>>();
+                        assert_eq!(instant_vals, compare);
+                    }
+                    _ => {
+                        let res = $container.claim().instant_verify_allowed_values(&identity_id);
+                        assert_eq!(res, Err(Error::IdentityClaimVerificationNotAllowed));
+                    }
+                }
+            }
+        }
+        macro_rules! assert_instant {
+            (raw, $claimmaker:expr, $val:expr, $expected:expr) => {
+                let (master_key, root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let container_private = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
+                let container_public = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_public).unwrap();
+
+                match_container! { container_public, $expected }
+                match_container! { container_private, $expected }
+            };
+            ($claimty:ident, $val:expr, $expected:expr) => {
+                assert_instant!{ raw, |maybe, _| ClaimSpec::$claimty(maybe), $val, $expected }
+            };
+        }
+        assert_instant!{ raw, |_, val| ClaimSpec::Identity(val), IdentityID::random(), vec![] }
+        assert_instant!{ Name, String::from("I LIKE FOOTBALL"), vec![] }
+        assert_instant!{ Birthday, Date::from_str("1967-12-03").unwrap(), vec![] }
+        assert_instant!{ Email, String::from("IT.MAKES@ME.GLAD"), vec![] }
+        assert_instant!{ Photo, ClaimBin(vec![1, 2, 3]), vec![] }
+        assert_instant!{ Pgp, String::from("I PLAY FOOTBALL"), vec![] }
+        assert_instant!{ Domain, String::from("WITH.MY.DAD"), vec![
+            "stamp://{{identity_id}}/claim/{{claim_id}}".into(),
+            "stamp://{{identity_id_short}}/claim/{{claim_id_short}}".into(),
+        ] }
+        assert_instant!{ Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap(), vec![
+            "stamp:{{claim_id}}".into(),
+            "stamp:{{claim_id_short}}".into(),
+            "stamp://{{identity_id}}/claim/{{claim_id}}".into(),
+            "stamp://{{identity_id_short}}/claim/{{claim_id_short}}".into(),
+        ] }
+        assert_instant!{ HomeAddress, String::from("445 Elite Football Sports Street, Football, KY 44666"), vec![] }
+        assert_instant!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), vec![] }
+        assert_instant!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])), vec![] }
+        assert_instant!{
+            raw,
+            |maybe, _| { ClaimSpec::Extension(String::from("shaka gnar gnar"), maybe) },
+            ClaimBin(vec![66, 6]),
+            vec![]
+        }
+    }
+
+    #[test]
+    fn claim_as_public() {
+        macro_rules! as_pub {
+            (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
+                let (master_key, root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let fake_master_key = SecretKey::new_xsalsa20poly1305();
+                let container_private = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
+                let container_public = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_public).unwrap();
+                let opened_claim = container_private.claim().as_public(&master_key).unwrap();
+                assert_eq!(container_private.has_private(), true);
+                assert_eq!(container_public.has_private(), false);
+                assert_eq!(opened_claim.spec().has_private(), false);
+                assert_eq!($getmaybe(opened_claim.spec().clone()), $getmaybe(container_public.claim().spec().clone()));
+                assert_eq!(container_private.claim().as_public(&fake_master_key).err(), Some(Error::CryptoOpenFailed));
+            };
+            ($claimty:ident, $val:expr) => {
+                as_pub!{
+                    raw,
+                    |maybe, _| ClaimSpec::$claimty(maybe),
+                    $val,
+                    |spec: ClaimSpec| if let ClaimSpec::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+                }
+            };
+        }
+
+        let (master_key, root_keypair, spec_private, _) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
+        let container_private = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
+        match (container_private.claim().spec(), container_private.claim().as_public(&master_key).unwrap().spec()) {
+            (ClaimSpec::Identity(val1), ClaimSpec::Identity(val2)) => {
+                assert_eq!(val1, val2);
+            }
+            _ => panic!("weird"),
+        }
+
+        as_pub!{ Name, String::from("Sassafrass Stevens") }
+        as_pub!{ Birthday, Date::from_str("1990-03-04").unwrap() }
+        as_pub!{ Email, String::from("MEGATRON@nojerrystopjerry.net") }
+        as_pub!{ Photo, ClaimBin(vec![1, 2, 3]) }
+        as_pub!{ Pgp, String::from("0x00000000000") }
+        as_pub!{ Domain, String::from("decolonizing-decolonization.decolonize.org") }
+        as_pub!{ Url, Url::parse("https://i.gifer.com/RL4.gif").unwrap() }
+        as_pub!{ HomeAddress, String::from("22334 MECHA SHIVA LANE, GAINESVILLE, FL 00001") }
+        as_pub!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
+        as_pub!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
+        as_pub!{
+            raw,
+            |maybe, _| ClaimSpec::Extension(String::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THAT I AM NOT A CAT YOUR HONOR"), maybe),
+            ClaimBin(vec![42, 22]),
+            |spec: ClaimSpec| if let ClaimSpec::Extension(_, maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+        }
+    }
+
+    #[test]
+    fn claimcontainer_new_claim_verify() {
+        macro_rules! make_new {
+            (raw, $claimmaker:expr, $val:expr) => {
+                let (master_key, root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let fake_root_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+                let container_private = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
+                let container_public = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_public).unwrap();
+                container_private.claim().verify(&root_keypair).unwrap();
+                container_public.claim().verify(&root_keypair).unwrap();
+                assert_eq!(container_private.claim().verify(&fake_root_keypair), Err(Error::CryptoSignatureVerificationFailed));
+                assert_eq!(container_public.claim().verify(&fake_root_keypair), Err(Error::CryptoSignatureVerificationFailed));
+            };
+
+            ($claimty:ident, $val:expr) => {
+                make_new! { raw, |maybe, _| ClaimSpec::$claimty(maybe), $val }
+            };
+        }
+
+        make_new! { raw,  |_, val| ClaimSpec::Identity(val), IdentityID::random() }
+        make_new! { Name, String::from("Warry Leber") }
+        make_new! { Birthday, Date::from_str("1967-12-03").unwrap() }
+        make_new! { Email, String::from("andrew@filllllllibuster.com") }
+        make_new! { Photo, ClaimBin(vec![1, 2, 3]) }
+        make_new! { Pgp, String::from("45de280a") }
+        make_new! { Domain, String::from("shiny-happy-things.com") }
+        make_new! { Url, Url::parse("https://if-corporate-america.com/supports-your-worldview").unwrap() }
+        make_new! { HomeAddress, String::from("8989 Poo poo Ln") }
+        make_new! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
+        make_new! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
+        make_new! { raw, |maybe, _| ClaimSpec::Extension(String::from("tuna-melt-tuna-melt-TUNA-MELT-TUNA-MELT"), maybe), ClaimBin(vec![123, 122, 100]) }
+    }
+
+    #[test]
+    fn claimcontainer_has_private_strip() {
+        macro_rules! has_priv {
+            (raw, $claimmaker:expr, $val:expr, $haspriv:expr) => {
+                let (master_key, root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let container_private = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
+                let container_public = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_public).unwrap();
+                assert_eq!(container_private.has_private(), $haspriv);
+                assert_eq!(container_public.has_private(), false);
+
+                let container_private_stripped = container_private.strip_private();
+                let container_public_stripped = container_public.strip_private();
+                assert_eq!(container_private_stripped.has_private(), false);
+                assert_eq!(container_public_stripped.has_private(), false);
+            };
+
+            ($claimty:ident, $val:expr, $haspriv:expr) => {
+                has_priv! { raw, |maybe, _| ClaimSpec::$claimty(maybe), $val, $haspriv }
+            };
+        }
+        has_priv! { raw, |_, val| ClaimSpec::Identity(val), IdentityID::random(), false }
+        has_priv! { Name, String::from("Goleen Jundersun"), true }
+        has_priv! { Birthday, Date::from_str("1969-12-03").unwrap(), true }
+        has_priv! { Email, String::from("jerry@karate.com"), true }
+        has_priv! { Photo, ClaimBin(vec![1, 2, 3]), true }
+        has_priv! { Pgp, String::from("45de280a"), true }
+        has_priv! { Domain, String::from("good-times.great-trucks.nsf"), true }
+        has_priv! { Url, Url::parse("https://you-might.be/wrong").unwrap(), true }
+        has_priv! { HomeAddress, String::from("Mojave Desert"), true }
+        has_priv! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), true }
+        has_priv! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])), true }
+        has_priv! { raw, |maybe, _| ClaimSpec::Extension(String::from("tuna-melt-tuna-melt-TUNA-MELT-TUNA-MELT"), maybe), ClaimBin(vec![123, 122, 100]), true }
     }
 }
 

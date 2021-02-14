@@ -491,24 +491,6 @@ impl Identity {
         stamp.revoke(master_key, self.keychain().root(), date_revoked)
     }
 
-    /// Send a message to this identity.
-    ///
-    /// The message will be signed by a key belonging to the *sender*, allowing
-    /// the receiver to verify that the message came from the sender and not
-    /// some random troll. Opening will require having the sender's identity.
-    pub fn send_message(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Send an anonymous message to this identity.
-    ///
-    /// Anonymous messages are *not* signed by the sender, and thus do not
-    /// require having their identity available to open/verify. However, they
-    /// also do not provide any sort of proof as to the origin of the message.
-    pub fn send_anonymous_message(&self) -> Result<()> {
-        Ok(())
-    }
-
     /// Grab this identity's nickname, if it has one.
     pub fn nickname_maybe(&self) -> Option<String> {
         self.extra_data().nickname().as_ref().map(|x| x.value().clone())
@@ -640,46 +622,143 @@ mod tests {
     }
 
     #[test]
-    fn init() {
-        let master_key = gen_master_key();
-        let now = Timestamp::now();
-        let identity = Identity::new(&master_key, now).unwrap();
-
-        assert_eq!(identity.keychain().subkeys().len(), 0);
-        assert_eq!(identity.claims().len(), 1);
-        assert!(identity.extra_data().nickname().is_none());
-        assert_eq!(identity.extra_data().forwards().len(), 0);
+    fn extradata_new() {
+        unimplemented!();
     }
 
     #[test]
-    fn verify() {
-        let master_key = gen_master_key();
-        let identity = Identity::new(&master_key, Timestamp::now()).unwrap();
-
-        let master_key2 = gen_master_key();
-        let identity2 = Identity::new(&master_key2, Timestamp::now()).unwrap();
-
-        let claim = identity.claims()[0].claim();
-        let stamp = identity2.stamp(&master_key2, Confidence::Medium, Timestamp::now(), identity.id(), claim, None).unwrap();
-
-        let versioned2 = identity2.into();
-        let identity = identity.accept_stamp(&master_key, Timestamp::now(), &versioned2, stamp).unwrap();
-        assert_eq!(identity.verify(), Ok(()));
+    fn extradata_resign() {
+        unimplemented!();
     }
 
     #[test]
-    fn serialize_human() {
-        let master_key = gen_master_key();
-        let now = Timestamp::now();
-        let identity = Identity::new(&master_key, now).unwrap();
-        let yaml = ser::serialize_human(&identity).unwrap();
-        let msgpk = ser::serialize(&identity).unwrap();
+    fn identity_create_id() {
+        unimplemented!();
+    }
 
-        // TODO: build a nice, complete identity and (de)serialize it
+    #[test]
+    fn identity_new_with_alpha_and_id() {
+        unimplemented!();
+    }
 
-        let identity2: Identity = ser::deserialize_human(yaml.as_bytes()).unwrap();
-        let identity3: Identity = ser::deserialize(&msgpk).unwrap();
-        assert_eq!(ser::serialize_human(&identity2).unwrap(), ser::serialize_human(&identity3).unwrap());
+    #[test]
+    fn identity_new() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_root_sign() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_verify() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_reencrypt() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_make_claim() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_remove_claim() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_accept_stamp() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_set_policy_key() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_set_publish_key() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_set_root_key() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_add_subkey() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_revoke_subkey() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_delete_subkey() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_stamp() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_verify_stamp() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_revoke_stamp() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_nickname_maybe() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_emails() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_email_maybe() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_names() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_name_maybe() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_is_owned() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_test_master_key() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_strip_private() {
+        unimplemented!();
     }
 }
 

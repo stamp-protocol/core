@@ -8,11 +8,16 @@ use crate::{
     error::Result,
     identity::{
         Public,
-        {Claim, ClaimID},
+        Subkey,
+        Claim,
+        ClaimID,
         IdentityID,
         VersionedIdentity,
     },
-    crypto::key::{SecretKey, SignKeypairSignature, SignKeypair},
+    crypto::{
+        key::{SecretKey, SignKeypairSignature, SignKeypair},
+        message::{self, Message},
+    },
     util::{
         Timestamp,
         sign::DateSigner,
@@ -228,6 +233,58 @@ impl Public for Stamp {
     }
 }
 
+/// A request for a claim to be stamped (basically a CRT, in the parlance of our
+/// times).
+///
+/// Generally this only needs to be created for *private* claims where you wish
+/// to decrypt the private data then immediately encrypt it with a private key
+/// from the stamper's keychain, thus giving the stamper and only the stamper
+/// access to the claim's private data.
+///
+/// In the case of public claims, a simple "hey, can you stamp claim X" would
+/// suffice because the data is public.
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct StampRequest {
+    /// The claim we wish to have stamped
+    claim: Claim,
+    /// The one-time key that can be used to decrypt and verify this claim.
+    decrypt_key: SecretKey,
+}
+
+impl StampRequest {
+    /// Create a new stamp request, given the appropriate key setup.
+    ///
+    /// This re-encryptes the claim with a new key, then creates a signed
+    /// message to the recipient (stamper) using one of their keys.
+    pub fn new(sender_master_key: &SecretKey, sender_identity_id: &IdentityID, sender_key: &Subkey, recipient_key: &Subkey, claim: &Claim) -> Result<Message> {
+        let one_time_key = SecretKey::new_xsalsa20poly1305();
+        let claim_reencrypted_spec = claim.spec().clone().reencrypt(sender_master_key, &one_time_key)?;
+        let mut claim_reencrypted = claim.clone();
+        claim_reencrypted.set_spec(claim_reencrypted_spec);
+        let req = Self {
+            claim: claim_reencrypted,
+            decrypt_key: one_time_key,
+        };
+        let serialized = ser::serialize(&req)?;
+        message::send(sender_master_key, sender_identity_id, sender_key, recipient_key, serialized.as_slice())
+    }
+
+    /// Opens a message with a StampRequest in it, and if all goes well, returns
+    /// the *decrypted* claim (as a public claim).
+    ///
+    /// Note that if the claim is public already, this is where we stop. If the
+    /// claim is private, then we check the HMAC against the embedded key in the
+    /// private claim data and make sure it validates. If the HMAC does not
+    /// represent the data ("this doesn't represent me!") then hard pass on
+    /// allowing this data to be stamped.
+    pub fn open(recipient_master_key: &SecretKey, recipient_key: &Subkey, sender_key: &Subkey, req: &Message) -> Result<Claim> {
+        let serialized = message::open(recipient_master_key, recipient_key, sender_key, req)?;
+        let stamp_req: Self = ser::deserialize(&serialized)?;
+        stamp_req.claim().as_public(stamp_req.decrypt_key())
+    }
+}
+
 /// A stamp that has been counter-signed by our signing private key and accepted
 /// into our identity. Ie, a stamped stamp.
 ///
@@ -279,19 +336,25 @@ mod tests {
     use crate::{
         error::Error,
         identity::{
+            ClaimBin,
+            Relationship,
+            RelationshipType,
             ClaimSpec,
             ClaimContainer,
             Confidence,
+            Key,
+            Keychain,
             IdentityID,
             Identity,
             VersionedIdentity,
         },
-        crypto::key::{SecretKey, SignKeypair},
+        crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
         private::{Private, MaybePrivate},
-        util::Timestamp,
+        util::{Timestamp, Date},
     };
     use std::convert::TryFrom;
     use std::str::FromStr;
+    use url::Url;
 
     fn make_stamp(master_key: &SecretKey, sign_keypair: &SignKeypair, stamper: &IdentityID, stampee: &IdentityID, ts: Option<Timestamp>) -> Stamp {
         assert!(stamper != stampee);
@@ -359,6 +422,114 @@ entry:
         // stamps don't hold ANY private data at all, so a stripped stamp should
         // equal an unstripped stamp.
         assert_eq!(stamp, stamp2);
+    }
+
+    #[test]
+    fn stamp_request_new_open() {
+        // stolen/copied from claim tests. oh well. not going to dedicate a bunch
+        // of infrastructure to not duplicating a 7 line macro.
+        macro_rules! make_specs {
+            ($claimmaker:expr, $val:expr) => {{
+                let val = $val;
+                let master_key = SecretKey::new_xsalsa20poly1305();
+                let root_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+                let maybe_private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
+                let maybe_public = MaybePrivate::new_public(val.clone());
+                let spec_private = $claimmaker(maybe_private, val.clone());
+                let spec_public = $claimmaker(maybe_public, val.clone());
+                (master_key, root_keypair, spec_private, spec_public)
+            }}
+        }
+
+        macro_rules! req_open {
+            (raw, $claimmaker:expr, $val:expr) =>  {{
+                let val = $val;
+                let (sender_master_key, root_keypair, spec_private, spec_public) = make_specs!($claimmaker, val.clone());
+                let sender_identity_id = IdentityID::random();
+                let subkey_key = Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&sender_master_key).unwrap());
+                let keypair = SignKeypair::new_ed25519(&sender_master_key).unwrap();
+                let sender_keychain = Keychain::new(&sender_master_key, keypair.clone(), keypair.clone(), keypair.clone(), keypair.clone()).unwrap()
+                    .add_subkey(&sender_master_key, subkey_key, "default:crypto", None).unwrap();
+                let container_private = ClaimContainer::new(&sender_master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
+                let container_public = ClaimContainer::new(&sender_master_key, &root_keypair, Timestamp::now(), spec_public).unwrap();
+                let sender_subkey = sender_keychain.subkey_by_name("default:crypto").unwrap();
+
+                let recipient_master_key = SecretKey::new_xsalsa20poly1305();
+                let subkey_key = Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&recipient_master_key).unwrap());
+                let keypair = SignKeypair::new_ed25519(&recipient_master_key).unwrap();
+                let recipient_keychain = Keychain::new(&recipient_master_key, keypair.clone(), keypair.clone(), keypair.clone(), keypair.clone()).unwrap()
+                    .add_subkey(&recipient_master_key, subkey_key, "default:crypto", None).unwrap();
+                let recipient_subkey = recipient_keychain.subkey_by_name("default:crypto").unwrap();
+
+                let req_msg_priv = StampRequest::new(&sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, container_private.claim()).unwrap();
+                let req_msg_pub = StampRequest::new(&sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, container_public.claim()).unwrap();
+
+                let res1 = StampRequest::open(&sender_master_key, recipient_subkey, sender_subkey, &req_msg_priv);
+                let res2 = StampRequest::open(&sender_master_key, recipient_subkey, sender_subkey, &req_msg_pub);
+
+                assert_eq!(res1.err(), Some(Error::CryptoOpenFailed));
+                assert_eq!(res2.err(), Some(Error::CryptoOpenFailed));
+
+                let opened_priv = StampRequest::open(&recipient_master_key, recipient_subkey, sender_subkey, &req_msg_priv).unwrap();
+                let opened_pub = StampRequest::open(&recipient_master_key, recipient_subkey, sender_subkey, &req_msg_pub).unwrap();
+
+                (opened_priv, opened_pub)
+            }};
+
+            ($claimty:ident, $val:expr) => {
+                let val = $val;
+                let (opened_priv, opened_pub) = req_open!{
+                    raw,
+                    |maybe, _| ClaimSpec::$claimty(maybe),
+                    val.clone()
+                };
+                let getmaybe = |spec: ClaimSpec| if let ClaimSpec::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) };
+                match (getmaybe(opened_priv.spec().clone()), getmaybe(opened_pub.spec().clone())) {
+                    (MaybePrivate::Public(val1), MaybePrivate::Public(val2)) => {
+                        assert_eq!(val1, val);
+                        assert_eq!(val2, val);
+                        assert_eq!(val1, val2); // probably not needed but w/e
+                    }
+                    _ => panic!("Invalid combination when opening StampRequest"),
+                }
+            };
+        }
+
+        let val = IdentityID::random();
+        let (opened_priv, opened_pub) = req_open!{ raw, |_, val| ClaimSpec::Identity(val), val.clone() };
+        match (opened_priv.spec().clone(), opened_pub.spec().clone()) {
+            (ClaimSpec::Identity(val1), ClaimSpec::Identity(val2)) => {
+                assert_eq!(val1, val);
+                assert_eq!(val2, val);
+                assert_eq!(val1, val2); // probably not needed but w/e
+            }
+            _ => panic!("Invalid claim type"),
+        }
+
+        req_open!{ Name, String::from("Hippie Steve") }
+        req_open!{ Birthday, Date::from_str("1957-12-03").unwrap() }
+        req_open!{ Email, String::from("decolonizing.decolonialist@decolonize.dclnze") }
+        req_open!{ Photo, ClaimBin(vec![5,6,7]) }
+        req_open!{ Pgp, String::from("8989898989") }
+        req_open!{ Domain, String::from("get.a.job") }
+        req_open!{ Url, Url::parse("http://mrwgifs.com/wp-content/uploads/2014/05/Beavis-Typing-Random-Characters-On-The-Computer-On-Mike-Judges-Beavis-and-Butt-Head.gif").unwrap() }
+        req_open!{ HomeAddress, String::from("123 DOINK ln., Bork, KY 44666") }
+        req_open!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
+        req_open!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
+
+        let val = ClaimBin(vec![89, 89, 89]);
+        let (opened_priv, opened_pub) = req_open!{ raw, |maybe, _| ClaimSpec::Extension(String::from("a-new-kind-of-claimspec"), maybe), val.clone() };
+        match (opened_priv.spec().clone(), opened_pub.spec().clone()) {
+            (ClaimSpec::Extension(key1, MaybePrivate::Public(val1)), ClaimSpec::Extension(key2, MaybePrivate::Public(val2))) => {
+                // the doctor said it was
+                assert_eq!(key1, String::from("a-new-kind-of-claimspec"));
+                assert_eq!(key2, String::from("a-new-kind-of-claimspec"));
+                assert_eq!(val1, val);
+                assert_eq!(val2, val);
+                assert_eq!(val1, val2); // probably not needed but w/e
+            }
+            _ => panic!("Invalid claim type"),
+        }
     }
 
     #[test]

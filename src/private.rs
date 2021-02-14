@@ -254,6 +254,15 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned + Clone> MaybePrivate<T> 
         }
     }
 
+    /// Convert this MaybePrivate into a DefinitelyPublic.
+    pub fn into_public(self, seal_key: &SecretKey) -> Result<Self> {
+        match self {
+            Self::Public(x) => Ok(Self::Public(x)),
+            Self::Private(hmac, Some(prv)) => Ok(Self::Public(prv.open_and_verify(seal_key, &hmac)?)),
+            Self::Private(_, None) => Err(Error::PrivateDataMissing),
+        }
+    }
+
     /// Reencrypt this MaybePrivate container with a new key.
     pub(crate) fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let maybe = match self {
@@ -389,6 +398,27 @@ mod tests {
         assert_eq!(maybe1.open_public().unwrap(), "hello");
         assert_eq!(maybe2.open_public(), None);
         assert_eq!(maybe3.open_public(), None);
+    }
+
+    #[test]
+    fn maybe_private_into_public() {
+        let seal_key = SecretKey::new_xsalsa20poly1305();
+        let fake_key = SecretKey::new_xsalsa20poly1305();
+        assert!(seal_key != fake_key);
+        let fake_hmac_key = HmacKey::new_sha512();
+
+        let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
+        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
+        let maybe3: MaybePrivate<String> = MaybePrivate::Private(Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(), None);
+
+        assert_eq!(maybe1.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("hello")));
+        // fake key works too because who gives a crap if it's public. grind me
+        // up into little bits and throw me in the river.
+        assert_eq!(maybe1.clone().into_public(&fake_key).unwrap(), MaybePrivate::Public(String::from("hello")));
+        assert_eq!(maybe2.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("omg")));
+        assert_eq!(maybe2.clone().into_public(&fake_key), Err(Error::CryptoOpenFailed));
+        assert_eq!(maybe3.clone().into_public(&seal_key), Err(Error::PrivateDataMissing));
+        assert_eq!(maybe3.clone().into_public(&fake_key), Err(Error::PrivateDataMissing));
     }
 
     #[test]
