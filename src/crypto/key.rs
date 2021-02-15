@@ -162,6 +162,13 @@ impl SignKeypair {
         Ok(Self::Ed25519(public, Some(Private::seal(master_key, &secret)?)))
     }
 
+    /// Create a new ed25519 keypair
+    pub fn new_ed25519_from_seed(master_key: &SecretKey, seed_bytes: &[u8; 32]) -> Result<Self> {
+        let seed = ed25519::Seed::from_slice(seed_bytes).ok_or(Error::CryptoBadSeed)?;
+        let (public, secret) = ed25519::keypair_from_seed(&seed);
+        Ok(Self::Ed25519(public, Some(Private::seal(master_key, &secret)?)))
+    }
+
     /// Sign a value with our secret signing key.
     ///
     /// Must be unlocked via our master key.
@@ -453,9 +460,13 @@ pub fn derive_master_key(passphrase: &[u8], salt_bytes: &[u8], ops: usize, mem: 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::util;
+
+    pub(crate) fn secret_from_vec(bytes: Vec<u8>) -> SecretKey {
+        SecretKey::Xsalsa20Poly1305(sodiumoxide::crypto::secretbox::xsalsa20poly1305::Key::from_slice(bytes.as_ref()).unwrap())
+    }
 
     #[test]
     fn secretkey_xsalsa20poly1305_enc_dec() {
@@ -485,6 +496,27 @@ mod tests {
         let msg_real = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
         let msg_fake = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...");
         let sig = our_keypair.sign(&master_key, msg_real.as_bytes()).unwrap();
+        let verify_real = our_keypair.verify(&sig, msg_real.as_bytes());
+        let verify_fake = our_keypair.verify(&sig, msg_fake.as_bytes());
+        assert_eq!(verify_real, Ok(()));
+        assert_eq!(verify_fake, Err(Error::CryptoSignatureVerificationFailed));
+    }
+
+    #[test]
+    fn signkeypair_ed25519_seed_sign_verify() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let seed: [u8; 32] = vec![233, 229, 76, 13, 231, 38, 253, 27, 53, 2, 235, 174, 151, 186, 192, 33, 16, 2, 57, 32, 170, 23, 13, 47, 44, 234, 231, 35, 38, 107, 93, 198].try_into().unwrap();
+        let our_keypair = SignKeypair::new_ed25519_from_seed(&master_key, &seed).unwrap();
+
+        let msg_real = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
+        let msg_fake = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...");
+        let sig = our_keypair.sign(&master_key, msg_real.as_bytes()).unwrap();
+        match sig {
+            SignKeypairSignature::Ed25519(sig) => {
+                let should_be: Vec<u8> = vec![161, 93, 247, 4, 187, 12, 160, 118, 111, 79, 16, 100, 205, 38, 238, 153, 217, 214, 230, 195, 175, 228, 165, 183, 5, 151, 159, 114, 7, 32, 156, 115, 34, 108, 194, 252, 86, 102, 133, 35, 129, 224, 146, 254, 91, 185, 97, 207, 0, 63, 241, 184, 144, 15, 20, 26, 187, 235, 95, 207, 43, 144, 216, 6];
+                assert_eq!(sig.as_ref(), should_be.as_slice());
+            }
+        }
         let verify_real = our_keypair.verify(&sig, msg_real.as_bytes());
         let verify_fake = our_keypair.verify(&sig, msg_fake.as_bytes());
         assert_eq!(verify_real, Ok(()));
