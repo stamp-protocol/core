@@ -24,7 +24,6 @@ use crate::{
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
-use std::convert::TryFrom;
 use std::ops::Deref;
 use url::Url;
 

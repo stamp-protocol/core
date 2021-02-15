@@ -306,17 +306,6 @@ impl Identity {
         self.keychain().root().sign(master_key, &serialized)
     }
 
-    /// Regenerate the root signature on this identity.
-    ///
-    /// This is mainly used for development to save an identity that's corrupt
-    /// due to buggy code. This should not be used as a regular feature, because
-    /// its entire need is based on a buggy stamp protocol implementation.
-    fn root_sign(mut self, master_key: &SecretKey) -> Result<Self> {
-        self.set_root_signature(self.generate_root_signature(master_key)?);
-        self.verify()?;
-        Ok(self)
-    }
-
     /// Verify that the portions of this identity that can be verified, mainly
     /// by using the identity's public signing key (or key*s* if we have revoked
     /// keys).
