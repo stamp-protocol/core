@@ -58,15 +58,14 @@ macro_rules! object_id {
             }
         }
 
-        impl std::convert::TryFrom<&$name> for String {
-            type Error = crate::error::Error;
-            fn try_from(id: &$name) -> std::result::Result<String, Self::Error> {
+        impl std::convert::From<&$name> for String {
+            fn from(id: &$name) -> String {
                 let ser_val: u8 = match &id.0 {
                     crate::crypto::key::SignKeypairSignature::Ed25519(_) => 0,
                 };
                 let mut bytes = Vec::from(id.as_ref());
                 bytes.push(ser_val);
-                Ok(crate::util::ser::base64_encode(&bytes))
+                crate::util::ser::base64_encode(&bytes)
             }
         }
 

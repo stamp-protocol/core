@@ -66,17 +66,6 @@ impl VersionedIdentity {
         }
     }
 
-    /// Regenerate the root signature on this identity.
-    ///
-    /// This is mainly used for development to save an identity that's corrupt
-    /// due to buggy code. This should not be used as a regular feature, because
-    /// its entire need is based on a buggy stamp protocol implementation.
-    pub fn root_sign(self, master_key: &SecretKey) -> Result<Self> {
-        match self {
-            Self::V1(id) => Ok(Self::V1(id.root_sign(master_key)?)),
-        }
-    }
-
     /// Create a new claim from the given data, sign it, and attach it to this
     /// identity.
     pub fn make_claim<T: Into<Timestamp>>(self, master_key: &SecretKey, now: T, claim: ClaimSpec) -> Result<Self> {
@@ -230,11 +219,6 @@ mod tests {
 
     #[test]
     fn versioned_reencrypt() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn versioned_root_sign() {
         unimplemented!();
     }
 

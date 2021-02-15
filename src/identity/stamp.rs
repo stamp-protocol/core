@@ -348,7 +348,7 @@ mod tests {
             Identity,
             VersionedIdentity,
         },
-        crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
+        crypto::key::{self, SecretKey, SignKeypair, CryptoKeypair},
         private::{Private, MaybePrivate},
         util::{Timestamp, Date},
     };
@@ -381,30 +381,23 @@ mod tests {
 
     #[test]
     fn stamp_serde() {
-        let master_bytes = vec![58, 30, 74, 149, 49, 101, 115, 190, 250, 4, 99, 141, 245, 201, 209, 83, 46, 121, 28, 174, 1, 150, 149, 118, 181, 228, 215, 78, 226, 248, 53, 152];
-        let pub_bytes = vec![26, 106, 94, 179, 115, 143, 20, 33, 69, 141, 83, 70, 153, 34, 32, 255, 16, 247, 128, 73, 151, 32, 100, 94, 237, 70, 81, 136, 90, 207, 56, 198];
-        let priv_bytes = vec![83, 139, 41, 104, 20, 105, 245, 17, 35, 207, 94, 108, 93, 46, 156, 41, 62, 193, 147, 102, 144, 125, 4, 83, 21, 106, 181, 144, 243, 164, 48, 24, 26, 106, 94, 179, 115, 143, 20, 33, 69, 141, 83, 70, 153, 34, 32, 255, 16, 247, 128, 73, 151, 32, 100, 94, 237, 70, 81, 136, 90, 207, 56, 198];
         let id1 = IdentityID::try_from("Q8LwXx3nZvCn13Y49OydJ0OioG8_2idvEZGlmYeiBd2VHr5GOa5C3vxE_l-zWzhc5KcMiV_enu8LxpP4TIpUqwA").unwrap();
         let id2 = IdentityID::try_from("c1lZ31CxrYGk4D3jXWrbhtetQ93kigNtJmOm09cptryHhOfeX3PMltqZet6Gql-7A0CkELbaqu_u1qXW95DkgAA").unwrap();
-        let master_key = SecretKey::Xsalsa20Poly1305(sodiumoxide::crypto::secretbox::xsalsa20poly1305::Key::from_slice(master_bytes.as_ref()).unwrap());
-        let sign_keypair = SignKeypair::Ed25519(
-            sodiumoxide::crypto::sign::ed25519::PublicKey::from_slice(pub_bytes.as_slice()).unwrap(),
-            Some(Private::seal(&master_key, &sodiumoxide::crypto::sign::ed25519::SecretKey::from_slice(priv_bytes.as_slice()).unwrap()).unwrap())
-        );
-
+        let master_key = key::tests::secret_from_vec(vec![58, 30, 74, 149, 49, 101, 115, 190, 250, 4, 99, 141, 245, 201, 209, 83, 46, 121, 28, 174, 1, 150, 149, 118, 181, 228, 215, 78, 226, 248, 53, 152]);
+        let sign_keypair = SignKeypair::new_ed25519_from_seed(&master_key, &[190, 106, 28, 143, 162, 234, 87, 8, 20, 209, 219, 44, 136, 152, 126, 189, 46, 129, 12, 125, 138, 173, 37, 220, 174, 42, 218, 199, 95, 127, 97, 92]).unwrap();
         let ts = Timestamp::from_str("2021-06-06T00:00:00-06:00").unwrap();
         let stamp = make_stamp(&master_key, &sign_keypair, &id1, &id2, Some(ts));
         let ser = stamp.serialize().unwrap();
         assert_eq!(ser, r#"---
 id:
-  Ed25519: zA2wZGLUIRQUcNPcZfS5lllhL8TjorFSKZ5GpdE5Ss6Qhej4w-hpQFdgnc7q_lArYtXuTisszuonCdpIFR4xBg
+  Ed25519: STCsIGNVJXG43kEl7CTFMeINLlc3iB4Uiq9psxRQ_dP0OQNJsBAN08q60L5ZAGCIiTrMGYX9bZco-w5rTVAoBw
 entry:
   stamper:
     Ed25519: Q8LwXx3nZvCn13Y49OydJ0OioG8_2idvEZGlmYeiBd2VHr5GOa5C3vxE_l-zWzhc5KcMiV_enu8LxpP4TIpUqw
   stampee:
     Ed25519: c1lZ31CxrYGk4D3jXWrbhtetQ93kigNtJmOm09cptryHhOfeX3PMltqZet6Gql-7A0CkELbaqu_u1qXW95DkgA
   claim_id:
-    Ed25519: g-1Wm3zCfyHo-54MKAD6y69Ue5n6qH1XsCz9GDP0XVU_m3EBrhxFqXt9hjIOtTRxdarWrOR4An4HYdTxJZvCDw
+    Ed25519: hCvNTzVHOMxCw0BGgp_xFJGbQ3UdR-YJhMTJBk8vCOgo-5GAkMqWwxwW_INVo25_zUAX75IxJs_8P8VjwgG6Dw
   confidence: Medium
   date_signed: "2021-06-06T06:00:00Z"
   expires: ~"#);

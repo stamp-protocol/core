@@ -360,16 +360,16 @@ impl Claim {
     pub fn instant_verify_allowed_values(&self, identity_id: &IdentityID) -> Result<Vec<String>> {
         match self.spec() {
             ClaimSpec::Domain(_) => {
-                let identity_id_str = String::try_from(identity_id)?;
-                let claim_id_str = String::try_from(self.id())?;
+                let identity_id_str = String::from(identity_id);
+                let claim_id_str = String::from(self.id());
                 Ok(vec![
                     format!("stamp://{}/claim/{}", identity_id_str, claim_id_str),
                     format!("stamp://{}/claim/{}", IdentityID::short(&identity_id_str), ClaimID::short(&claim_id_str)),
                 ])
             }
             ClaimSpec::Url(_) => {
-                let identity_id_str = String::try_from(identity_id)?;
-                let claim_id_str = String::try_from(self.id())?;
+                let identity_id_str = String::from(identity_id);
+                let claim_id_str = String::from(self.id());
                 Ok(vec![
                     format!("stamp:{}", claim_id_str),
                     format!("stamp:{}", ClaimID::short(&claim_id_str)),

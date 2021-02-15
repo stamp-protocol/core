@@ -12,13 +12,17 @@ pub enum Error {
     #[error("cryptographic algorithm mismatch")]
     CryptoAlgoMismatch,
 
+    /// Bad key.
+    #[error("key is invalid")]
+    CryptoBadKey,
+
     /// Bad salt given to a cryptographic function.
     #[error("incorrect salt given for kdf")]
     CryptoBadSalt,
 
-    /// Bad key.
-    #[error("key is invalid")]
-    CryptoBadKey,
+    /// Bad seed given to a cryptographic function.
+    #[error("incorrect seed given for keypair")]
+    CryptoBadSeed,
 
     /// Error creating hash digest
     #[error("could not create hash digest")]
@@ -81,6 +85,10 @@ pub enum Error {
     /// An error while engaging in deserialization.
     #[error("deserialization error")]
     DeserializeBase64(#[from] base64::DecodeError),
+
+    /// A duplicate name was given.
+    #[error("the given name is already in use (names must be unique)")]
+    DuplicateName,
 
     /// The claim being operated on cannot be verified automatically
     #[error("this claim cannot be automatically verified")]
