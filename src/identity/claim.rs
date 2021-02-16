@@ -447,6 +447,7 @@ mod tests {
         identity::IdentityID,
         util::Timestamp,
     };
+    use std::convert::TryFrom;
     use std::str::FromStr;
 
     macro_rules! make_specs {

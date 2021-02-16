@@ -15,9 +15,9 @@
 use crate::{
     error::{Error, Result},
     identity::{Public, PublicMaybe},
-    crypto::key::{SecretKey, SignKeypairSignature, SignKeypair, CryptoKeypair},
+    crypto::key::{SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
     private::Private,
-    util::{ser, sign::SignedValue},
+    util::{ser, sign::{Signable, SignedValue}},
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
@@ -36,6 +36,133 @@ object_id! {
     /// revocation.
     RevocationID
 }
+
+/// Allows us to create new signature types from the base SignKeypairSignature.
+pub trait ExtendKeypairSignature: From<SignKeypairSignature> + Clone + PartialEq + Deref<Target = SignKeypairSignature> + serde::Serialize + serde::de::DeserializeOwned {}
+
+/// Allows us to create new signing keypair types from the base SignKeypair.
+///
+/// Now, says to myself, Colm, says I...
+pub trait ExtendKeypair: From<SignKeypair> + Clone + PartialEq + Deref<Target = SignKeypair> + Public + PartialEq + Signable + serde::Serialize + serde::de::DeserializeOwned {
+    type Signature: ExtendKeypairSignature;
+
+    /// Create a new ed25519 keypair
+    fn new_ed25519(master_key: &SecretKey) -> Result<Self> {
+        let sign = SignKeypair::new_ed25519(master_key)?;
+        Ok(Self::from(sign))
+    }
+
+    /// Create a new ed25519 keypair
+    fn new_ed25519_from_seed(master_key: &SecretKey, seed_bytes: &[u8; 32]) -> Result<Self> {
+        let sign = SignKeypair::new_ed25519_from_seed(master_key, seed_bytes)?;
+        Ok(Self::from(sign))
+    }
+
+    /// Sign a value with our secret signing key.
+    ///
+    /// Must be unlocked via our master key.
+    fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<Self::Signature> {
+        let sig = self.deref().sign(master_key, data)?;
+        Ok(Self::Signature::from(sig))
+    }
+
+    /// Verify a value with a detached signature given the public key of the
+    /// signer.
+    fn verify(&self, signature: &Self::Signature, data: &[u8]) -> Result<()> {
+        self.deref().verify(signature.deref(), data)
+    }
+
+    /// Re-encrypt this signing keypair with a new master key.
+    fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        Ok(Self::from(self.deref().clone().reencrypt(previous_master_key, new_master_key)?))
+    }
+
+    /// Determines if this keypair has private data included (ie, a private key).
+    fn has_private(&self) -> bool {
+        self.deref().has_private()
+    }
+}
+
+macro_rules! make_keytype {
+    ($keytype:ident, $keytype_public:ident, $signaturetype:ident) => {
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+        pub struct $signaturetype(SignKeypairSignature);
+
+        impl Deref for $signaturetype {
+            type Target = SignKeypairSignature;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl From<SignKeypairSignature> for $signaturetype {
+            fn from(sig: SignKeypairSignature) -> Self {
+                Self(sig)
+            }
+        }
+
+        impl AsRef<[u8]> for $signaturetype {
+            fn as_ref(&self) -> &[u8] {
+                self.deref().as_ref()
+            }
+        }
+
+        impl ExtendKeypairSignature for $signaturetype {}
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct $keytype_public(SignKeypairPublic);
+
+        impl From<SignKeypairPublic> for $keytype_public {
+            fn from(pubkey: SignKeypairPublic) -> Self {
+                Self(pubkey)
+            }
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct $keytype(SignKeypair);
+
+        impl From<SignKeypair> for $keytype {
+            fn from(sign: SignKeypair) -> Self {
+                Self(sign)
+            }
+        }
+
+        impl Deref for $keytype {
+            type Target = SignKeypair;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl Public for $keytype {
+            fn strip_private(&self) -> Self {
+                Self::from(self.deref().strip_private())
+            }
+        }
+
+        impl PartialEq for $keytype {
+            fn eq(&self, other: &Self) -> bool {
+                self.deref().eq(other.deref())
+            }
+        }
+
+        impl Signable for $keytype {
+            type Item = $keytype_public;
+            fn signable(&self) -> Self::Item {
+                Self::Item::from(self.deref().signable())
+            }
+        }
+
+        impl ExtendKeypair for $keytype {
+            type Signature = $signaturetype;
+        }
+    }
+}
+
+make_keytype! { AlphaKeypair, AlphaKeypairPublic, AlphaKeypairSignature }
+make_keytype! { PolicyKeypair, PolicyKeypairPublic, PolicyKeypairSignature }
+make_keytype! { PublishKeypair, PublishKeypairPublic, PublishKeypairSignature }
+make_keytype! { RootKeypair, RootKeypairPublic, RootKeypairSignature }
 
 /// Why we are deprecating a key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
