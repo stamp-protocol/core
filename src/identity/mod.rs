@@ -36,12 +36,12 @@ use crate::{
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 
-pub(crate) trait Public: Clone {
+pub trait Public: Clone {
     /// Strip the private data from a object, returning only public data.
     fn strip_private(&self) -> Self;
 }
 
-pub(crate) trait PublicMaybe: Clone {
+pub trait PublicMaybe: Clone {
     /// Strip the private data from a object, unless the object is entirely
     /// private in which case return None.
     fn strip_private_maybe(&self) -> Option<Self>;
