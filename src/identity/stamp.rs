@@ -349,7 +349,7 @@ mod tests {
             VersionedIdentity,
         },
         crypto::key::{self, SecretKey, SignKeypair, CryptoKeypair},
-        private::{Private, MaybePrivate},
+        private::MaybePrivate,
         util::{Timestamp, Date},
     };
     use std::convert::TryFrom;
