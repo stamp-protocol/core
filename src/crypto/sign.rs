@@ -106,7 +106,7 @@ mod tests {
         // use the wrong key and it fails
         let mut signkey2 = signkey.clone();
         let shitkey = SignKeypair::new_ed25519(&master_key).unwrap();
-        signkey2.key_mut().set_key(Key::Sign(shitkey));
+        signkey2.set_key(Key::Sign(shitkey));
         let res = verify(&signkey2, &signature, message);
         assert_eq!(res, Err(Error::CryptoSignatureVerificationFailed));
 
@@ -133,7 +133,7 @@ mod tests {
         // use the wrong key and it fails
         let mut signkey2 = signkey.clone();
         let shitkey = SignKeypair::new_ed25519(&master_key).unwrap();
-        signkey2.key_mut().set_key(Key::Sign(shitkey));
+        signkey2.set_key(Key::Sign(shitkey));
         let res = verify_attached(&signkey2, &signature);
         assert_eq!(res, Err(Error::CryptoSignatureVerificationFailed));
 

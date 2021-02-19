@@ -1,16 +1,10 @@
 //! Includes some utilities helpful for generating signatures.
 
 use crate::{
-    error::Result,
-    crypto::key::{SecretKey, SignKeypairSignature, SignKeypair},
-    util::{
-        Timestamp,
-        ser,
-    },
+    util::Timestamp,
 };
 use getset;
-use serde_derive::{Serialize, Deserialize};
-use std::ops::Deref;
+use serde_derive::Serialize;
 
 /// Attaches a serializable object to a date for signing.
 ///
@@ -46,46 +40,6 @@ impl Signable for String {
     type Item = String;
     fn signable(&self) -> Self::Item {
         self.clone()
-    }
-}
-
-/// A struct that wraps any type and requires it to be signed in order to be
-/// created or modified.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct SignedValue<T> {
-    /// The value we wish to sign.
-    value: T,
-    /// The signature for our value.
-    signature: SignKeypairSignature,
-}
-
-impl<T: serde::Serialize + Signable> SignedValue<T> {
-    /// Create a new signed value. Requires our signing keypair and our root key
-    /// (used to unlock the secret signing key).
-    pub fn new(master_key: &SecretKey, sign_keypair: &SignKeypair, value: T) -> Result<Self> {
-        let to_serialize = value.signable();
-        let serialized = ser::serialize(&to_serialize)?;
-        let signature = sign_keypair.sign(master_key, &serialized)?;
-        Ok(Self {
-            value,
-            signature,
-        })
-    }
-
-    /// Make sure the stored value's signature can be verified with the given
-    /// key.
-    pub fn verify_value(&self, sign_keypair: &SignKeypair) -> Result<()> {
-        let to_serialize = self.value().signable();
-        let serialized = ser::serialize(&to_serialize)?;
-        sign_keypair.verify(self.signature(), &serialized)
-    }
-}
-
-impl<T: serde::Serialize> Deref for SignedValue<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &self.value
     }
 }
 

@@ -25,7 +25,7 @@ macro_rules! object_id {
     ) => {
         #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
         $(#[$meta])*
-        pub struct $name(crate::crypto::key::SignKeypairSignature);
+        pub struct $name(pub(crate) crate::crypto::key::SignKeypairSignature);
 
         impl $name {
             /// Take a full string id and return the shortened ID
@@ -134,7 +134,7 @@ pub fn hash(data: &[u8]) -> Result<generichash::Digest> {
 /// and you can always get the underlying type via a `&timestamp` deref.
 ///
 /// So put down the pitchfork.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Timestamp(#[serde(with = "crate::util::ser::timestamp")] DateTime<Utc>);
 
 impl Timestamp {

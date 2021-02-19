@@ -8,8 +8,8 @@ use crate::{
     },
     error::{Error, Result},
     identity::{
-        IdentityID,
-        Subkey,
+        identity::{IdentityID},
+        keychain::Subkey,
     },
     util::ser,
 };
@@ -168,7 +168,7 @@ mod tests {
 
         // now generate a NEW crypto key and try to open the message with it.
         let sender_identity2 = sender_identity
-            .add_subkey(&sender_master_key, Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&sender_master_key).unwrap()), "fake-ass-key", None).unwrap();
+            .add_subkey(KeyID::random(), Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&sender_master_key).unwrap()), "fake-ass-key", None);
         let sender_fake_subkey = sender_identity2.keychain().subkey_by_name("fake-ass-key").unwrap();
         let res = open(&recipient_master_key, &recipient_subkey, &sender_fake_subkey, &sealed);
         assert_eq!(res, Err(Error::CryptoOpenFailed));

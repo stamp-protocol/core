@@ -78,6 +78,36 @@ pub enum Error {
     #[error("the given signature is in the wrong format")]
     CryptoWrongSignatureType,
 
+    /// You're trying to create an identity on a non-empty transaction set. New
+    /// identities can only be created on empty transaction sets.
+    #[error("cannot create a new identity on an existing transaction chain")]
+    DagCreateIdentityOnExistingChain,
+
+    /// Tried to build an identity on an empty DAG chain.
+    #[error("cannot build an identity from an empty transaction set")]
+    DagEmpty,
+
+    /// A key wasn't found when running a DAG operation
+    #[error("key missing while processing transaction")]
+    DagKeyNotFound,
+
+    /// The DAG chain looped (so this is more of a DG or G than DAG)
+    #[error("an endless loop occurred while processing the transaction set")]
+    DagLoop,
+
+    /// An identity was not passed in while applying a transaction
+    #[error("an identity is missing when applying a transaction")]
+    DagMissingIdentity,
+
+    /// There are no transactions in this DAG chain that have zero previous
+    /// transactions.
+    #[error("this transaction set has no starting point")]
+    DagNoGenesis,
+
+    /// A generic error for when things get "weird" while ordering transactions
+    #[error("an error occurred while ordering the transaction set")]
+    DagOrderingError,
+
     /// An error while engaging in deserialization.
     #[error("deserialization error")]
     Deserialize(#[from] rmp_serde::decode::Error),

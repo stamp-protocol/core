@@ -37,7 +37,6 @@
 //! available at the time of verification.
 
 use crate::{
-    error::{Error, Result},
     identity::{
         identity::IdentityID,
     },
@@ -173,18 +172,10 @@ pub struct Recovery {
 }
 
 impl Recovery {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             executed: vec![],
-        })
-    }
-
-    pub(crate) fn verify_publish(&self, _publish_keypair: &SignKeypair) -> Result<()> {
-        Err(Error::PolicyVerificationFailure)
-    }
-
-    pub(crate) fn verify_root(&self, _root_keypair: &SignKeypair) -> Result<()> {
-        Err(Error::PolicyVerificationFailure)
+        }
     }
 }
 

@@ -7,21 +7,15 @@
 use crate::{
     error::{Error, Result},
     identity::{
-        Public,
-        PublicMaybe,
-        VersionedIdentity,
-
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
-        keychain::{RevocationReason, SignedOrRecoveredKeypair, KeyID, Key, Keychain},
+        keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, RevocationID, RevocationReason, KeyID, Key, Keychain},
         recovery::{Recovery},
-        stamp::{Confidence, Stamp, StampRevocation, AcceptedStamp},
+        stamp::{Confidence, Stamp, StampRevocation},
     },
-    crypto::key::{SecretKey, SignKeypairSignature, SignKeypair},
+    crypto::key::SecretKey,
     private::MaybePrivate,
     util::{
         Timestamp,
-        sign::{DateSigner, Signable, SignedValue},
-        ser,
     },
 };
 use getset;
@@ -95,13 +89,6 @@ impl Forward {
     }
 }
 
-impl Signable for Forward {
-    type Item = Forward;
-    fn signable(&self) -> Self::Item {
-        self.clone()
-    }
-}
-
 /// Extra public data that is attached to our identity.
 ///
 /// Each entry in this struct is signed by our root signing key. In the case
@@ -127,9 +114,9 @@ pub struct IdentityExtraData {
     /// avoid accidental collisions, and any malicious immitations must be
     /// weeded out by inclusion of an ID (prefix or full), stamp verification,
     /// and trust levels.
-    nickname: Option<SignedValue<String>>,
+    nickname: Option<String>,
     /// A canonical list of places this identity forwards to.
-    forwards: Vec<SignedValue<Forward>>,
+    forwards: Vec<Forward>,
 }
 
 impl IdentityExtraData {
@@ -140,22 +127,6 @@ impl IdentityExtraData {
             forwards: Vec::new(),
         }
     }
-
-    /// Re-sign the extra data in this identity with a new root key.
-    fn resign(mut self, master_key: &SecretKey, root_key: &SignKeypair) -> Result<Self> {
-        match self.nickname_mut().as_mut() {
-            Some(x) => {
-                let val = x.value().clone();
-                *x = SignedValue::new(master_key, root_key, val)?;
-            }
-            None => {},
-        }
-        for forward in self.forwards_mut() {
-            let val = forward.value().clone();
-            *forward = SignedValue::new(master_key, root_key, val)?;
-        }
-        Ok(self)
-    }
 }
 
 /// An identity.
@@ -164,24 +135,11 @@ impl IdentityExtraData {
 pub struct Identity {
     /// The unique identifier for this identity.
     id: IdentityID,
+    /// When this identity came into being.
+    created: Timestamp,
     /// Our identity recovery mechanisms. This allows us to replace our recovery
     /// keypair in the event it's lost or compromised.
     recovery: Recovery,
-    /// A signature that is created by collecting all claim, stamp, and keychain
-    /// signatures contained in the identity and signing them with the root
-    /// signing key.
-    ///
-    /// This gives any identity a verifiable completeness: if any data is added
-    /// or removed that is not authorized by the identity owner, the identity
-    /// will fail to validate. This can be useful in cases where an identity is
-    /// distributed by a third party.
-    ///
-    /// This obviously doesn't guard against distributing an old (but unedited)
-    /// version of an identity.
-    root_signature: SignKeypairSignature,
-    /// When this identity was created. This value is signed in the IdentityID
-    /// via a `DateSigner`.
-    created: Timestamp,
     /// Holds the keys for our identity.
     keychain: Keychain,
     /// The claims this identity makes.
@@ -191,285 +149,106 @@ pub struct Identity {
 }
 
 impl Identity {
-    fn id_gen(now: &Timestamp) -> Result<Vec<u8>> {
-        let id_string = String::from("This is my stamp.");
-        let datesigner = DateSigner::new(now, &id_string);
-        ser::serialize(&datesigner)
-    }
-
-    /// Given an alpha key and a timestamp, create a (deterministic) identity ID.
-    pub fn create_id(master_key: &SecretKey, alpha_keypair: &SignKeypair, now: &Timestamp) -> Result<IdentityID> {
-        // create our identity's ID
-        let ser = Self::id_gen(now)?;
-        let id = IdentityID(alpha_keypair.sign(master_key, &ser)?);
-        Ok(id)
-    }
-
-    /// Create a new identity from an existing alpha keypair, timestamp, and
-    /// identity ID.
-    pub fn new_with_alpha(master_key: &SecretKey, now: Timestamp, alpha_keypair: SignKeypair) -> Result<Self> {
-        let id = Self::create_id(master_key, &alpha_keypair, &now)?;
-        // controls recovery policies (and ultimately the recovery key)
-        let policy_keypair = SignKeypair::new_ed25519(master_key)?;
-        // control publishing the identity
-        let publish_keypair = SignKeypair::new_ed25519(master_key)?;
-        // controls claims, stamping, the root signature, and signing subkeys
-        let root_keypair = SignKeypair::new_ed25519(master_key)?;
-
-        // create our first claim (the identity claim)
-        let identity_claim = ClaimContainer::new(master_key, &root_keypair, now.clone(), ClaimSpec::Identity(id.clone()))?;
-
+    /// Create a new identity.
+    pub fn create(id: IdentityID, alpha_keypair: AlphaKeypair, policy_keypair: PolicyKeypair, publish_keypair: PublishKeypair, root_keypair: RootKeypair, created: Timestamp) -> Self {
         // create a recovery policy that cannot be satisfied.
-        let recovery = Recovery::new()?;
+        let recovery = Recovery::new();
 
         // create a new keychain from our keys above.
-        let keychain = Keychain::new(master_key, alpha_keypair, policy_keypair, publish_keypair, root_keypair)?;
+        let keychain = Keychain::new(alpha_keypair, policy_keypair, publish_keypair, root_keypair);
 
         // init our extra data
         let extra_data = IdentityExtraData::new();
 
         // create the identity
-        let blank_root_signature = SignKeypairSignature::blank(keychain.root());
-        let mut identity = Self {
+        Self {
             id,
+            created,
             recovery,
-            root_signature: blank_root_signature,
-            created: now,
             keychain,
-            claims: vec![identity_claim],
+            claims: vec![],
             extra_data,
-        };
-        // ...and sign it with our root keypair
-        identity.set_root_signature(identity.generate_root_signature(master_key)?);
-        // just making sure
-        identity.verify()?;
-        Ok(identity)
-    }
-
-    /// Create a new random identity.
-    pub fn new(master_key: &SecretKey, now: Timestamp) -> Result<Self> {
-        // top doge key
-        let alpha_keypair = SignKeypair::new_ed25519(master_key)?;
-        Identity::new_with_alpha(master_key, now, alpha_keypair)
-    }
-
-    /// Grab a list of all our identity's sub-signatures.
-    fn sub_signatures(&self) -> Vec<&SignKeypairSignature> {
-        let mut signatures = vec![
-            &self.id().0,
-        ];
-
-        // sign the signatures of all our subkeys
-        for subkey in self.keychain().subkeys() {
-            // only sign keys with a public component, since these will be
-            // published and can be verified. secret keys are not published and
-            // therefor cannot be verified (so we don't add them to verification
-            // chain)..
-            match subkey.key().strip_private_maybe() {
-                Some(_) => signatures.push(&subkey.id()),
-                None => {}
-            }
         }
-
-        // sign our claims and their stamps
-        for claim in self.claims() {
-            // sign each claim's id (which is itself a signature)
-            signatures.push(&claim.claim().id());
-            // now sign each claim's accepted stamps. the accepted stamp's
-            // signature signs the entire stamp, so we can stop there.
-            for stamp in claim.stamps() {
-                signatures.push(&stamp.signature());
-            }
-        }
-
-        // sign our extra data
-        if let Some(nickname) = self.extra_data().nickname().as_ref() {
-            signatures.push(nickname.signature());
-        }
-        for forward in self.extra_data().forwards() {
-            signatures.push(forward.signature());
-        }
-        signatures
-    }
-
-    /// Generate a signature that is a result of signing all the identity's
-    /// contained signatures *in the order they are stored*.
-    ///
-    /// This makes each identity completely immutable (even the order of the
-    /// contained items) by anyone but the owner of the master key/root signing
-    /// key.
-    ///
-    /// One signature to rule them all.
-    fn generate_root_signature(&self, master_key: &SecretKey) -> Result<SignKeypairSignature> {
-        let signatures = self.sub_signatures();
-        let serialized = ser::serialize(&signatures)?;
-        self.keychain().root().sign(master_key, &serialized)
-    }
-
-    /// Verify that the portions of this identity that can be verified, mainly
-    /// by using the identity's public signing key (or key*s* if we have revoked
-    /// keys).
-    ///
-    /// Specifically, we verify our identity's ID, our keychain, the signatures
-    /// we've made on our claims (stored in each claim's ID), and the identity's
-    /// extra data entries.
-    ///
-    /// The idea here is that we can't verify the stamps on our claims inside
-    /// the identity (we need the public keys of all the signers for that, which
-    /// must not be stored alongside the signatures).
-    pub fn verify(&self) -> Result<()> {
-        // verify our identity ID against the alpha key.
-        let ser = Self::id_gen(self.created())?;
-        self.keychain().alpha().verify(self.id(), &ser)
-            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.id")))?;
-
-        // verify our policy and root keys against the alpha key and/or the
-        // recovery chain
-        self.keychain().policy().verify_value(self.keychain().alpha())
-            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.policy")))?;
-        self.keychain().publish().verify_signed(self.keychain().alpha())
-            .or_else(|err| {
-                if err != Error::SignatureMissing { return Err(err); }
-                self.recovery().verify_publish(self.keychain().publish().deref())
-            })
-            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.publish")))?;
-        self.keychain().root().verify_signed(self.keychain().alpha())
-            .or_else(|err| {
-                if err != Error::SignatureMissing { return Err(err); }
-                self.recovery().verify_root(self.keychain().root().deref())
-            })
-            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.root")))?;
-        self.keychain().verify_subkeys()
-            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.keychain.subkeys")))?;
-
-        let root_keys = self.keychain().keys_root();
-
-        // now check that our claims are signed with one of our root keys
-        for claim in self.claims() {
-            Keychain::try_keys(&root_keys, |sign_keypair| claim.claim().verify(sign_keypair))
-                .map_err(|_| {
-                    let claim_id = String::from(claim.claim().id());
-                    Error::IdentityVerificationFailed(format!("identity.claims[{}].id", claim_id))
-                })?;
-            for stamp in claim.stamps() {
-                Keychain::try_keys(&root_keys, |sign_keypair| stamp.verify(sign_keypair))
-                    .map_err(|_| {
-                        let claim_id = String::from(claim.claim().id());
-                        let stamp_id = String::from(stamp.stamp().id());
-                        Error::IdentityVerificationFailed(format!("identity.claims[{}].stamps[{}]", claim_id, stamp_id))
-                    })?;
-            }
-        }
-
-        if let Some(nickname) = self.extra_data().nickname() {
-            nickname.verify_value(self.keychain().root())
-                .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.extra_data.nickname")))?;
-        }
-        for forward in self.extra_data().forwards() {
-            let forward_id = base64::encode_config(forward.signature().as_ref(), base64::URL_SAFE_NO_PAD);
-            forward.verify_value(self.keychain().root())
-                .map_err(|_| Error::IdentityVerificationFailed(format!("identity.extra_data.forwards.forward[{}]", forward_id)))?;
-        }
-
-        // now that we're certain all of our signatures match the data they sign
-        // we can verify the root signature.
-        self.keychain().root().verify(self.root_signature(), &ser::serialize(&self.sub_signatures())?)
-            .map_err(|_| Error::IdentityVerificationFailed(String::from("identity.root_signature")))?;
-
-        Ok(())
-    }
-
-    /// Re-encrypt this identity's keychain and private claims.
-    pub fn reencrypt(mut self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
-        self.set_keychain(self.keychain().clone().reencrypt(current_key, new_key)?);
-        for claim in self.claims_mut() {
-            let new_spec = claim.claim().spec().clone().reencrypt(current_key, new_key)?;
-            claim.claim_mut().set_spec(new_spec);
-        }
-        Ok(self)
     }
 
     /// Create a new claim from the given data, sign it, and attach it to this
     /// identity.
-    pub fn make_claim<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, claim: ClaimSpec) -> Result<Self> {
-        let claim_container = ClaimContainer::new(master_key, self.keychain().root(), now, claim)?;
+    pub fn make_claim(mut self, claim_id: ClaimID, claim: ClaimSpec) -> Self {
+        let claim_container = ClaimContainer::new(claim_id, claim);
         self.claims_mut().push(claim_container);
-        self.set_root_signature(self.generate_root_signature(master_key)?);
-        self.verify()?;
-        Ok(self)
+        self
     }
 
     /// Remove a claim from this identity, including any stamps it has received.
-    pub fn remove_claim(mut self, master_key: &SecretKey, id: &ClaimID) -> Result<Self> {
+    pub fn remove_claim(mut self, id: &ClaimID) -> Result<Self> {
         let exists = self.claims().iter().find(|x| x.claim().id() == id);
         if exists.is_none() {
             Err(Error::IdentityClaimNotFound)?;
         }
         self.claims_mut().retain(|x| x.claim().id() != id);
-        self.set_root_signature(self.generate_root_signature(master_key)?);
-        self.verify()?;
         Ok(self)
     }
 
     /// Accept a stamp on one of our claims
-    pub fn accept_stamp<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, stamping_identity: &VersionedIdentity, stamp: Stamp) -> Result<Self> {
+    pub fn accept_stamp(mut self, stamping_identity: &Identity, stamp: Stamp) -> Result<Self> {
+        stamping_identity.verify_stamp(&stamp)?;
         let claim_id = stamp.entry().claim_id();
-        let root_key = self.keychain().root().clone();
         let claim = self.claims_mut().iter_mut().find(|x| x.claim().id() == claim_id)
             .ok_or(Error::IdentityClaimNotFound)?;
-        let accepted = AcceptedStamp::accept(master_key, &root_key, stamping_identity, stamp, now.into())?;
-        claim.stamps_mut().push(accepted);
-        self.set_root_signature(self.generate_root_signature(master_key)?);
-        self.verify()?;
+        claim.stamps_mut().push(stamp);
         Ok(self)
     }
 
     /// Set the policy signing key on this identity.
-    pub fn set_policy_key(mut self, master_key: &SecretKey, new_policy_keypair: SignKeypair, revocation_reason: RevocationReason) -> Result<Self> {
-        self.set_keychain(self.keychain().clone().set_policy_key(master_key, self.keychain().alpha(), new_policy_keypair, revocation_reason)?);
-        Ok(self)
+    pub fn set_policy_key(mut self, new_policy_keypair: PolicyKeypair, subkey_id: KeyID, revocation_id: RevocationID, revocation_reason: RevocationReason) -> Self {
+        self.set_keychain(self.keychain().clone().set_policy_key(new_policy_keypair, subkey_id, revocation_id, revocation_reason));
+        self
     }
 
     /// Set the publish signing key on this identity.
-    pub fn set_publish_key(mut self, master_key: &SecretKey, new_publish_keypair: SignKeypair, revocation_reason: RevocationReason) -> Result<Self> {
-        let signed = SignedValue::new(master_key, self.keychain().alpha(), new_publish_keypair)?;
-        let wrapped = SignedOrRecoveredKeypair::Signed(signed);
-        self.set_keychain(self.keychain().clone().set_publish_key(master_key, wrapped, revocation_reason)?);
-        Ok(self)
+    pub fn set_publish_key(mut self, new_publish_keypair: PublishKeypair, subkey_id: KeyID, revocation_id: RevocationID, revocation_reason: RevocationReason) -> Self {
+        self.set_keychain(self.keychain().clone().set_publish_key(new_publish_keypair, subkey_id, revocation_id, revocation_reason));
+        self
     }
 
     /// Set the root signing key on this identity.
-    pub fn set_root_key(mut self, master_key: &SecretKey, new_root_keypair: SignKeypair, revocation_reason: RevocationReason) -> Result<Self> {
-        let signed = SignedValue::new(master_key, self.keychain().alpha(), new_root_keypair)?;
-        let wrapped = SignedOrRecoveredKeypair::Signed(signed);
-        self.set_keychain(self.keychain().clone().set_root_key(master_key, wrapped, revocation_reason)?);
-        self.set_root_signature(self.generate_root_signature(master_key)?);
-        self.set_extra_data(self.extra_data().clone().resign(master_key, self.keychain().root())?);
-        self.verify()?;
-        Ok(self)
+    pub fn set_root_key(mut self, new_root_keypair: RootKeypair, subkey_id: KeyID, revocation_id: RevocationID, revocation_reason: RevocationReason) -> Self {
+        self.set_keychain(self.keychain().clone().set_root_key(new_root_keypair, subkey_id, revocation_id, revocation_reason));
+        self
     }
 
     /// Add a new subkey to our identity.
-    pub fn add_subkey<T: Into<String>>(mut self, master_key: &SecretKey, key: Key, name: T, description: Option<T>) -> Result<Self> {
-        self.set_keychain(self.keychain().clone().add_subkey(master_key, key, name, description)?);
-        self.set_root_signature(self.generate_root_signature(master_key)?);
-        self.verify()?;
-        Ok(self)
+    pub fn add_subkey<T: Into<String>>(mut self, key_id: KeyID, key: Key, name: T, description: Option<T>) -> Self {
+        self.set_keychain(self.keychain().clone().add_subkey(key_id, key, name, description));
+        self
     }
 
     /// Revoke one of our subkeys, for instance if it has been compromised.
-    pub fn revoke_subkey(mut self, master_key: &SecretKey, key_id: &KeyID, reason: RevocationReason) -> Result<Self> {
-        self.set_keychain(self.keychain().clone().revoke_subkey(master_key, key_id, reason)?);
-        self.set_root_signature(self.generate_root_signature(master_key)?);
-        self.verify()?;
+    pub fn revoke_subkey(mut self, key_id: &KeyID, revocation_id: RevocationID, reason: RevocationReason) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().revoke_subkey(key_id, revocation_id, reason)?);
         Ok(self)
     }
 
     /// Remove a subkey from the keychain.
-    pub fn delete_subkey(mut self, master_key: &SecretKey, key_id: &KeyID) -> Result<Self> {
+    pub fn delete_subkey(mut self, key_id: &KeyID) -> Result<Self> {
         self.set_keychain(self.keychain().clone().delete_subkey(key_id)?);
-        self.set_root_signature(self.generate_root_signature(master_key)?);
-        self.verify()?;
+        Ok(self)
+    }
+
+    /// Set the nickname on this identity
+    pub fn set_nickname(mut self, nickname: Option<&str>) -> Self {
+        self.extra_data_mut().set_nickname(nickname.map(|x| String::from(x)));
+        self
+    }
+
+    /// Add a forward to this identity
+    pub fn add_forward<T: Into<String>>(mut self, name: T, ty: ForwardType, is_default: bool) -> Result<Self> {
+        let name: String = name.into();
+        if self.extra_data().forwards().iter().find(|x| x.name() == &name).is_some() {
+            Err(Error::DuplicateName)?;
+        }
+        let forward = Forward::new(name, ty, is_default);
+        self.extra_data_mut().forwards_mut().push(forward);
         Ok(self)
     }
 
@@ -480,8 +259,10 @@ impl Identity {
 
     /// Verify that the given stamp was actually signed by this identity.
     pub fn verify_stamp(&self, stamp: &Stamp) -> Result<()> {
-        let root_keys = self.keychain().keys_root();
-        Keychain::try_keys(&root_keys, |sign_keypair| stamp.verify(sign_keypair))
+        let root_keys = self.keychain().keys_root().into_iter()
+            .map(|x| x.deref())
+            .collect::<Vec<_>>();
+        Keychain::try_keys(&root_keys, |sign_keypair| stamp.verify(&sign_keypair.clone().into()))
     }
 
     /// Revoke a stamp we've made.
@@ -502,41 +283,16 @@ impl Identity {
         stamp.revoke(master_key, self.keychain().root(), date_revoked)
     }
 
-    /// Set the nickname on this identity
-    pub fn set_nickname(mut self, master_key: &SecretKey, nickname: Option<&str>) -> Result<Self> {
-        if let Some(nickname) = nickname {
-            let signed = SignedValue::new(master_key, self.keychain().root(), String::from(nickname))?;
-            self.extra_data_mut().set_nickname(Some(signed));
-        } else {
-            self.extra_data_mut().set_nickname(None);
-        }
-        self.set_root_signature(self.generate_root_signature(master_key)?);
-        self.verify()?;
-        Ok(self)
-    }
-
-    /// Add a forward to this identity
-    pub fn add_forward<T: Into<String>>(mut self, master_key: &SecretKey, name: T, ty: ForwardType, is_default: bool) -> Result<Self> {
-        let name: String = name.into();
-        if self.extra_data().forwards().iter().find(|x| x.value().name() == &name).is_some() {
-            Err(Error::DuplicateName)?;
-        }
-        let forward = Forward::new(name.into(), ty, is_default);
-        let signed = SignedValue::new(master_key, self.keychain().root(), forward)?;
-        self.extra_data_mut().forwards_mut().push(signed);
-        Ok(self)
-    }
-
     /// Grab this identity's nickname, if it has one.
     pub fn nickname_maybe(&self) -> Option<String> {
-        self.extra_data().nickname().as_ref().map(|x| x.value().clone())
+        self.extra_data().nickname().clone()
     }
 
     /// Return all emails associated with this identity.
     pub fn emails(&self) -> Vec<String> {
         let mut forwards = self.extra_data().forwards().iter()
             .filter_map(|x| {
-                match x.value().val() {
+                match x.val() {
                     ForwardType::Email(ref email) => Some(email.clone()),
                     _ => None,
                 }
@@ -560,7 +316,7 @@ impl Identity {
         // claims department.
         self.extra_data().forwards().iter()
             .find_map(|x| {
-                match (x.value().is_default(), x.value().val()) {
+                match (x.is_default(), x.val()) {
                     (true, ForwardType::Email(ref email)) => Some(email.clone()),
                     _ => None,
                 }
@@ -610,10 +366,6 @@ impl Identity {
 
     /// Test if a master key is correct.
     pub fn test_master_key(&self, master_key: &SecretKey) -> Result<()> {
-        if !self.is_owned() {
-            Err(Error::IdentityNotOwned)?;
-        }
-
         let test_bytes = sodiumoxide::randombytes::randombytes(32);
         if self.keychain().alpha().has_private() {
             self.keychain().alpha().sign(master_key, test_bytes.as_slice())?;
@@ -628,135 +380,34 @@ impl Identity {
     }
 }
 
-impl Public for Identity {
-    fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        clone.set_keychain(self.keychain().clone().strip_private());
-        let claims = self.claims().clone().into_iter()
-            .map(|mut x| {
-                x.set_claim(x.claim().strip_private());
-                x
-            })
-            .collect::<Vec<_>>();
-        clone.set_claims(claims);
-        clone
-    }
-}
-
-impl From<Identity> for VersionedIdentity {
-    fn from(identity: Identity) -> Self {
-        VersionedIdentity::V1(identity)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        crypto::key,
+        util,
     };
-    use std::convert::TryFrom;
-    use std::str::FromStr;
 
     fn gen_master_key() -> SecretKey {
         SecretKey::new_xsalsa20poly1305()
     }
 
     #[test]
-    fn identity_create_id() {
-        let master_key = key::tests::secret_from_vec(vec![204, 99, 124, 137, 60, 193, 27, 37, 163, 44, 38, 220, 143, 41, 140, 208, 123, 252, 92, 162, 128, 121, 45, 191, 61, 66, 60, 127, 62, 5, 191, 54]);
-        let alpha_keypair = SignKeypair::new_ed25519_from_seed(&master_key, &[73, 143, 57, 166, 10, 223, 84, 226, 97, 210, 203, 29, 94, 84, 29, 82, 50, 82, 146, 249, 219, 3, 217, 111, 131, 216, 81, 167, 72, 253, 111, 158]).unwrap();
-        let date = Timestamp::from_str("2067-03-12T12:03:05Z").unwrap();
-        let id = Identity::create_id(&master_key, &alpha_keypair, &Timestamp::from(date)).unwrap();
-        let id_str = String::try_from(&id).unwrap();
-        assert_eq!(&id_str, "WPoPmQt7TKgYxOK2FAEKt3obp0oCuqdYrQr_mcNFcmNcV06IEKO68SkNDTWBZ7VFcdNSv219RUpQs47sLjV-AgA");
-    }
-
-    #[test]
-    fn identity_new_with_alpha() {
-        let master_key = key::tests::secret_from_vec(vec![204, 99, 124, 137, 60, 193, 27, 37, 163, 44, 38, 220, 143, 41, 140, 208, 123, 252, 92, 162, 128, 121, 45, 191, 61, 66, 60, 127, 62, 5, 191, 54]);
-        let alpha_keypair = SignKeypair::new_ed25519_from_seed(&master_key, &[73, 143, 57, 166, 10, 223, 84, 226, 97, 210, 203, 29, 94, 84, 29, 82, 50, 82, 146, 249, 219, 3, 217, 111, 131, 216, 81, 167, 72, 253, 111, 158]).unwrap();
-        let now = Timestamp::from_str("2067-03-12T12:03:05Z").unwrap();
-        let identity = Identity::new_with_alpha(&master_key, now.clone(), alpha_keypair.clone()).unwrap();
-        let id_str = String::try_from(identity.id()).unwrap();
-        assert_eq!(&id_str, "WPoPmQt7TKgYxOK2FAEKt3obp0oCuqdYrQr_mcNFcmNcV06IEKO68SkNDTWBZ7VFcdNSv219RUpQs47sLjV-AgA");
-        assert_eq!(identity.keychain().alpha(), &alpha_keypair);
-        assert_eq!(identity.created(), &now);
-    }
-
-    #[test]
-    fn identity_new_test_master() {
+    fn identity_create() {
         let master_key = gen_master_key();
-        let master_key_fake = gen_master_key();
-        assert!(master_key != master_key_fake);
-        let identity = Identity::new(&master_key, Timestamp::now()).unwrap();
-        identity.test_master_key(&master_key).unwrap();
-        assert_eq!(identity.test_master_key(&master_key_fake), Err(Error::CryptoOpenFailed));
-    }
+        let id = IdentityID::random();
+        let alpha = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root = RootKeypair::new_ed25519(&master_key).unwrap();
+        let created = Timestamp::now();
+        let identity = Identity::create(id.clone(), alpha.clone(), policy.clone(), publish.clone(), root.clone(), created.clone());
 
-    #[test]
-    fn identity_verify() {
-        let master_key = gen_master_key();
-        let mut identity = Identity::new(&master_key, Timestamp::now()).unwrap()
-            .make_claim(&master_key, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public(String::from("Hippie Steve")))).unwrap()
-            .set_nickname(&master_key, Some("slaymaster69420")).unwrap();
-        let claim = identity.claims()[1].claim();
-
-        let master_key2 = gen_master_key();
-        let identity2 = Identity::new(&master_key2, Timestamp::now()).unwrap();
-        let stamp = Stamp::stamp(&master_key2, identity2.keychain().root(), identity2.id(), identity.id(), Confidence::Medium, Timestamp::now(), claim, None).unwrap();
-        identity = identity.accept_stamp(&master_key, Timestamp::now(), &identity2.into(), stamp).unwrap();
-        identity.verify().unwrap();
-
-        macro_rules! with_fail {
-            ($id:ident, $mod:expr, $errstr:expr) => {
-                let mut $id = identity.clone();
-                $mod;
-                assert_eq!($id.verify(), Err(Error::IdentityVerificationFailed($errstr.into())));
-            }
-        }
-
-        with_fail!{ id2, id2.set_id(IdentityID::random()), "identity.id" }
-        with_fail!{ id3, id3.keychain_mut().set_alpha(SignKeypair::new_ed25519(&master_key).unwrap()), "identity.id" }
-        with_fail!{ id4, id4.keychain_mut().policy_mut().set_value(SignKeypair::new_ed25519(&master_key).unwrap()), "identity.keychain.policy" }
-        with_fail!{ id5, match id5.keychain_mut().publish_mut() {
-            SignedOrRecoveredKeypair::Signed(ref mut signed) => {
-                signed.set_value(SignKeypair::new_ed25519(&master_key).unwrap());
-            }
-            _ => {}
-        }, "identity.keychain.publish" }
-        with_fail!{ id6, match id6.keychain_mut().root_mut() {
-            SignedOrRecoveredKeypair::Signed(ref mut signed) => {
-                signed.set_value(SignKeypair::new_ed25519(&master_key).unwrap());
-            }
-            _ => {}
-        }, "identity.keychain.root" }
-        with_fail!{ id7, id7.set_root_signature(identity.keychain().policy().signature().clone()), "identity.root_signature" }
-        with_fail!{ id8, id8.claims_mut()[0].claim_mut().set_spec(ClaimSpec::Identity(IdentityID::random())), format!("identity.claims[{}].id", String::try_from(identity.claims().first().unwrap().claim().id()).unwrap() ) }
-        with_fail!{ id9, id9.claims_mut()[1].set_stamps(vec![]), "identity.root_signature" }
-        let claim_id = String::from(identity.claims()[1].claim().id());
-        let stamp_id = String::from(identity.claims()[1].stamps()[0].stamp().id());
-        with_fail!{ id9, id9.claims_mut()[1].stamps_mut()[0].set_recorded(Timestamp::from_str("1724-01-01T14:16:18Z").unwrap()), format!("identity.claims[{}].stamps[{}]", claim_id, stamp_id) }
-        with_fail!{ id9, id9.claims_mut()[1].stamps_mut()[0].stamp_mut().entry_mut().set_stamper(IdentityID::random()), format!("identity.claims[{}].stamps[{}]", claim_id, stamp_id) }
-        let nickname = SignedValue::new(&master_key, identity.keychain().root(), String::from("slaymaster69421")).unwrap();
-        with_fail!{ id10, id10.extra_data_mut().set_nickname(Some(nickname)), "identity.root_signature" }
-        with_fail!{ id11, id11.extra_data_mut().set_nickname(None), "identity.root_signature" }
-
-        unimplemented!("forwards");
-
-        // write function/macro that tests
-        //   - id
-        //   - alpha key
-        //   - policy/publish/root key
-        //   - subkeys
-        //   - root sig
-        //   - claims
-        //   - stamps
-        //   - extra data
-        //     - nickname
-        //     - forwards
-        //
-        // change each of the above ^ & test
+        assert_eq!(identity.id(), &id);
+        assert_eq!(identity.created(), &created);
+        assert_eq!(identity.keychain().alpha(), &alpha);
+        assert_eq!(identity.keychain().policy(), &policy);
+        assert_eq!(identity.keychain().publish(), &publish);
+        assert_eq!(identity.keychain().root(), &root);
     }
 
     #[test]
@@ -826,17 +477,12 @@ mod tests {
 
     #[test]
     fn identity_set_nickname() {
-        let master_key = gen_master_key();
-        let identity = Identity::new(&master_key, Timestamp::now()).unwrap();
-        let root_sig = identity.root_signature().clone();
+        let (_master_key, identity) = util::test::setup_identity_with_subkeys();
         assert_eq!(identity.extra_data().nickname().is_none(), true);
-        let identity = identity.set_nickname(&master_key, Some("fascistpig")).unwrap();
-        identity.verify().unwrap();
-        assert_eq!(identity.extra_data().nickname().as_ref().unwrap().value(), "fascistpig");
-        assert!(identity.root_signature() != &root_sig);
-        let identity = identity.set_nickname(&master_key, None).unwrap();
-        identity.verify().unwrap();
-        assert_eq!(identity.root_signature(), &root_sig);
+        let identity = identity.set_nickname(Some("fascistpig"));
+        assert_eq!(identity.extra_data().nickname().as_ref().unwrap(), "fascistpig");
+        let identity = identity.set_nickname(None);
+        assert_eq!(identity.extra_data().nickname(), &None);
     }
 
     #[test]

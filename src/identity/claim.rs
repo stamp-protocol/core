@@ -9,18 +9,13 @@
 use crate::{
     error::{Error, Result},
     identity::{
-        AcceptedStamp,
-        IdentityID,
         Public,
+        stamp::Stamp,
+        identity::IdentityID,
     },
-    crypto::key::{SecretKey, SignKeypair},
+    crypto::key::SecretKey,
     private::MaybePrivate,
-    util::{
-        Timestamp,
-        Date,
-        sign::DateSigner,
-        ser,
-    },
+    util::Date,
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
@@ -29,9 +24,6 @@ use url::Url;
 
 object_id! {
     /// A unique identifier for claims.
-    ///
-    /// We generate this by signing the claim's data in a `DateSigner` with our
-    /// current private signing key.
     ClaimID
 }
 
@@ -312,31 +304,19 @@ impl Public for ClaimSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Claim {
-    /// The unique ID of this claim, created by signing the claim's data in a
-    /// `DateSigner` with our current signing keypair.
+    /// The unique ID of this claim.
     id: ClaimID,
-    /// The date we created the claim.
-    created: Timestamp,
     /// The data we're claiming.
     spec: ClaimSpec,
 }
 
 impl Claim {
     /// Create a new claim.
-    fn new(id: ClaimID, now: Timestamp, spec: ClaimSpec) -> Self {
+    fn new(id: ClaimID, spec: ClaimSpec) -> Self {
         Self {
             id,
-            created: now,
             spec,
         }
-    }
-
-    /// Verify that the signature of this claim matches the content.
-    pub fn verify(&self, sign_keypair: &SignKeypair) -> Result<()> {
-        let stripped_spec = self.spec().strip_private();
-        let datesigner = DateSigner::new(self.created(), &stripped_spec);
-        let serialized = ser::serialize(&datesigner)?;
-        sign_keypair.verify(self.id(), &serialized)
     }
 
     /// Given a claim we want to "instant verify" (ie, any claim type that can
@@ -404,25 +384,18 @@ pub struct ClaimContainer {
     /// The actual claim data
     claim: Claim,
     /// Stamps that have been made on our claim.
-    stamps: Vec<AcceptedStamp>,
+    stamps: Vec<Stamp>,
 }
 
 impl ClaimContainer {
     /// Create a new claim, sign it with our signing key, and return a container
     /// that holds the claim (with an empty set of stamps).
-    pub fn new<T: Into<Timestamp>>(master_key: &SecretKey, sign_keypair: &SignKeypair, now: T, spec: ClaimSpec) -> Result<Self> {
-        let now: Timestamp = now.into();
-        // stripping returns either the public data or the HMAC of the private
-        // data, giving us an unchanging item we van verify.
-        let stripped_spec = spec.strip_private();
-        let datesigner = DateSigner::new(&now, &stripped_spec);
-        let serialized = ser::serialize(&datesigner)?;
-        let signature = sign_keypair.sign(master_key, &serialized)?;
-        let claim = Claim::new(ClaimID(signature), now, spec);
-        Ok(Self {
+    pub fn new(claim_id: ClaimID, spec: ClaimSpec) -> Self {
+        let claim = Claim::new(claim_id, spec);
+        Self {
             claim,
             stamps: Vec::new(),
-        })
+        }
     }
 
     /// Determines if this claim has private data associated with it.
@@ -444,8 +417,8 @@ mod tests {
     use super::*;
     use crate::{
         error::Error,
-        identity::IdentityID,
-        util::Timestamp,
+        crypto::key::SignKeypair,
+        identity::{IdentityID},
     };
     use std::convert::TryFrom;
     use std::str::FromStr;
@@ -526,21 +499,17 @@ mod tests {
     fn claimcontainer_claimspec_has_private() {
         macro_rules! claim_pub_priv {
             (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
-                let (master_key, _root_keypair, spec, spec2) = make_specs!($claimmaker, $val);
+                let (_master_key, _root_keypair, spec, spec2) = make_specs!($claimmaker, $val);
                 assert_eq!(spec.has_private(), true);
                 match $getmaybe(spec.clone()) {
                     MaybePrivate::Private(_, Some(_)) => {},
                     _ => panic!("bad maybe val: {}", stringify!($claimtype)),
                 }
-                let now = Timestamp::now();
-                let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-                let claim = ClaimContainer::new(&master_key, &sign_keypair, now, spec).unwrap();
+                let claim = ClaimContainer::new(ClaimID::random(), spec);
                 assert_eq!(claim.has_private(), true);
 
                 assert_eq!(spec2.has_private(), false);
-                let now2 = Timestamp::now();
-                let sign_keypair2 = SignKeypair::new_ed25519(&master_key).unwrap();
-                let claim2 = ClaimContainer::new(&master_key, &sign_keypair2, now2, spec2).unwrap();
+                let claim2 = ClaimContainer::new(ClaimID::random(), spec2);
                 assert_eq!(claim2.has_private(), false);
             };
             ($claimty:ident, $val:expr) => {
@@ -660,9 +629,9 @@ mod tests {
         }
         macro_rules! assert_instant {
             (raw, $claimmaker:expr, $val:expr, $expected:expr) => {
-                let (master_key, root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
-                let container_private = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
-                let container_public = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_public).unwrap();
+                let (_master_key, _root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
+                let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
 
                 match_container! { container_public, $expected }
                 match_container! { container_private, $expected }
@@ -702,10 +671,10 @@ mod tests {
     fn claim_as_public() {
         macro_rules! as_pub {
             (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
-                let (master_key, root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let (master_key, _root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
                 let fake_master_key = SecretKey::new_xsalsa20poly1305();
-                let container_private = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
-                let container_public = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_public).unwrap();
+                let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
+                let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
                 let opened_claim = container_private.claim().as_public(&master_key).unwrap();
                 assert_eq!(container_private.has_private(), true);
                 assert_eq!(container_public.has_private(), false);
@@ -723,8 +692,8 @@ mod tests {
             };
         }
 
-        let (master_key, root_keypair, spec_private, _) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
-        let container_private = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
+        let (master_key, _root_keypair, spec_private, _) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
+        let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
         match (container_private.claim().spec(), container_private.claim().as_public(&master_key).unwrap().spec()) {
             (ClaimSpec::Identity(val1), ClaimSpec::Identity(val2)) => {
                 assert_eq!(val1, val2);
@@ -751,45 +720,12 @@ mod tests {
     }
 
     #[test]
-    fn claimcontainer_new_claim_verify() {
-        macro_rules! make_new {
-            (raw, $claimmaker:expr, $val:expr) => {
-                let (master_key, root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
-                let fake_root_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-                let container_private = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
-                let container_public = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_public).unwrap();
-                container_private.claim().verify(&root_keypair).unwrap();
-                container_public.claim().verify(&root_keypair).unwrap();
-                assert_eq!(container_private.claim().verify(&fake_root_keypair), Err(Error::CryptoSignatureVerificationFailed));
-                assert_eq!(container_public.claim().verify(&fake_root_keypair), Err(Error::CryptoSignatureVerificationFailed));
-            };
-
-            ($claimty:ident, $val:expr) => {
-                make_new! { raw, |maybe, _| ClaimSpec::$claimty(maybe), $val }
-            };
-        }
-
-        make_new! { raw,  |_, val| ClaimSpec::Identity(val), IdentityID::random() }
-        make_new! { Name, String::from("Warry Leber") }
-        make_new! { Birthday, Date::from_str("1967-12-03").unwrap() }
-        make_new! { Email, String::from("andrew@filllllllibuster.com") }
-        make_new! { Photo, ClaimBin(vec![1, 2, 3]) }
-        make_new! { Pgp, String::from("45de280a") }
-        make_new! { Domain, String::from("shiny-happy-things.com") }
-        make_new! { Url, Url::parse("https://if-corporate-america.com/supports-your-worldview").unwrap() }
-        make_new! { HomeAddress, String::from("8989 Poo poo Ln") }
-        make_new! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        make_new! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
-        make_new! { raw, |maybe, _| ClaimSpec::Extension(String::from("tuna-melt-tuna-melt-TUNA-MELT-TUNA-MELT"), maybe), ClaimBin(vec![123, 122, 100]) }
-    }
-
-    #[test]
     fn claimcontainer_has_private_strip() {
         macro_rules! has_priv {
             (raw, $claimmaker:expr, $val:expr, $haspriv:expr) => {
-                let (master_key, root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
-                let container_private = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_private).unwrap();
-                let container_public = ClaimContainer::new(&master_key, &root_keypair, Timestamp::now(), spec_public).unwrap();
+                let (_master_key, _root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
+                let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
                 assert_eq!(container_private.has_private(), $haspriv);
                 assert_eq!(container_public.has_private(), false);
 

@@ -94,4 +94,5 @@ pub mod util;
 pub mod private;
 pub mod crypto;
 pub mod identity;
+pub mod dag;
 
