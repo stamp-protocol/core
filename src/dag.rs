@@ -225,7 +225,7 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    fn new(master_key: &SecretKey, identity_maybe: &Option<Identity>, sign_with: SignWith, entry: TransactionEntry) -> Result<Self> {
+    pub(crate) fn new(master_key: &SecretKey, identity_maybe: &Option<Identity>, sign_with: SignWith, entry: TransactionEntry) -> Result<Self> {
         let serialized = ser::serialize(&entry.strip_private())?;
         let id = match identity_maybe.as_ref() {
             // we have an identity, meaning this is NOT a create/genesis trans
@@ -261,7 +261,7 @@ impl Transaction {
     }
 
     /// Verify this transaction's signature against its public data.
-    fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
+    pub(crate) fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
         let serialized = ser::serialize(&self.entry().strip_private())?;
         match identity_maybe.as_ref() {
             // if we have an identity, we can verify this transaction using the
@@ -319,32 +319,33 @@ pub enum TransactionVersioned {
     V1(Transaction),
 }
 
-impl TransactionVersioned {
-    /// Verify this transaction's signature.
-    fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
+// NOTE: if we ever add more versions, this will need to be removed and we'll
+// have to add a more dedicated interface. but for now, we do the lazy way and
+// just point all versioned transactions to their inner transaction and call it
+// a day. this is still useful, because although adding a version will require
+// changing an assload of code, it makes sure our storage layer is future-proof
+// which is what's really important. code can change, dealing with unversioned
+// protocols is a bit trickier.
+impl Deref for TransactionVersioned {
+    type Target = Transaction;
+    fn deref(&self) -> &Self::Target {
         match self {
-            Self::V1(trans) => trans.verify(identity_maybe),
+            Self::V1(trans) => trans,
         }
     }
 }
 
 impl GraphInfo for TransactionVersioned {
     fn id(&self) -> &TransactionID {
-        match self {
-            Self::V1(trans) => trans.id(),
-        }
+        self.deref().id()
     }
 
     fn created(&self) -> &Timestamp {
-        match self {
-            Self::V1(trans) => trans.entry().created(),
-        }
+        self.deref().entry().created()
     }
 
     fn previous_transactions(&self) -> &Vec<TransactionID> {
-        match self {
-            Self::V1(trans) => trans.entry().previous_transactions(),
-        }
+        self.deref().entry().previous_transactions()
     }
 }
 
@@ -362,18 +363,19 @@ impl Public for TransactionVersioned {
     }
 }
 
+/// Used to tell the transaction system which key to sign the transaction with.
+pub(crate) enum SignWith {
+    Alpha,
+    Policy,
+    Root,
+}
+
 /// A container that holds a set of transactions.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transactions {
     /// The actual transactions.
     transactions: Vec<TransactionVersioned>,
-}
-
-enum SignWith {
-    Alpha,
-    Policy,
-    Root,
 }
 
 impl Transactions {
@@ -494,7 +496,8 @@ impl Transactions {
             .collect::<Vec<_>>()
     }
 
-    /// Push a transaction into the transactions list, and make sure it actually runs.
+    /// Push a transaction into the transactions list, and return the resulting
+    /// identity object from running all transactions in order.
     fn push_transaction<T: Into<Timestamp>>(&mut self, master_key: &SecretKey, sign_with: SignWith, now: T, body: TransactionBody) -> Result<Identity> {
         let leaves = Self::find_leaf_transactions(self.transactions());
         let entry = TransactionEntry::new(now, leaves, body);
@@ -569,6 +572,7 @@ impl Public for Transactions {
         clone
     }
 }
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -577,31 +581,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn create_identity() {
-        let transactions = Transactions::new();
-        let master_key = SecretKey::new_xsalsa20poly1305();
-        let now = Timestamp::now();
-        let alpha = AlphaKeypair::new_ed25519(&master_key).unwrap();
-        let policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
-        let publish = PublishKeypair::new_ed25519(&master_key).unwrap();
-        let root = RootKeypair::new_ed25519(&master_key).unwrap();
-        let transactions2 = transactions.create_identity(&master_key, now, alpha.clone(), policy.clone(), publish.clone(), root.clone()).unwrap();
-        let identity = transactions2.build_identity().unwrap();
-        assert_eq!(identity.id(), &IdentityID(transactions2.transactions()[0].id().deref().clone()));
-        assert_eq!(identity.keychain().alpha(), &alpha);
-        assert_eq!(identity.keychain().policy(), &policy);
-        assert_eq!(identity.keychain().publish(), &publish);
-        assert_eq!(identity.keychain().root(), &root);
-        match identity.claims()[0].claim().spec() {
-            ClaimSpec::Identity(ref id) => {
-                assert_eq!(id, identity.id())
-            }
-            _ => panic!("bad claim type"),
-        }
+    fn trans_body_strip() {
+        unimplemented!();
     }
 
     #[test]
-    fn transaction_ordering() {
+    fn trans_entry_strip() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn trans_new_verify() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn trans_strip() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn trans_versioned_verify() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn trans_versioned_strip() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn transactions_order() {
         #[derive(Debug, Clone)]
         struct MyTransaction {
             id: TransactionID,
@@ -674,6 +684,65 @@ mod tests {
             vec![&t01, &t05, &t04, &t03, &t02, &t06],
             vec![t01.id(), t02.id(), t03.id(), t04.id(), t05.id(), t06.id()]
         );
+    }
+
+    #[test]
+    fn transactions_build_identity() {
+        unimplemented!();
+    }
+
+    fn genesis() -> (SecretKey, Transactions) {
+        let transactions = Transactions::new();
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let now = Timestamp::now();
+        let alpha = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root = RootKeypair::new_ed25519(&master_key).unwrap();
+        let transactions2 = transactions.create_identity(&master_key, now, alpha.clone(), policy.clone(), publish.clone(), root.clone()).unwrap();
+        (master_key, transactions2)
+    }
+
+    #[test]
+    fn transactions_create_identity() {
+        let (_master_key, transactions) = genesis();
+        let identity = transactions.build_identity().unwrap();
+        assert_eq!(identity.id(), &IdentityID(transactions.transactions()[0].id().deref().clone()));
+        match &transactions.transactions()[0].entry().body() {
+            TransactionBody::CreateIdentityV1(ref alpha, ref policy, ref publish, ref root) => {
+                assert_eq!(identity.keychain().alpha(), alpha);
+                assert_eq!(identity.keychain().policy(), policy);
+                assert_eq!(identity.keychain().publish(), publish);
+                assert_eq!(identity.keychain().root(), root);
+            }
+            _ => panic!("bad transaction type"),
+        }
+        match identity.claims()[0].claim().spec() {
+            ClaimSpec::Identity(ref id) => {
+                assert_eq!(id, identity.id())
+            }
+            _ => panic!("bad claim type"),
+        }
+    }
+
+    #[test]
+    fn transactions_make_claim() {
+        let (master_key, transactions) = genesis();
+    }
+
+    #[test]
+    fn transactions_is_owned() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn transactions_test_master_key() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn transactions_strip() {
+        unimplemented!();
     }
 }
 
