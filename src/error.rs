@@ -128,14 +128,27 @@ pub enum Error {
     #[error("identity claim not found")]
     IdentityClaimNotFound,
 
+    /// The forward with that name couldn't be found
+    #[error("that forward couldn't be found")]
+    IdentityForwardNotFound,
+
     /// An operation is being performed on an object not owned by the current
     /// identity
     #[error("identity ID mismatch")]
     IdentityIDMismatch,
 
+    /// The identity has no recovery policy but SOMEONE (*not naming any names*)
+    /// is trying to execute a recovery request on it.
+    #[error("this identity has no recovery policy")]
+    IdentityMissingRecoveryPolicy,
+
     /// There were no private keys found in this identity.
     #[error("identity is not owned, but we attempted an operation requiring ownership")]
     IdentityNotOwned,
+
+    /// The stamp being operated on wasn't found
+    #[error("identity stamp not found")]
+    IdentityStampNotFound,
 
     /// The subkey being operated on wasn't found
     #[error("identity subkey not found")]

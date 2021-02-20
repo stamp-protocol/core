@@ -12,9 +12,8 @@
 
 use crate::{
     error::{Error, Result},
-    identity::Public,
     crypto::key::{SecretKey, SecretKeyNonce, Hmac, HmacKey},
-    util::ser,
+    util::{Public, ser},
 };
 use serde_derive::{Serialize, Deserialize};
 use std::marker::PhantomData;
@@ -213,16 +212,6 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned + Clone> MaybePrivate<T> 
         }
     }
 
-    /// Returns if this MaybePrivate has private data or not. This will be false
-    /// if this is a public value, or if it's private but the private data is
-    /// missing.
-    pub fn has_private(&self) -> bool {
-        match self {
-            Self::Private(_, Some(_)) => true,
-            _ => false,
-        }
-    }
-
     /// Determines if this container has any data at all.
     ///
     /// If deserializing from a public identity representation, it's quite
@@ -279,6 +268,13 @@ impl<T: Clone> Public for MaybePrivate<T> {
         match self {
             Self::Public(x) => Self::Public(x.clone()),
             Self::Private(sig, _) => Self::Private(sig.clone(), None),
+        }
+    }
+
+    fn has_private(&self) -> bool {
+        match self {
+            Self::Private(_, Some(_)) => true,
+            _ => false,
         }
     }
 }

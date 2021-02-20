@@ -199,6 +199,20 @@ impl FromStr for Date {
     }
 }
 
+pub trait Public: Clone {
+    /// Strip the private data from a object, returning only public data.
+    fn strip_private(&self) -> Self;
+
+    /// Returns whether or not this object has private data.
+    fn has_private(&self) -> bool;
+}
+
+pub trait PublicMaybe: Clone {
+    /// Strip the private data from a object, unless the object is entirely
+    /// private in which case return None.
+    fn strip_private_maybe(&self) -> Option<Self>;
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{

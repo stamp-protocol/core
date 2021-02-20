@@ -2,7 +2,7 @@ use crate::{
     crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
     identity::{
         identity::{IdentityID, Identity},
-        keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, KeyID, Key},
+        keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, Key},
     },
     util::Timestamp,
 };
@@ -21,8 +21,8 @@ pub fn setup_identity_with_subkeys() -> (SecretKey, Identity) {
     let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
     let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
     let identity = Identity::create(IdentityID::random(), alpha_keypair, policy_keypair, publish_keypair, root_keypair, Timestamp::now())
-        .add_subkey(KeyID::random(), Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap()), "sign", None)
-        .add_subkey(KeyID::random(), Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap()), "cryptololol", None);
+        .add_subkey(Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap()), "sign", None).unwrap()
+        .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap()), "cryptololol", None).unwrap();
     (master_key, identity)
 }
 

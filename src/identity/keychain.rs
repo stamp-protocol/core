@@ -14,28 +14,13 @@
 
 use crate::{
     error::{Error, Result},
-    identity::{Public, PublicMaybe},
-    crypto::key::{SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
+    crypto::key::{KeyID, SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
     private::Private,
-    util::{sign::Signable},
+    util::{Public, PublicMaybe, sign::Signable},
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
-
-object_id! {
-    /// A unique identifier for a key. This is a signature of the key itself.
-    ///
-    /// A bit different from other IDs in that it must be regenerated when the root
-    /// keypair changes.
-    KeyID
-}
-
-object_id! {
-    /// A unique identifier for a key revocation. This is a signature of the
-    /// revocation.
-    RevocationID
-}
 
 /// Allows us to create new signature types from the base SignKeypairSignature.
 pub trait ExtendKeypairSignature: From<SignKeypairSignature> + Clone + PartialEq + Deref<Target = SignKeypairSignature> + serde::Serialize + serde::de::DeserializeOwned {}
@@ -77,9 +62,10 @@ pub trait ExtendKeypair: From<SignKeypair> + Clone + PartialEq + Deref<Target = 
         Ok(Self::from(self.deref().clone().reencrypt(previous_master_key, new_master_key)?))
     }
 
-    /// Determines if this keypair has private data included (ie, a private key).
-    fn has_private(&self) -> bool {
-        self.deref().has_private()
+    /// Create a KeyID from this keypair.
+    fn key_id(&self) -> KeyID {
+        let inner: &SignKeypair = self.deref();
+        KeyID::SignKeypair(inner.clone().into())
     }
 }
 
@@ -145,6 +131,10 @@ macro_rules! make_keytype {
             fn strip_private(&self) -> Self {
                 Self::from(self.deref().strip_private())
             }
+
+            fn has_private(&self) -> bool {
+                self.deref().has_private()
+            }
         }
 
         impl PartialEq for $keytype {
@@ -172,10 +162,12 @@ make_keytype! { PublishKeypair, PublishKeypairPublic, PublishKeypairSignature }
 make_keytype! { RootKeypair, RootKeypairPublic, RootKeypairSignature }
 
 /// Why we are deprecating a key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RevocationReason {
     /// No reason. Feeling cute today, might revoke my keys, IDK.
     Unspecified,
+    /// This key is being replaced by the recovery mechanism.
+    Recovery,
     /// Replacing this key with another.
     Superseded,
     /// This key has been compromised.
@@ -190,20 +182,14 @@ pub enum RevocationReason {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Revocation {
-    /// Revocation signature, and also unique ID for this revocation.
-    id: RevocationID,
-    /// The permanent ID of the key we are revoking.
-    key_id: KeyID,
     /// The reason we're deprecating this key.
     reason: RevocationReason,
 }
 
 impl Revocation {
     /// Create a new revocation.
-    pub fn new(revocation_id: RevocationID, key_id: KeyID, reason: RevocationReason) -> Self {
+    pub fn new(reason: RevocationReason) -> Self {
         Self {
-            id: revocation_id,
-            key_id,
             reason,
         }
     }
@@ -305,6 +291,18 @@ impl Key {
         }
     }
 
+    /// Returns a KeyID for this key, if possible.
+    pub fn key_id(&self) -> Option<KeyID> {
+        match self {
+            Self::Policy(keypair) => Some(keypair.key_id()),
+            Self::Publish(keypair) => Some(keypair.key_id()),
+            Self::Root(keypair) => Some(keypair.key_id()),
+            Self::Sign(keypair) => Some(keypair.key_id()),
+            Self::Crypto(keypair) => Some(keypair.key_id()),
+            _ => None,
+        }
+    }
+
     /// Consumes the key, and re-encryptes it with a new master key.
     pub fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let key = match self {
@@ -364,18 +362,19 @@ impl PublicMaybe for Key {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Subkey {
-    /// They subkey's unique ID.
-    id: KeyID,
     /// The key itself.
     ///
-    /// Alright, Parker, shut up. Thank you, Parker. Shut up. Thank you. Nobody
-    /// thinks you're funny.
+    /// Alright, Parker, shut up. Thank you, Parker. Shut up. Thank you.
+    ///
+    ///
+    ///
+    ///
+    /// ...Nobody thinks you're funny.
     key: Key,
     /// The key's human-readable name, for example "email".
     ///
-    /// This should likely be unique if it's to be of any use, because people
-    /// can use this value to quickly find one of an identity's subkeys, for
-    /// instance on the command line.
+    /// This must be a unique value among all subkeys (even revoked ones). This
+    /// is used in many places to reference the key.
     name: String,
     /// The key's human-readable description, for example "Please send me
     /// encrypted emails using this key." Or "HAI THIS IS MY DOGECOIN ADDRESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS!!!1"
@@ -386,9 +385,8 @@ pub struct Subkey {
 
 impl Subkey {
     /// Create a new subkey, signed by our root key.
-    fn new<T: Into<String>>(id: KeyID, key: Key, name: T, description: Option<T>) -> Self {
+    fn new<T: Into<String>>(key: Key, name: T, description: Option<T>) -> Self {
         Self {
-            id,
             key,
             name: name.into(),
             description: description.map(|x| x.into()),
@@ -397,9 +395,12 @@ impl Subkey {
     }
 
     /// Revoke this subkey.
-    fn revoke(&mut self, revocation_id: RevocationID, reason: RevocationReason) {
-        let revocation = Revocation::new(revocation_id, self.id().clone(), reason);
-        self.revocation = Some(revocation);
+    fn revoke(&mut self, reason: RevocationReason, name_change: Option<String>) {
+        let revocation = Revocation::new(reason);
+        self.set_revocation(Some(revocation));
+        if let Some(new_name) = name_change {
+            self.set_name(new_name);
+        }
     }
 }
 
@@ -487,8 +488,13 @@ impl Keychain {
     }
 
     /// Find a subkey by ID. Relieves a bit of tedium.
-    pub fn subkey_by_id(&self, id: &KeyID) -> Option<&Subkey> {
-        self.subkeys().iter().find(|x| x.id() == id)
+    pub fn subkey_by_keyid(&self, keyid_str: &str) -> Option<&Subkey> {
+        self.subkeys().iter().find(|x| {
+            if let Some(key_id) = x.key_id() {
+                return key_id.as_string().starts_with(keyid_str);
+            }
+            false
+        })
     }
 
     /// Find a subkey by name. Relieves a bit of tedium.
@@ -505,88 +511,91 @@ impl Keychain {
 
     fn subkeys_root(&self) -> Vec<&RootKeypair> {
         self.subkeys().iter()
-            .map(|x| x.key().as_rootkey())
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
+            .filter_map(|x| x.key().as_rootkey())
             .collect::<Vec<_>>()
     }
 
     /// Grab all signing subkeys.
     pub fn subkeys_sign(&self) -> Vec<&SignKeypair> {
         self.subkeys().iter()
-            .map(|x| x.key().as_signkey())
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
+            .filter_map(|x| x.key().as_signkey())
             .collect::<Vec<_>>()
     }
 
     /// Grab all crypto subkeys.
     pub fn subkeys_crypto(&self) -> Vec<&CryptoKeypair> {
         self.subkeys().iter()
-            .map(|x| x.key().as_cryptokey())
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
+            .filter_map(|x| x.key().as_cryptokey())
             .collect::<Vec<_>>()
+    }
+
+    /// Add a subkey but check for dupes
+    fn add_subkey_impl(&mut self, subkey: Subkey) -> Result<()> {
+        if self.subkey_by_name(subkey.name()).is_some() {
+            Err(Error::DuplicateName)?;
+        }
+        self.subkeys_mut().push(subkey);
+        Ok(())
     }
 
     /// Replace our policy signing key.
     ///
     /// This moves the current policy key into the subkeys and revokes it.
-    pub(crate) fn set_policy_key(mut self, new_policy_keypair: PolicyKeypair, subkey_id: KeyID, revocation_id: RevocationID, reason: RevocationReason) -> Self {
+    pub(crate) fn set_policy_key(mut self, new_policy_keypair: PolicyKeypair, reason: RevocationReason) -> Result<Self> {
         let policy = self.policy().clone();
-        let mut subkey = Subkey::new(subkey_id, Key::Policy(policy), "policy key", Some("revoked policy key"));
-        subkey.revoke(revocation_id, reason);
-        self.subkeys_mut().push(subkey);
+        let mut subkey = Subkey::new(Key::Policy(policy), "policy key", Some("revoked policy key"));
+        subkey.revoke(reason, None);
+        self.add_subkey_impl(subkey)?;
         self.set_policy(new_policy_keypair);
-        self
+        Ok(self)
     }
 
     /// Replace our publish signing key.
     ///
     /// This moves the current publish key into the subkeys and revokes it.
-    pub(crate) fn set_publish_key(mut self, new_publish_keypair: PublishKeypair, subkey_id: KeyID, revocation_id: RevocationID, reason: RevocationReason) -> Self {
+    pub(crate) fn set_publish_key(mut self, new_publish_keypair: PublishKeypair, reason: RevocationReason) -> Result<Self> {
         let publish = self.publish().clone();
-        let mut subkey = Subkey::new(subkey_id, Key::Publish(publish), "publish key", Some("revoked publish key"));
-        subkey.revoke(revocation_id, reason);
-        self.subkeys_mut().push(subkey);
+        let mut subkey = Subkey::new(Key::Publish(publish), "publish key", Some("revoked publish key"));
+        subkey.revoke(reason, None);
+        self.add_subkey_impl(subkey)?;
         self.set_publish(new_publish_keypair);
-        self
+        Ok(self)
     }
 
     /// Replace our root signing key.
     ///
     /// This moves the current root key into the subkeys and revokes it.
-    pub(crate) fn set_root_key(mut self, new_root_keypair: RootKeypair, subkey_id: KeyID, revocation_id: RevocationID, reason: RevocationReason) -> Self {
+    pub(crate) fn set_root_key(mut self, new_root_keypair: RootKeypair, reason: RevocationReason) -> Result<Self> {
         let root = self.root().clone();
-        let mut subkey = Subkey::new(subkey_id, Key::Root(root), "root key", Some("revoked root key"));
-        subkey.revoke(revocation_id, reason);
-        self.subkeys_mut().push(subkey);
+        let mut subkey = Subkey::new(Key::Root(root), "root key", Some("revoked root key"));
+        subkey.revoke(reason, None);
+        self.add_subkey_impl(subkey)?;
         self.set_root(new_root_keypair);
-        self
+        Ok(self)
     }
 
     /// Add a new subkey to the keychain (and sign it).
-    pub(crate) fn add_subkey<T: Into<String>>(mut self, key_id: KeyID, key: Key, name: T, description: Option<T>) -> Self {
-        let subkey = Subkey::new(key_id, key, name, description);
-        self.subkeys_mut().push(subkey);
-        self
+    pub(crate) fn add_subkey<T: Into<String>>(mut self, key: Key, name: T, description: Option<T>) -> Result<Self> {
+        let subkey = Subkey::new(key, name, description);
+        self.add_subkey_impl(subkey)?;
+        Ok(self)
     }
 
     /// Revoke a subkey.
-    pub(crate) fn revoke_subkey(mut self, key_id: &KeyID, revocation_id: RevocationID, reason: RevocationReason) -> Result<Self> {
-        let key = self.subkeys_mut().iter_mut().find(|x| x.id() == key_id)
+    pub(crate) fn revoke_subkey(mut self, name: &str, reason: RevocationReason, new_name: Option<String>) -> Result<Self> {
+        let key = self.subkeys_mut().iter_mut().find(|x| x.name() == name)
             .ok_or(Error::IdentitySubkeyNotFound)?;
-        key.revoke(revocation_id, reason);
+        key.revoke(reason, new_name);
         Ok(self)
     }
 
     /// Delete a key from the keychain.
-    pub(crate) fn delete_subkey(mut self, key_id: &KeyID) -> Result<Self> {
-        let exists = self.subkey_by_id(key_id);
+    pub(crate) fn delete_subkey(mut self, name: &str) -> Result<Self> {
+        let exists = self.subkey_by_name(name);
         if exists.is_none() {
             Err(Error::IdentitySubkeyNotFound)?;
         }
-        self.subkeys_mut().retain(|x| x.id() != key_id);
+        self.subkeys_mut().retain(|x| x.name() != name);
         Ok(self)
     }
 }
@@ -610,6 +619,14 @@ impl Public for Keychain {
             .collect::<Vec<_>>();
         keychain_clone.set_subkeys(subkeys);
         keychain_clone
+    }
+
+    fn has_private(&self) -> bool {
+        self.alpha().has_private() ||
+            self.policy().has_private() ||
+            self.publish().has_private() ||
+            self.root().has_private() ||
+            self.subkeys().iter().find(|x| x.has_private()).is_some()
     }
 }
 
@@ -772,13 +789,10 @@ mod tests {
         let (master_key, keychain) = keychain_new();
         assert_eq!(keychain.subkeys().len(), 0);
         let old_key = keychain.policy().clone();
-        let subkey_id = KeyID::random();
-        let revocation_id = RevocationID::random();
         let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
-        let keychain = keychain.set_policy_key(new_policy_keypair, subkey_id.clone(), revocation_id.clone(), RevocationReason::Superseded);
+        let keychain = keychain.set_policy_key(new_policy_keypair, RevocationReason::Superseded).unwrap();
         assert_eq!(keychain.subkeys().len(), 1);
         assert_eq!(keychain.subkeys()[0].key().as_policykey(), Some(&old_key));
-        assert_eq!(keychain.subkeys()[0].revocation().as_ref().map(|x| x.id()), Some(&revocation_id));
     }
 
     #[test]
@@ -786,13 +800,10 @@ mod tests {
         let (master_key, keychain) = keychain_new();
         assert_eq!(keychain.subkeys().len(), 0);
         let old_key = keychain.publish().clone();
-        let subkey_id = KeyID::random();
-        let revocation_id = RevocationID::random();
         let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
-        let keychain = keychain.set_publish_key(new_publish_keypair, subkey_id.clone(), revocation_id.clone(), RevocationReason::Superseded);
+        let keychain = keychain.set_publish_key(new_publish_keypair, RevocationReason::Superseded).unwrap();
         assert_eq!(keychain.subkeys().len(), 1);
         assert_eq!(keychain.subkeys()[0].key().as_publishkey(), Some(&old_key));
-        assert_eq!(keychain.subkeys()[0].revocation().as_ref().map(|x| x.id()), Some(&revocation_id));
     }
 
     #[test]
@@ -800,13 +811,10 @@ mod tests {
         let (master_key, keychain) = keychain_new();
         assert_eq!(keychain.subkeys().len(), 0);
         let old_key = keychain.root().clone();
-        let subkey_id = KeyID::random();
-        let revocation_id = RevocationID::random();
         let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
-        let keychain = keychain.set_root_key(new_root_keypair, subkey_id.clone(), revocation_id.clone(), RevocationReason::Superseded);
+        let keychain = keychain.set_root_key(new_root_keypair, RevocationReason::Superseded).unwrap();
         assert_eq!(keychain.subkeys().len(), 1);
         assert_eq!(keychain.subkeys()[0].key().as_rootkey(), Some(&old_key));
-        assert_eq!(keychain.subkeys()[0].revocation().as_ref().map(|x| x.id()), Some(&revocation_id));
     }
 
     #[test]
@@ -824,26 +832,23 @@ mod tests {
         //
         // we want to make sure new keys are always added to the end of the
         // keychain.
-        let key_id = KeyID::random();
-        let keychain = keychain.add_subkey(key_id.clone(), sign, "MY signing key", Some("The key I use to sign things generally LOL"));
+        let keychain = keychain.add_subkey(sign, "MY signing key", Some("The key I use to sign things generally LOL")).unwrap();
         let last = keychain.subkeys().iter().last().unwrap();
         assert_eq!(last.name(), "MY signing key");
-        assert_eq!(Some(last.id()), keychain.subkey_by_name("MY signing key").map(|x| x.id()));
-        assert_eq!(Some(last.id()), keychain.subkey_by_id(&key_id).map(|x| x.id()));
+        assert_eq!(Some(last.name()), keychain.subkey_by_name("MY signing key").map(|x| x.name()));
+        assert_eq!(Some(last.name()), keychain.subkey_by_keyid(&last.key_id().unwrap().as_string()).map(|x| x.name()));
 
-        let key_id = KeyID::random();
-        let keychain = keychain.add_subkey(key_id.clone(), crypto, "MY crypto key", Some("Send me messages with this key OR ELSE"));
+        let keychain = keychain.add_subkey(crypto, "MY crypto key", Some("Send me messages with this key OR ELSE")).unwrap();
         let last = keychain.subkeys().iter().last().unwrap();
         assert_eq!(last.name(), "MY crypto key");
-        assert_eq!(Some(last.id()), keychain.subkey_by_name("MY crypto key").map(|x| x.id()));
-        assert_eq!(Some(last.id()), keychain.subkey_by_id(&key_id).map(|x| x.id()));
+        assert_eq!(Some(last.name()), keychain.subkey_by_name("MY crypto key").map(|x| x.name()));
+        assert_eq!(Some(last.name()), keychain.subkey_by_keyid(&last.key_id().unwrap().as_string()).map(|x| x.name()));
 
-        let key_id = KeyID::random();
-        let keychain = keychain.add_subkey(key_id.clone(), secret, "MY secret key", Some("I use this to encrypt files and shit"));
+        let keychain = keychain.add_subkey(secret, "MY secret key", Some("I use this to encrypt files and shit")).unwrap();
         let last = keychain.subkeys().iter().last().unwrap();
         assert_eq!(last.name(), "MY secret key");
-        assert_eq!(Some(last.id()), keychain.subkey_by_name("MY secret key").map(|x| x.id()));
-        assert_eq!(Some(last.id()), keychain.subkey_by_id(&key_id).map(|x| x.id()));
+        assert_eq!(Some(last.name()), keychain.subkey_by_name("MY secret key").map(|x| x.name()));
+        assert!(last.key_id().is_none());
 
         // make sure finding by name does what we expect (first matching key
         // with that name)
@@ -859,24 +864,28 @@ mod tests {
     fn keychain_revoke() {
         let (master_key, keychain) = keychain_new();
         let sign = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
-        let keychain = keychain.add_subkey(KeyID::random(), sign, "sign", None);
+        let keychain = keychain.add_subkey(sign, "sign", None).unwrap();
         // revoke a key, and verify the revocation
         let signkey = keychain.subkey_by_name("sign").unwrap().clone();
         assert!(signkey.revocation.is_none());
-        let revocation_id = RevocationID::random();
-        let keychain = keychain.revoke_subkey(signkey.id(), revocation_id.clone(), RevocationReason::Unspecified).unwrap();
-        let signkey2 = keychain.subkey_by_name("sign").unwrap();
-        assert_eq!(signkey2.revocation().as_ref().map(|x| x.id()), Some(&revocation_id));
+
+        let keychain2 = keychain.clone().revoke_subkey(signkey.name(), RevocationReason::Unspecified, None).unwrap();
+        let signkey = keychain2.subkey_by_name("sign").unwrap().clone();
+        assert_eq!(signkey.revocation().as_ref().unwrap().reason(), &RevocationReason::Unspecified);
+
+        let keychain3 = keychain.clone().revoke_subkey(signkey.name(), RevocationReason::Unspecified, Some("revoked:sign".into())).unwrap();
+        let signkey = keychain3.subkey_by_name("revoked:sign").unwrap().clone();
+        assert_eq!(signkey.revocation().as_ref().unwrap().reason(), &RevocationReason::Unspecified);
     }
 
     #[test]
     fn keychain_delete() {
         let (master_key, keychain) = keychain_new();
         let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap());
-        let keychain = keychain.add_subkey(KeyID::random(), crypto, "crypto", None);
+        let keychain = keychain.add_subkey(crypto, "crypto", None).unwrap();
         // delete a key LOL
         let cryptokey = keychain.subkey_by_name("crypto").unwrap().clone();
-        let keychain = keychain.delete_subkey(cryptokey.id()).unwrap();
+        let keychain = keychain.delete_subkey(cryptokey.name()).unwrap();
         let cryptokey2 = keychain.subkey_by_name("crypto");
         // checkmate, liberals
         assert!(cryptokey2.is_none());
@@ -889,9 +898,9 @@ mod tests {
         let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap());
         let secret = Key::new_secret(Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap());
         let keychain = keychain
-            .add_subkey(KeyID::random(), sign, "sign", None)
-            .add_subkey(KeyID::random(), crypto, "crypto", None)
-            .add_subkey(KeyID::random(), secret, "secret", None);
+            .add_subkey(sign, "sign", None).unwrap()
+            .add_subkey(crypto, "crypto", None).unwrap()
+            .add_subkey(secret, "secret", None).unwrap();
         assert_eq!(keychain.alpha().has_private(), true);
         assert_eq!(keychain.policy().has_private(), true);
         assert_eq!(keychain.publish().has_private(), true);

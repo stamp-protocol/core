@@ -37,10 +37,14 @@
 //! available at the time of verification.
 
 use crate::{
+    error::Result,
+    crypto::key::{SecretKey, SignKeypairPublic, SignKeypairSignature},
     identity::{
+        Public,
         identity::IdentityID,
+        keychain::{ExtendKeypair, PolicyKeypair, PolicyKeypairSignature, PublishKeypair, RootKeypair},
     },
-    crypto::key::{SignKeypair, SignKeypairPublic, SignKeypairSignature},
+    util::ser,
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
@@ -57,7 +61,7 @@ object_id! {
 }
 
 /// A condition that goes into a recovery policy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PolicyCondition {
     /// All of the given conditions must be met.
     All(Vec<PolicyCondition>),
@@ -69,22 +73,11 @@ pub enum PolicyCondition {
         /// Must have at least this many signatures.
         must_have: u16,
         /// The keys we're listing as identity recovery keys.
-        pubkeys: Vec<SignKeypair>,
+        pubkeys: Vec<SignKeypairPublic>,
     },
     /// A special condition that can never be satisfied. Useful for creating
     /// policies that cannot be fulfilled.
     Deny,
-}
-
-/// The actions we can take on a recovery request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum PolicyRequestAction {
-    /// Replace the current recovery policy.
-    ReplacePolicy(PolicyCondition),
-    /// Replace the current recovery key.
-    ReplaceRootKey(SignKeypairPublic),
-    /// Replace both the current policy *and* key.
-    ReplacePolicyAndRootKey(PolicyCondition, SignKeypairPublic),
 }
 
 /// A recovery policy.
@@ -93,6 +86,55 @@ pub enum PolicyRequestAction {
 pub struct RecoveryPolicy {
     id: PolicyID,
     conditions: PolicyCondition,
+}
+
+impl RecoveryPolicy {
+    /// Create a new recovery policy
+    pub(crate) fn new(id: PolicyID, conditions: PolicyCondition) -> Self {
+        Self {
+            id,
+            conditions,
+        }
+    }
+
+    pub(crate) fn validate_request(&self, identity_id: &IdentityID, request: &PolicyRequest) -> Result<()> {
+        match request.entry().action() {
+            PolicyRequestAction::ReplaceKeys(policy, ..) => request.verify(&policy)?,
+        }
+        drop(identity_id);
+        // TODO: make sure the request entry identity_id matches the current
+        //       identity id
+        // TODO: make sure the request entry policy matches the current policy
+        // TODO: make sure each request signature actually matches the entry
+        // TODO: make sure the given signatures match the conditions in the
+        //       policy itself
+        unimplemented!();
+    }
+}
+
+/// The actions we can take on a recovery request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PolicyRequestAction {
+    /// Replace the current policy-controlled keys.
+    ReplaceKeys(PolicyKeypair, PublishKeypair, RootKeypair),
+}
+
+impl Public for PolicyRequestAction {
+    fn strip_private(&self) -> Self {
+        match self {
+            Self::ReplaceKeys(policy, publish, root) => {
+                Self::ReplaceKeys(policy.strip_private(), publish.strip_private(), root.strip_private())
+            }
+        }
+    }
+
+    fn has_private(&self) -> bool {
+        match self {
+            Self::ReplaceKeys(policy, publish, root) => {
+                policy.has_private() || publish.has_private() || root.has_private()
+            }
+        }
+    }
 }
 
 /// The inner data of a recovery request. This object is what our recovery
@@ -109,28 +151,15 @@ pub struct PolicyRequestEntry {
     action: PolicyRequestAction,
 }
 
-/// A self-signed signature object. This doesn't need to satisfy the current
-/// recovery policy, because policy key signatures override policies. It does
-/// need to be verifiable even in the event that the policy keypair has been
-/// rotated, so we store the current alpha key's signature of the current policy
-/// key here so we can verify into the past.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct SelfSigned {
-
-}
-
-/// The object we use to sign our request. It can be a set of signatures that
-/// satisfy the conditions of the linked policy, or it can be self-signed by our
-/// policy keypair.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum PolicyRequestSignatures {
-    /// A set of signatures needed to satisfy a recovery policy, generally from
-    /// pre-selected trusted peer identity holders (like your grandparents).
-    Peer(Vec<SignKeypairSignature>),
-    /// A self-signed policy request (using our policy key, and the current
-    /// alpha keypair signature chain).
-    SelfSigned(SelfSigned),
+impl PolicyRequestEntry {
+    /// Create a new request entry.
+    pub(crate) fn new(identity_id: IdentityID, policy_id: PolicyID, action: PolicyRequestAction) -> Self {
+        Self {
+            identity_id,
+            policy_id,
+            action,
+        }
+    }
 }
 
 /// A recovery request. Must be signed and validated according to the identity's
@@ -139,43 +168,91 @@ pub enum PolicyRequestSignatures {
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct PolicyRequest {
-    /// The ID of this request. This is a signature (using the new recovery
+    /// The ID of this request. This is a signature (using the new policy
     /// keypair) of our `PolicyRequestEntry`.
-    request_id: RequestID,
+    id: RequestID,
     /// The actual policy request data: this contains the new policy and the new
     /// recovery key we'll use in the event the request satisfies the current
     /// policy.
     entry: PolicyRequestEntry,
-    /// The signatures on this recovery request's `new_recovery_pubkey` field.
-    /// These must satisfy the conditions of the current recovery policy before
-    /// this request can be considered valid.
-    signatures: PolicyRequestSignatures,
+    /// Here, we collect the signaturs needed to fulfill the policy. The request
+    /// can only be executed if the signatures match the conditions of the
+    /// policy.
+    ///
+    /// Each signature must sign the `entry` field (the [PolicyRequestEntry]
+    /// object).
+    signatures: Vec<SignKeypairSignature>,
 }
 
-/// An executed policy. Effectively, this is a [policy](RecoveryPolicy) matched
-/// with a [policy request](PolicyRequest). This must be signed with our new
-/// recovery keypair when stored.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct ExecutedPolicy {
-    policy: RecoveryPolicy,
-    request: PolicyRequest,
+impl PolicyRequest {
+    /// Create a new recovery policy request.
+    pub(crate) fn new(master_key: &SecretKey, sign_keypair: &PolicyKeypair, entry: PolicyRequestEntry) -> Result<Self> {
+        let serialized = ser::serialize(&entry)?;
+        let sig = sign_keypair.sign(master_key, &serialized)?;
+        let id = RequestID(sig.deref().clone());
+        Ok(Self {
+            id,
+            entry,
+            signatures: Vec::new(),
+        })
+    }
+
+    /// Make sure this policy request is properly signed.
+    pub(crate) fn verify(&self, sign_keypair: &PolicyKeypair) -> Result<()> {
+        let serialized = ser::serialize(self.entry())?;
+        sign_keypair.verify(&PolicyKeypairSignature::from(self.id().deref().clone()), &serialized)
+    }
 }
 
-/// A collection of recovery requests and recovery policies.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Recovery {
-    /// The recoveries we've performed, each one signed by the replacement
-    /// recovery key instated by the policy request.
-    executed: Vec<ExecutedPolicy>,
+impl Public for PolicyRequest {
+    fn strip_private(&self) -> Self {
+        let mut clone = self.clone();
+        clone.entry_mut().set_action(self.entry().action().strip_private());
+        clone
+    }
+
+    fn has_private(&self) -> bool {
+        self.entry().action().has_private()
+    }
 }
 
-impl Recovery {
-    pub fn new() -> Self {
-        Self {
-            executed: vec![],
-        }
+#[cfg(test)]
+mod tests {
+    //use super::*;
+
+    #[test]
+    fn policy_validate_request() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn policy_request_action_strip_private() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn policy_request_action_has_private() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn policy_request_new() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn policy_request_verify() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn policy_request_strip_private() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn policy_request_has_private() {
+        unimplemented!();
     }
 }
 

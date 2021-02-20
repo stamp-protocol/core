@@ -12,12 +12,12 @@
 
 use crate::{
     error::{Error, Result},
-    identity::Public,
-    private::{Private},
+    private::Private,
     util::{
         Lockable,
+        Public,
 
-        ser::TryFromSlice,
+        ser::{self, TryFromSlice},
         sign::Signable,
     },
 };
@@ -41,6 +41,47 @@ impl_try_from_slice!(curve25519xsalsa20poly1305::Nonce);
 impl_try_from_slice!(curve25519xsalsa20poly1305::PublicKey);
 impl_try_from_slice!(hmacsha512::Tag);
 impl_try_from_slice!(hmacsha512::Key);
+
+/// A value that lets us reference asymmetric keypairs by their public key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum KeyID {
+    SignKeypair(SignKeypairPublic),
+    CryptoKeypair(CryptoKeypairPublic),
+}
+
+impl KeyID {
+    pub fn as_string(&self) -> String {
+        fn get_bytes(ty_prefix: u8, key_prefix: u8, bytes: &[u8]) -> Vec<u8> {
+            let mut res = vec![ty_prefix, key_prefix];
+            let mut bytes_vec = Vec::from(bytes);
+            res.append(&mut bytes_vec);
+            res
+        }
+        let bytes = match self {
+            Self::SignKeypair(SignKeypairPublic::Ed25519(pubkey)) => {
+                get_bytes(0, 0, pubkey.as_ref())
+            }
+            Self::CryptoKeypair(CryptoKeypairPublic::Curve25519Xsalsa20Poly1305(pubkey)) => {
+                get_bytes(1, 0, pubkey.as_ref())
+            }
+        };
+        ser::base64_encode(&bytes)
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn random_sign() -> Self {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        Self::SignKeypair(SignKeypair::new_ed25519(&master_key).unwrap().into())
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn random_crypto() -> Self {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        Self::CryptoKeypair(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap().into())
+    }
+}
 
 /// A symmetric encryption key nonce
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -206,11 +247,9 @@ impl SignKeypair {
         }
     }
 
-    /// Determines if this keypair has private data included (ie, a private key).
-    pub fn has_private(&self) -> bool {
-        match self {
-            Self::Ed25519(_, private_maybe) => private_maybe.is_some(),
-        }
+    /// Create a KeyID from this keypair.
+    pub fn key_id(&self) -> KeyID {
+        KeyID::SignKeypair(self.clone().into())
     }
 }
 
@@ -220,6 +259,12 @@ impl Public for SignKeypair {
             Self::Ed25519(pubkey, _) => {
                 Self::Ed25519(pubkey.clone(), None)
             }
+        }
+    }
+
+    fn has_private(&self) -> bool {
+        match self {
+            Self::Ed25519(_, private_maybe) => private_maybe.is_some(),
         }
     }
 }
@@ -258,6 +303,11 @@ impl SignKeypairPublic {
                 }
             }
         }
+    }
+
+    /// Create a KeyID from this keypair.
+    pub fn key_id(&self) -> KeyID {
+        KeyID::SignKeypair(self.clone())
     }
 }
 
@@ -375,11 +425,9 @@ impl CryptoKeypair {
         }
     }
 
-    /// Determines if this keypair has private data included (ie, a private key).
-    pub fn has_private(&self) -> bool {
-        match self {
-            Self::Curve25519Xsalsa20Poly1305(_, private_maybe) => private_maybe.is_some(),
-        }
+    /// Create a KeyID from this keypair.
+    pub fn key_id(&self) -> KeyID {
+        KeyID::CryptoKeypair(self.clone().into())
     }
 }
 
@@ -389,6 +437,33 @@ impl Public for CryptoKeypair {
             Self::Curve25519Xsalsa20Poly1305(ref pubkey, _) => {
                 Self::Curve25519Xsalsa20Poly1305(pubkey.clone(), None)
             }
+        }
+    }
+
+    fn has_private(&self) -> bool {
+        match self {
+            Self::Curve25519Xsalsa20Poly1305(_, private_maybe) => private_maybe.is_some(),
+        }
+    }
+}
+
+/// An asymmetric signing public key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CryptoKeypairPublic {
+    Curve25519Xsalsa20Poly1305(#[serde(with = "crate::util::ser::human_binary_from_slice")] curve25519xsalsa20poly1305::PublicKey),
+}
+
+impl CryptoKeypairPublic {
+    /// Create a KeyID from this keypair.
+    pub fn key_id(&self) -> KeyID {
+        KeyID::CryptoKeypair(self.clone())
+    }
+}
+
+impl From<CryptoKeypair> for CryptoKeypairPublic {
+    fn from(kp: CryptoKeypair) -> Self {
+        match kp {
+            CryptoKeypair::Curve25519Xsalsa20Poly1305(public, _) => Self::Curve25519Xsalsa20Poly1305(public),
         }
     }
 }

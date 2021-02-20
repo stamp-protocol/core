@@ -8,13 +8,14 @@ use crate::{
     error::{Error, Result},
     identity::{
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
-        keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, RevocationID, RevocationReason, KeyID, Key, Keychain},
-        recovery::{Recovery},
-        stamp::{Confidence, Stamp, StampRevocation},
+        keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, RevocationReason, Key, Keychain},
+        recovery::{PolicyCondition, PolicyID, PolicyRequestAction, PolicyRequestEntry, PolicyRequest, RecoveryPolicy},
+        stamp::{Confidence, StampID, Stamp, StampRevocation},
     },
     crypto::key::SecretKey,
     private::MaybePrivate,
     util::{
+        Public,
         Timestamp,
     },
 };
@@ -137,9 +138,10 @@ pub struct Identity {
     id: IdentityID,
     /// When this identity came into being.
     created: Timestamp,
-    /// Our identity recovery mechanisms. This allows us to replace our recovery
-    /// keypair in the event it's lost or compromised.
-    recovery: Recovery,
+    /// Our identity recovery mechanism. This allows us to replace various
+    /// keypairs in the event they're lost or compromised and we don't have or
+    /// don't want to use our alpha key.
+    recovery_policy: Option<RecoveryPolicy>,
     /// Holds the keys for our identity.
     keychain: Keychain,
     /// The claims this identity makes.
@@ -150,10 +152,7 @@ pub struct Identity {
 
 impl Identity {
     /// Create a new identity.
-    pub fn create(id: IdentityID, alpha_keypair: AlphaKeypair, policy_keypair: PolicyKeypair, publish_keypair: PublishKeypair, root_keypair: RootKeypair, created: Timestamp) -> Self {
-        // create a recovery policy that cannot be satisfied.
-        let recovery = Recovery::new();
-
+    pub(crate) fn create(id: IdentityID, alpha_keypair: AlphaKeypair, policy_keypair: PolicyKeypair, publish_keypair: PublishKeypair, root_keypair: RootKeypair, created: Timestamp) -> Self {
         // create a new keychain from our keys above.
         let keychain = Keychain::new(alpha_keypair, policy_keypair, publish_keypair, root_keypair);
 
@@ -164,23 +163,46 @@ impl Identity {
         Self {
             id,
             created,
-            recovery,
+            recovery_policy: None,
             keychain,
             claims: vec![],
             extra_data,
         }
     }
 
+    /// Set the current recovery policy.
+    pub(crate) fn set_recovery(mut self, policy_id: PolicyID, conditions: Option<PolicyCondition>) -> Self {
+        if let Some(conditions) = conditions {
+            self.set_recovery_policy(Some(RecoveryPolicy::new(policy_id, conditions)));
+        } else {
+            self.set_recovery_policy(None);
+        }
+        self
+    }
+
+    /// Execute a recovery against the current policy.
+    pub(crate) fn execute_recovery(self, request: PolicyRequest) -> Result<Self> {
+        let policy = self.recovery_policy().as_ref().ok_or(Error::IdentityMissingRecoveryPolicy)?;
+        policy.validate_request(self.id(), &request)?;
+        match request.entry().action() {
+            PolicyRequestAction::ReplaceKeys(policy, publish, root) => {
+                self.set_policy_key(policy.clone(), RevocationReason::Recovery)?
+                    .set_publish_key(publish.clone(), RevocationReason::Recovery)?
+                    .set_root_key(root.clone(), RevocationReason::Recovery)
+            }
+        }
+    }
+
     /// Create a new claim from the given data, sign it, and attach it to this
     /// identity.
-    pub fn make_claim(mut self, claim_id: ClaimID, claim: ClaimSpec) -> Self {
+    pub(crate) fn make_claim(mut self, claim_id: ClaimID, claim: ClaimSpec) -> Self {
         let claim_container = ClaimContainer::new(claim_id, claim);
         self.claims_mut().push(claim_container);
         self
     }
 
     /// Remove a claim from this identity, including any stamps it has received.
-    pub fn remove_claim(mut self, id: &ClaimID) -> Result<Self> {
+    pub(crate) fn delete_claim(mut self, id: &ClaimID) -> Result<Self> {
         let exists = self.claims().iter().find(|x| x.claim().id() == id);
         if exists.is_none() {
             Err(Error::IdentityClaimNotFound)?;
@@ -189,9 +211,8 @@ impl Identity {
         Ok(self)
     }
 
-    /// Accept a stamp on one of our claims
-    pub fn accept_stamp(mut self, stamping_identity: &Identity, stamp: Stamp) -> Result<Self> {
-        stamping_identity.verify_stamp(&stamp)?;
+    /// Accept a stamp on one of our claims.
+    pub(crate) fn accept_stamp(mut self, stamp: Stamp) -> Result<Self> {
         let claim_id = stamp.entry().claim_id();
         let claim = self.claims_mut().iter_mut().find(|x| x.claim().id() == claim_id)
             .ok_or(Error::IdentityClaimNotFound)?;
@@ -199,50 +220,71 @@ impl Identity {
         Ok(self)
     }
 
+    /// Remove a stamp from one of our claims.
+    pub(crate) fn delete_stamp(mut self, stamp_id: &StampID) -> Result<Self> {
+        let mut found = None;
+        for claim in self.claims_mut() {
+            for stamp in claim.stamps() {
+                if stamp.id() == stamp_id {
+                    found = Some(claim);
+                    break;
+                }
+            }
+            if found.is_some() { break; }
+        }
+
+        if let Some(claim) = found {
+            claim.stamps_mut().retain(|x| x.id() != stamp_id);
+            Ok(self)
+        } else {
+            Err(Error::IdentityStampNotFound)
+        }
+    }
+
     /// Set the policy signing key on this identity.
-    pub fn set_policy_key(mut self, new_policy_keypair: PolicyKeypair, subkey_id: KeyID, revocation_id: RevocationID, revocation_reason: RevocationReason) -> Self {
-        self.set_keychain(self.keychain().clone().set_policy_key(new_policy_keypair, subkey_id, revocation_id, revocation_reason));
-        self
+    pub(crate) fn set_policy_key(mut self, new_policy_keypair: PolicyKeypair, revocation_reason: RevocationReason) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().set_policy_key(new_policy_keypair, revocation_reason)?);
+        Ok(self)
     }
 
     /// Set the publish signing key on this identity.
-    pub fn set_publish_key(mut self, new_publish_keypair: PublishKeypair, subkey_id: KeyID, revocation_id: RevocationID, revocation_reason: RevocationReason) -> Self {
-        self.set_keychain(self.keychain().clone().set_publish_key(new_publish_keypair, subkey_id, revocation_id, revocation_reason));
-        self
+    pub(crate) fn set_publish_key(mut self, new_publish_keypair: PublishKeypair, revocation_reason: RevocationReason) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().set_publish_key(new_publish_keypair, revocation_reason)?);
+        Ok(self)
     }
 
     /// Set the root signing key on this identity.
-    pub fn set_root_key(mut self, new_root_keypair: RootKeypair, subkey_id: KeyID, revocation_id: RevocationID, revocation_reason: RevocationReason) -> Self {
-        self.set_keychain(self.keychain().clone().set_root_key(new_root_keypair, subkey_id, revocation_id, revocation_reason));
-        self
+    pub(crate) fn set_root_key(mut self, new_root_keypair: RootKeypair, revocation_reason: RevocationReason) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().set_root_key(new_root_keypair, revocation_reason)?);
+        Ok(self)
     }
 
     /// Add a new subkey to our identity.
-    pub fn add_subkey<T: Into<String>>(mut self, key_id: KeyID, key: Key, name: T, description: Option<T>) -> Self {
-        self.set_keychain(self.keychain().clone().add_subkey(key_id, key, name, description));
-        self
+    pub(crate) fn add_subkey<T: Into<String>>(mut self, key: Key, name: T, description: Option<T>) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().add_subkey(key, name, description)?);
+        Ok(self)
     }
 
     /// Revoke one of our subkeys, for instance if it has been compromised.
-    pub fn revoke_subkey(mut self, key_id: &KeyID, revocation_id: RevocationID, reason: RevocationReason) -> Result<Self> {
-        self.set_keychain(self.keychain().clone().revoke_subkey(key_id, revocation_id, reason)?);
+    pub(crate) fn revoke_subkey(mut self, name: &str, reason: RevocationReason, new_name: Option<String>) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().revoke_subkey(name, reason, new_name)?);
         Ok(self)
     }
 
     /// Remove a subkey from the keychain.
-    pub fn delete_subkey(mut self, key_id: &KeyID) -> Result<Self> {
-        self.set_keychain(self.keychain().clone().delete_subkey(key_id)?);
+    pub(crate) fn delete_subkey(mut self, name: &str) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().delete_subkey(name)?);
         Ok(self)
     }
 
     /// Set the nickname on this identity
-    pub fn set_nickname(mut self, nickname: Option<&str>) -> Self {
-        self.extra_data_mut().set_nickname(nickname.map(|x| String::from(x)));
+    pub(crate) fn set_nickname(mut self, nickname: Option<String>) -> Self {
+        self.extra_data_mut().set_nickname(nickname);
         self
     }
 
     /// Add a forward to this identity
-    pub fn add_forward<T: Into<String>>(mut self, name: T, ty: ForwardType, is_default: bool) -> Result<Self> {
+    pub(crate) fn add_forward<T: Into<String>>(mut self, name: T, ty: ForwardType, is_default: bool) -> Result<Self> {
         let name: String = name.into();
         if self.extra_data().forwards().iter().find(|x| x.name() == &name).is_some() {
             Err(Error::DuplicateName)?;
@@ -250,6 +292,33 @@ impl Identity {
         let forward = Forward::new(name, ty, is_default);
         self.extra_data_mut().forwards_mut().push(forward);
         Ok(self)
+    }
+
+    /// Add a forward to this identity
+    pub(crate) fn delete_forward(mut self, name: &str) -> Result<Self> {
+        let forwards = self.extra_data_mut().forwards_mut();
+        if forwards.iter().find(|x| x.name() == name).is_none() {
+            Err(Error::IdentityForwardNotFound)?;
+        }
+        forwards.retain(|x| x.name() != name);
+        Ok(self)
+    }
+
+    /// Create a new recovery request. Once made, we can go out and get all of
+    /// our little friends to sign it so we can recovery our identity.
+    pub fn create_recovery_request(&self, master_key: &SecretKey, new_policy_key: &PolicyKeypair, action: PolicyRequestAction) -> Result<PolicyRequest> {
+        let policy_id = self.recovery_policy().as_ref().ok_or(Error::IdentityMissingRecoveryPolicy)?.id().clone();
+        let entry = PolicyRequestEntry::new(self.id().clone(), policy_id, action); 
+        PolicyRequest::new(master_key, new_policy_key, entry)
+    }
+
+    /// Sign someone else's recovery policy request. This is how signatures are
+    /// added to the request, possibly allowing for the recovery of an identity.
+    pub fn sign_recovery_request(&self, master_key: &SecretKey, policy: &RecoveryPolicy, request: PolicyRequest) -> Result<PolicyRequest> {
+        drop(master_key);
+        drop(policy);
+        drop(request);
+        unimplemented!();
     }
 
     /// Stamp a claim with our identity.
@@ -391,6 +460,18 @@ mod tests {
         SecretKey::new_xsalsa20poly1305()
     }
 
+    fn create_identity() -> (SecretKey, Identity) {
+        let master_key = gen_master_key();
+        let id = IdentityID::random();
+        let alpha = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root = RootKeypair::new_ed25519(&master_key).unwrap();
+        let created = Timestamp::now();
+        let identity = Identity::create(id.clone(), alpha.clone(), policy.clone(), publish.clone(), root.clone(), created.clone());
+        (master_key, identity)
+    }
+
     #[test]
     fn identity_create() {
         let master_key = gen_master_key();
@@ -403,6 +484,7 @@ mod tests {
         let identity = Identity::create(id.clone(), alpha.clone(), policy.clone(), publish.clone(), root.clone(), created.clone());
 
         assert_eq!(identity.id(), &id);
+        assert!(identity.recovery_policy().is_none());
         assert_eq!(identity.created(), &created);
         assert_eq!(identity.keychain().alpha(), &alpha);
         assert_eq!(identity.keychain().policy(), &policy);
@@ -411,22 +493,100 @@ mod tests {
     }
 
     #[test]
-    fn identity_reencrypt() {
+    fn identity_set_recovery() {
+        let policy_id = PolicyID::random();
+        let conditions = PolicyCondition::Any(vec![PolicyCondition::Deny]);
+        let (_master_key, identity) = create_identity();
+        assert!(identity.recovery_policy().is_none());
+        let identity2 = identity.set_recovery(policy_id.clone(), Some(conditions.clone()));
+        assert_eq!(identity2.recovery_policy().as_ref().unwrap().id(), &policy_id);
+        assert_eq!(identity2.recovery_policy().as_ref().unwrap().conditions(), &conditions);
+    }
+
+    #[test]
+    fn identity_execute_recovery() {
+        let (master_key, identity) = create_identity();
+        let new_policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let new_publish = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let new_root = RootKeypair::new_ed25519(&master_key).unwrap();
+        let action = PolicyRequestAction::ReplaceKeys(new_policy.clone(), new_publish.clone(), new_root.clone());
+
+        let res = identity.create_recovery_request(&master_key, &new_policy, action.clone());
+        // you can't triple-stamp a double-stamp
+        assert_eq!(res.err(), Some(Error::IdentityMissingRecoveryPolicy));
+
+        let policy_id = PolicyID::random();
+        let conditions = PolicyCondition::Deny;
+        let identity2 = identity.set_recovery(policy_id, Some(conditions));
+
+        let req = identity2.create_recovery_request(&master_key, &new_policy, action).unwrap();
+        drop(req);
+
+        //let friend_key = RootKeypair::new_ed25519(&master_key).unwrap();
+        //let conditions = PolicyCondition::OfN { must_have: 1, pubkeys: vec![friend_key.deref().into()] };
         unimplemented!();
     }
 
     #[test]
     fn identity_make_claim() {
-        unimplemented!();
+        let (_master_key, identity) = create_identity();
+
+        let claim_id = ClaimID::random();
+        let spec = ClaimSpec::Identity(IdentityID::random());
+        assert_eq!(identity.claims().len(), 0);
+        let identity = identity.make_claim(claim_id.clone(), spec.clone());
+        assert_eq!(identity.claims().len(), 1);
+        assert_eq!(identity.claims()[0].claim().id(), &claim_id);
+        match (identity.claims()[0].claim().spec(), &spec) {
+            (ClaimSpec::Identity(val), ClaimSpec::Identity(val2)) => assert_eq!(val, val2),
+            _ => panic!("bad claim type"),
+        }
+
+        let claim_id2 = ClaimID::random();
+        let spec2 = ClaimSpec::Name(MaybePrivate::new_public(String::from("BOND. JAMES BOND.")));
+        let identity = identity.make_claim(claim_id2.clone(), spec2.clone());
+        assert_eq!(identity.claims().len(), 2);
+        assert_eq!(identity.claims()[0].claim().id(), &claim_id);
+        assert_eq!(identity.claims()[1].claim().id(), &claim_id2);
     }
 
     #[test]
-    fn identity_remove_claim() {
-        unimplemented!();
+    fn identity_delete_claim() {
+        let (_master_key, identity) = create_identity();
+
+        let claim_id = ClaimID::random();
+        let spec = ClaimSpec::Identity(IdentityID::random());
+        assert_eq!(identity.claims().len(), 0);
+        let identity = identity.make_claim(claim_id.clone(), spec.clone());
+        assert_eq!(identity.claims().len(), 1);
+        assert_eq!(identity.claims()[0].claim().id(), &claim_id);
+        match (identity.claims()[0].claim().spec(), &spec) {
+            (ClaimSpec::Identity(val), ClaimSpec::Identity(val2)) => assert_eq!(val, val2),
+            _ => panic!("bad claim type"),
+        }
+
+        let claim_id2 = ClaimID::random();
+        let spec2 = ClaimSpec::Name(MaybePrivate::new_public(String::from("BOND. JAMES BOND.")));
+        let identity = identity.make_claim(claim_id2.clone(), spec2.clone());
+        assert_eq!(identity.claims().len(), 2);
+        assert_eq!(identity.claims()[0].claim().id(), &claim_id);
+        assert_eq!(identity.claims()[1].claim().id(), &claim_id2);
+
+        let identity = identity.delete_claim(&claim_id).unwrap();
+        assert_eq!(identity.claims().len(), 1);
+        assert_eq!(identity.claims()[0].claim().id(), &claim_id2);
+
+        let res = identity.clone().delete_claim(&claim_id);
+        assert_eq!(res.err(), Some(Error::IdentityClaimNotFound));
     }
 
     #[test]
     fn identity_accept_stamp() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_delete_stamp() {
         unimplemented!();
     }
 
@@ -461,6 +621,26 @@ mod tests {
     }
 
     #[test]
+    fn identity_set_nickname() {
+        let (_master_key, identity) = util::test::setup_identity_with_subkeys();
+        assert_eq!(identity.extra_data().nickname().is_none(), true);
+        let identity = identity.set_nickname(Some("fascistpig".into()));
+        assert_eq!(identity.extra_data().nickname().as_ref().unwrap(), "fascistpig");
+        let identity = identity.set_nickname(None);
+        assert_eq!(identity.extra_data().nickname(), &None);
+    }
+
+    #[test]
+    fn identity_add_forward() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn identity_delete_forward() {
+        unimplemented!();
+    }
+
+    #[test]
     fn identity_stamp() {
         unimplemented!();
     }
@@ -473,16 +653,6 @@ mod tests {
     #[test]
     fn identity_revoke_stamp() {
         unimplemented!();
-    }
-
-    #[test]
-    fn identity_set_nickname() {
-        let (_master_key, identity) = util::test::setup_identity_with_subkeys();
-        assert_eq!(identity.extra_data().nickname().is_none(), true);
-        let identity = identity.set_nickname(Some("fascistpig"));
-        assert_eq!(identity.extra_data().nickname().as_ref().unwrap(), "fascistpig");
-        let identity = identity.set_nickname(None);
-        assert_eq!(identity.extra_data().nickname(), &None);
     }
 
     #[test]

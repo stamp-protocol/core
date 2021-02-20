@@ -9,7 +9,7 @@
 
 use crate::{
     error::Result,
-    identity::Public,
+    util::Public,
 };
 use serde::{Serialize, de::DeserializeOwned};
 

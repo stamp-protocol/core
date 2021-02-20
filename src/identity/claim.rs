@@ -237,28 +237,6 @@ impl ClaimSpec {
         Ok(spec)
     }
 
-    /// Determines if this claim has private data associated with it. Note that
-    /// this doesn't care if we have a MaybePrivate:Private, but rather if there
-    /// is actually private data present within that MaybePrivate.
-    ///
-    /// See [MaybePrivate::has_private](crate::private::MaybePrivate::has_private)
-    pub(crate) fn has_private(&self) -> bool {
-        match self {
-            Self::Identity(..) => false,
-            Self::Name(val) => val.has_private(),
-            Self::Birthday(val) => val.has_private(),
-            Self::Email(val) => val.has_private(),
-            Self::Photo(val) => val.has_private(),
-            Self::Pgp(val) => val.has_private(),
-            Self::Domain(val) => val.has_private(),
-            Self::Url(val) => val.has_private(),
-            Self::HomeAddress(val) => val.has_private(),
-            Self::Relation(val) => val.has_private(),
-            Self::RelationExtension(val) => val.has_private(),
-            Self::Extension(_, val) => val.has_private(),
-        }
-    }
-
     /// Convert this spec into a public one, assuming we have the correct
     /// decrypt key.
     fn into_public(self, open_key: &SecretKey) -> Result<Self> {
@@ -295,6 +273,23 @@ impl Public for ClaimSpec {
             Self::Relation(val) => Self::Relation(val.strip_private()),
             Self::RelationExtension(val) => Self::RelationExtension(val.strip_private()),
             Self::Extension(key, val) => Self::Extension(key.clone(), val.strip_private()),
+        }
+    }
+
+    fn has_private(&self) -> bool {
+        match self {
+            Self::Identity(..) => false,
+            Self::Name(val) => val.has_private(),
+            Self::Birthday(val) => val.has_private(),
+            Self::Email(val) => val.has_private(),
+            Self::Photo(val) => val.has_private(),
+            Self::Pgp(val) => val.has_private(),
+            Self::Domain(val) => val.has_private(),
+            Self::Url(val) => val.has_private(),
+            Self::HomeAddress(val) => val.has_private(),
+            Self::Relation(val) => val.has_private(),
+            Self::RelationExtension(val) => val.has_private(),
+            Self::Extension(_, val) => val.has_private(),
         }
     }
 }
@@ -375,6 +370,10 @@ impl Public for Claim {
         clone.set_spec(clone.spec().strip_private());
         clone
     }
+
+    fn has_private(&self) -> bool {
+        self.spec().has_private()
+    }
 }
 
 /// A wrapper around a `Claim` that stores its stamps.
@@ -397,11 +396,6 @@ impl ClaimContainer {
             stamps: Vec::new(),
         }
     }
-
-    /// Determines if this claim has private data associated with it.
-    pub fn has_private(&self) -> bool {
-        self.claim().spec().has_private()
-    }
 }
 
 impl Public for ClaimContainer {
@@ -410,14 +404,17 @@ impl Public for ClaimContainer {
         clone.set_claim(clone.claim().strip_private());
         clone
     }
+
+    fn has_private(&self) -> bool {
+        self.claim().spec().has_private()
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{
         error::Error,
-        crypto::key::SignKeypair,
         identity::{IdentityID},
     };
     use std::convert::TryFrom;
@@ -426,13 +423,12 @@ mod tests {
     macro_rules! make_specs {
         ($claimmaker:expr, $val:expr) => {{
             let master_key = SecretKey::new_xsalsa20poly1305();
-            let root_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
             let val = $val;
             let maybe_private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
             let maybe_public = MaybePrivate::new_public(val.clone());
             let spec_private = $claimmaker(maybe_private, val.clone());
             let spec_public = $claimmaker(maybe_public, val.clone());
-            (master_key, root_keypair, spec_private, spec_public)
+            (master_key, spec_private, spec_public)
         }}
     }
 
@@ -441,7 +437,7 @@ mod tests {
         macro_rules! claim_reenc {
             (raw, $claimmaker:expr, $val:expr, $get_maybe:expr) => {
                 let val = $val;
-                let (master_key, _root_keypair, spec_private, spec_public) = make_specs!($claimmaker, val.clone());
+                let (master_key, spec_private, spec_public) = make_specs!($claimmaker, val.clone());
                 assert_eq!($get_maybe(spec_private.clone()).open(&master_key).unwrap(), val);
                 let master_key2 = SecretKey::new_xsalsa20poly1305();
                 assert!(master_key != master_key2);
@@ -469,7 +465,7 @@ mod tests {
             };
         }
 
-        let (master_key, _root_keypair, _, spec) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
+        let (master_key, _, spec) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
         let master_key2 = SecretKey::new_xsalsa20poly1305();
         let spec2 = spec.clone().reencrypt(&master_key, &master_key2).unwrap();
         match (spec, spec2) {
@@ -499,7 +495,7 @@ mod tests {
     fn claimcontainer_claimspec_has_private() {
         macro_rules! claim_pub_priv {
             (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
-                let (_master_key, _root_keypair, spec, spec2) = make_specs!($claimmaker, $val);
+                let (_master_key, spec, spec2) = make_specs!($claimmaker, $val);
                 assert_eq!(spec.has_private(), true);
                 match $getmaybe(spec.clone()) {
                     MaybePrivate::Private(_, Some(_)) => {},
@@ -629,7 +625,7 @@ mod tests {
         }
         macro_rules! assert_instant {
             (raw, $claimmaker:expr, $val:expr, $expected:expr) => {
-                let (_master_key, _root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let (_master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
                 let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
                 let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
 
@@ -671,7 +667,7 @@ mod tests {
     fn claim_as_public() {
         macro_rules! as_pub {
             (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
-                let (master_key, _root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let (master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
                 let fake_master_key = SecretKey::new_xsalsa20poly1305();
                 let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
                 let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
@@ -692,7 +688,7 @@ mod tests {
             };
         }
 
-        let (master_key, _root_keypair, spec_private, _) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
+        let (master_key, spec_private, _) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
         let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
         match (container_private.claim().spec(), container_private.claim().as_public(&master_key).unwrap().spec()) {
             (ClaimSpec::Identity(val1), ClaimSpec::Identity(val2)) => {
@@ -723,7 +719,7 @@ mod tests {
     fn claimcontainer_has_private_strip() {
         macro_rules! has_priv {
             (raw, $claimmaker:expr, $val:expr, $haspriv:expr) => {
-                let (_master_key, _root_keypair, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let (_master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
                 let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
                 let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
                 assert_eq!(container_private.has_private(), $haspriv);

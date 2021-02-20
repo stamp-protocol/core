@@ -7,9 +7,9 @@ pub mod sign;
 pub mod secret;
 
 use crate::{
+    crypto::key::KeyID,
     identity::{
         IdentityID,
-        KeyID,
     },
 };
 use serde_derive::{Serialize, Deserialize};

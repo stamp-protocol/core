@@ -50,7 +50,8 @@ pub fn sign(master_key: &SecretKey, signing_identity_id: &IdentityID, signing_ke
     let sign_key = signing_key.key().as_signkey()
         .ok_or(Error::IdentitySubkeyWrongType)?;
     let signature = sign_key.sign(master_key, message)?;
-    Ok(Signature::Detached(SignedObject::new(signing_identity_id.clone(), signing_key.id().clone(), signature)))
+    let key_id = signing_key.key_id().ok_or(Error::IdentitySubkeyWrongType)?;
+    Ok(Signature::Detached(SignedObject::new(signing_identity_id.clone(), key_id, signature)))
 }
 
 /// Verify a detached signature.
@@ -68,7 +69,8 @@ pub fn sign_attached(master_key: &SecretKey, signing_identity_id: &IdentityID, s
     let sign_key = signing_key.key().as_signkey()
         .ok_or(Error::IdentitySubkeyWrongType)?;
     let signature = sign_key.sign(master_key, message)?;
-    Ok(Signature::Attached(SignedObject::new(signing_identity_id.clone(), signing_key.id().clone(), signature), message.to_vec()))
+    let key_id = signing_key.key_id().ok_or(Error::IdentitySubkeyWrongType)?;
+    Ok(Signature::Attached(SignedObject::new(signing_identity_id.clone(), key_id, signature), message.to_vec()))
 }
 
 /// Verify a detached signature.

@@ -32,23 +32,13 @@ use crate::{
         ExtendKeypair,
     },
     util::{
+        Public,
         Timestamp,
         ser,
         sign::DateSigner,
     },
 };
 use serde_derive::{Serialize, Deserialize};
-
-pub trait Public: Clone {
-    /// Strip the private data from a object, returning only public data.
-    fn strip_private(&self) -> Self;
-}
-
-pub trait PublicMaybe: Clone {
-    /// Strip the private data from a object, unless the object is entirely
-    /// private in which case return None.
-    fn strip_private_maybe(&self) -> Option<Self>;
-}
 
 /// The container that is used to publish an identity. This is what otherswill
 /// import when they verify an identity, stamp the claim for an identity, send
@@ -114,6 +104,10 @@ impl PublishedIdentity {
 impl Public for PublishedIdentity {
     fn strip_private(&self) -> Self {
         self.clone()
+    }
+
+    fn has_private(&self) -> bool {
+        false
     }
 }
 

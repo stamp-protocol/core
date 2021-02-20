@@ -224,6 +224,10 @@ impl Public for Stamp {
     fn strip_private(&self) -> Self {
         self.clone()
     }
+
+    fn has_private(&self) -> bool {
+        false
+    }
 }
 
 /// A request for a claim to be stamped (basically a CRT, in the parlance of our
@@ -286,7 +290,7 @@ mod tests {
         identity::{
             claim::{ClaimBin, Relationship, RelationshipType, ClaimSpec, ClaimContainer},
             identity::IdentityID,
-            keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, KeyID, Key, Keychain},
+            keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, Key, Keychain},
             stamp::Confidence,
         },
         crypto::key::{self, SecretKey, SignKeypair, CryptoKeypair},
@@ -387,7 +391,7 @@ entry:
                 let publish = PublishKeypair::new_ed25519(&sender_master_key).unwrap();
                 let root = RootKeypair::new_ed25519(&sender_master_key).unwrap();
                 let sender_keychain = Keychain::new(alpha, policy, publish, root)
-                    .add_subkey(KeyID::random(), subkey_key, "default:crypto", None);
+                    .add_subkey(subkey_key, "default:crypto", None).unwrap();
                 let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
                 let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
                 let sender_subkey = sender_keychain.subkey_by_name("default:crypto").unwrap();
@@ -399,7 +403,7 @@ entry:
                 let publish = PublishKeypair::new_ed25519(&sender_master_key).unwrap();
                 let root = RootKeypair::new_ed25519(&sender_master_key).unwrap();
                 let recipient_keychain = Keychain::new(alpha, policy, publish, root)
-                    .add_subkey(KeyID::random(), subkey_key, "default:crypto", None);
+                    .add_subkey(subkey_key, "default:crypto", None).unwrap();
                 let recipient_subkey = recipient_keychain.subkey_by_name("default:crypto").unwrap();
 
                 let req_msg_priv = StampRequest::new(&sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, container_private.claim()).unwrap();

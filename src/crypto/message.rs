@@ -57,7 +57,8 @@ pub fn send(sender_master_key: &SecretKey, sender_identity_id: &IdentityID, send
     let recipient_crypto = recipient_key.key().as_cryptokey()
         .ok_or(Error::IdentitySubkeyWrongType)?;
     let sealed = recipient_crypto.seal(sender_master_key, sender_crypto, message)?;
-    let signed_msg = SignedObject::new(sender_identity_id.clone(), sender_key.id().clone(), sealed);
+    let key_id = sender_key.key_id().ok_or(Error::IdentitySubkeyWrongType)?;
+    let signed_msg = SignedObject::new(sender_identity_id.clone(), key_id, sealed);
     Ok(Message::Signed(signed_msg))
 }
 
@@ -103,9 +104,8 @@ pub fn open_anonymous(recipient_master_key: &SecretKey, recipient_key: &Subkey, 
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::CryptoKeypair,
+        crypto::key::{KeyID, CryptoKeypair},
         identity::{
-            KeyID,
             Key,
         },
         util::test,
@@ -118,7 +118,7 @@ mod tests {
         let recipient_key = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
 
         let sealed = recipient_key.seal(&master_key, &sender_key, b"'I KNOW!' SAID THE BOY, AS HE LEAPT TO HIS FEET").unwrap();
-        let msg1 = Message::Signed(SignedObject::new(IdentityID::blank(), KeyID::blank(), sealed));
+        let msg1 = Message::Signed(SignedObject::new(IdentityID::blank(), KeyID::random_crypto(), sealed));
         let msg2 = Message::Anonymous(vec![1, 2, 3, 42]);
 
         assert_eq!(msg1.anonymous(), None);
@@ -168,7 +168,7 @@ mod tests {
 
         // now generate a NEW crypto key and try to open the message with it.
         let sender_identity2 = sender_identity
-            .add_subkey(KeyID::random(), Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&sender_master_key).unwrap()), "fake-ass-key", None);
+            .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&sender_master_key).unwrap()), "fake-ass-key", None).unwrap();
         let sender_fake_subkey = sender_identity2.keychain().subkey_by_name("fake-ass-key").unwrap();
         let res = open(&recipient_master_key, &recipient_subkey, &sender_fake_subkey, &sealed);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
