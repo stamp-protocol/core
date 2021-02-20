@@ -492,6 +492,11 @@ impl Transactions {
         match transaction {
             TransactionVersioned::V1(trans) => {
                 match trans.entry().body().clone() {
+                    // if this is a private transaction, just pass the identity
+                    // back as-is
+                    TransactionBody::Private => {
+                        identity.ok_or(Error::DagMissingIdentity)
+                    }
                     TransactionBody::CreateIdentityV1(alpha, policy, publish, root) => {
                         let identity_id = IdentityID(trans.id().deref().clone());
                         Ok(Identity::create(identity_id, alpha, policy, publish, root, trans.entry().created().clone()))
@@ -572,7 +577,6 @@ impl Transactions {
                             .delete_forward(&name)?;
                         Ok(identity_mod)
                     }
-                    _ => unimplemented!("transaction type {:?}", trans.entry().body()),
                 }
             }
         }
