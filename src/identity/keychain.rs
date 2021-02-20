@@ -543,7 +543,8 @@ impl Keychain {
     /// This moves the current policy key into the subkeys and revokes it.
     pub(crate) fn set_policy_key(mut self, new_policy_keypair: PolicyKeypair, reason: RevocationReason) -> Result<Self> {
         let policy = self.policy().clone();
-        let mut subkey = Subkey::new(Key::Policy(policy), "policy key", Some("revoked policy key"));
+        let name = format!("revoked:policy:{}", policy.key_id().as_string());
+        let mut subkey = Subkey::new(Key::Policy(policy), name, Some("revoked policy key".into()));
         subkey.revoke(reason, None);
         self.add_subkey_impl(subkey)?;
         self.set_policy(new_policy_keypair);
@@ -555,7 +556,8 @@ impl Keychain {
     /// This moves the current publish key into the subkeys and revokes it.
     pub(crate) fn set_publish_key(mut self, new_publish_keypair: PublishKeypair, reason: RevocationReason) -> Result<Self> {
         let publish = self.publish().clone();
-        let mut subkey = Subkey::new(Key::Publish(publish), "publish key", Some("revoked publish key"));
+        let name = format!("revoked:publish:{}", publish.key_id().as_string());
+        let mut subkey = Subkey::new(Key::Publish(publish), name, Some("revoked publish key".into()));
         subkey.revoke(reason, None);
         self.add_subkey_impl(subkey)?;
         self.set_publish(new_publish_keypair);
@@ -567,7 +569,8 @@ impl Keychain {
     /// This moves the current root key into the subkeys and revokes it.
     pub(crate) fn set_root_key(mut self, new_root_keypair: RootKeypair, reason: RevocationReason) -> Result<Self> {
         let root = self.root().clone();
-        let mut subkey = Subkey::new(Key::Root(root), "root key", Some("revoked root key"));
+        let name = format!("revoked:root:{}", root.key_id().as_string());
+        let mut subkey = Subkey::new(Key::Root(root), name, Some("revoked root key".into()));
         subkey.revoke(reason, None);
         self.add_subkey_impl(subkey)?;
         self.set_root(new_root_keypair);
@@ -581,10 +584,22 @@ impl Keychain {
         Ok(self)
     }
 
+    /// Edit a subkey (set name/description).
+    pub(crate) fn edit_subkey<T: Into<String>>(mut self, name: &str, new_name: T, description: Option<T>) -> Result<Self> {
+        let key = self.subkeys_mut().iter_mut().find(|x| x.name() == name)
+            .ok_or(Error::IdentitySubkeyNotFound)?;
+        key.set_name(new_name.into());
+        key.set_description(description.map(|x| x.into()));
+        Ok(self)
+    }
+
     /// Revoke a subkey.
     pub(crate) fn revoke_subkey(mut self, name: &str, reason: RevocationReason, new_name: Option<String>) -> Result<Self> {
         let key = self.subkeys_mut().iter_mut().find(|x| x.name() == name)
             .ok_or(Error::IdentitySubkeyNotFound)?;
+        if key.revocation().is_some() {
+            Err(Error::IdentitySubkeyAlreadyRevoked)?;
+        }
         key.revoke(reason, new_name);
         Ok(self)
     }
@@ -697,12 +712,12 @@ mod tests {
         let key5_2 = key5.reencrypt(&master_key, &master_key2).unwrap();
         let key6_2 = key6.reencrypt(&master_key, &master_key2).unwrap();
 
-        let val1_2 = key1_2.as_policykey().unwrap().sign(&master_key, b"hi i'm jerry").unwrap();
-        let val2_2 = key2_2.as_publishkey().unwrap().sign(&master_key, b"hi i'm barry").unwrap();
-        let val3_2 = key3_2.as_rootkey().unwrap().sign(&master_key, b"hi i'm larry").unwrap();
-        let val4_2 = key4_2.as_signkey().unwrap().sign(&master_key, b"hi i'm butch").unwrap();
-        let val5_2 = key3_2.as_cryptokey().unwrap().open_anonymous(&master_key2, &val5).unwrap();
-        let val6_2_key = key4_2.as_secretkey().unwrap().open(&master_key2).unwrap();
+        let val1_2 = key1_2.as_policykey().unwrap().sign(&master_key2, b"hi i'm jerry").unwrap();
+        let val2_2 = key2_2.as_publishkey().unwrap().sign(&master_key2, b"hi i'm barry").unwrap();
+        let val3_2 = key3_2.as_rootkey().unwrap().sign(&master_key2, b"hi i'm larry").unwrap();
+        let val4_2 = key4_2.as_signkey().unwrap().sign(&master_key2, b"hi i'm butch").unwrap();
+        let val5_2 = key5_2.as_cryptokey().unwrap().open_anonymous(&master_key2, &val5).unwrap();
+        let val6_2_key = key6_2.as_secretkey().unwrap().open(&master_key2).unwrap();
         let val6_2 = val6_2_key.open(&val6, &val6_nonce).unwrap();
 
         assert_eq!(val1, val1_2);
@@ -793,6 +808,7 @@ mod tests {
         let keychain = keychain.set_policy_key(new_policy_keypair, RevocationReason::Superseded).unwrap();
         assert_eq!(keychain.subkeys().len(), 1);
         assert_eq!(keychain.subkeys()[0].key().as_policykey(), Some(&old_key));
+        assert_eq!(keychain.subkeys()[0].name(), &format!("revoked:policy:{}", old_key.key_id().as_string()));
     }
 
     #[test]
@@ -804,10 +820,11 @@ mod tests {
         let keychain = keychain.set_publish_key(new_publish_keypair, RevocationReason::Superseded).unwrap();
         assert_eq!(keychain.subkeys().len(), 1);
         assert_eq!(keychain.subkeys()[0].key().as_publishkey(), Some(&old_key));
+        assert_eq!(keychain.subkeys()[0].name(), &format!("revoked:publish:{}", old_key.key_id().as_string()));
     }
 
     #[test]
-    fn keychain_set_root_keys() {
+    fn keychain_set_root() {
         let (master_key, keychain) = keychain_new();
         assert_eq!(keychain.subkeys().len(), 0);
         let old_key = keychain.root().clone();
@@ -815,6 +832,7 @@ mod tests {
         let keychain = keychain.set_root_key(new_root_keypair, RevocationReason::Superseded).unwrap();
         assert_eq!(keychain.subkeys().len(), 1);
         assert_eq!(keychain.subkeys()[0].key().as_rootkey(), Some(&old_key));
+        assert_eq!(keychain.subkeys()[0].name(), &format!("revoked:root:{}", old_key.key_id().as_string()));
     }
 
     #[test]

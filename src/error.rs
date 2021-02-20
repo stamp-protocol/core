@@ -150,6 +150,10 @@ pub enum Error {
     #[error("identity stamp not found")]
     IdentityStampNotFound,
 
+    /// This subkey is already revoked.
+    #[error("subkey is already revoked")]
+    IdentitySubkeyAlreadyRevoked,
+
     /// The subkey being operated on wasn't found
     #[error("identity subkey not found")]
     IdentitySubkeyNotFound,

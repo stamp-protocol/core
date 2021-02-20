@@ -81,6 +81,7 @@ pub enum TransactionBody {
     SetPublishKeyV1(PublishKeypair, RevocationReason),
     SetRootKeyV1(RootKeypair, RevocationReason),
     AddSubkeyV1(Key, String, Option<String>),
+    EditSubkeyV1(String, String, Option<String>),
     RevokeSubkeyV1(String, RevocationReason, Option<String>),
     DeleteSubkeyV1(String),
     SetNicknameV1(Option<String>),
@@ -119,6 +120,7 @@ impl Public for TransactionBody {
                     None => Self::Private,
                 }
             }
+            Self::EditSubkeyV1(name, new_name, new_desc) => Self::EditSubkeyV1(name, new_name, new_desc),
             Self::RevokeSubkeyV1(key_id, revocation, new_name) => Self::RevokeSubkeyV1(key_id, revocation, new_name),
             Self::DeleteSubkeyV1(key_id) => Self::DeleteSubkeyV1(key_id),
             Self::SetNicknameV1(nick) => Self::SetNicknameV1(nick),
@@ -143,6 +145,7 @@ impl Public for TransactionBody {
             Self::SetPublishKeyV1(keypair, ..) => keypair.has_private(),
             Self::SetRootKeyV1(keypair, ..) => keypair.has_private(),
             Self::AddSubkeyV1(key, ..) => key.has_private(),
+            Self::EditSubkeyV1(..) => false,
             Self::RevokeSubkeyV1(..) => false,
             Self::DeleteSubkeyV1(..) => false,
             Self::SetNicknameV1(..) => false,
@@ -552,6 +555,11 @@ impl Transactions {
                             .add_subkey(key, name, desc)?;
                         Ok(identity_mod)
                     }
+                    TransactionBody::EditSubkeyV1(name, new_name, new_desc) => {
+                        let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
+                            .edit_subkey(&name, new_name, new_desc)?;
+                        Ok(identity_mod)
+                    }
                     TransactionBody::RevokeSubkeyV1(key_id, revocation_reason, new_name) => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
                             .revoke_subkey(&key_id, revocation_reason, new_name)?;
@@ -720,6 +728,16 @@ impl Transactions {
     {
         let body = TransactionBody::AddSubkeyV1(key, name.into(), description.map(|x| x.into()));
         self.push_transaction(master_key, SignWith::Alpha, now, body)?;
+        Ok(self)
+    }
+
+    /// Edit a subkey.
+    pub fn edit_subkey<T, S>(mut self, master_key: &SecretKey, now: T, name: S, new_name: S, description: Option<S>) -> Result<Self>
+        where T: Into<Timestamp>,
+              S: Into<String>,
+    {
+        let body = TransactionBody::EditSubkeyV1(name.into(), new_name.into(), description.map(|x| x.into()));
+        self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
 

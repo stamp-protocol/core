@@ -6,13 +6,13 @@
 
 use crate::{
     error::{Error, Result},
+    crypto::key::SecretKey,
     identity::{
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
         keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, RevocationReason, Key, Keychain},
         recovery::{PolicyCondition, PolicyID, PolicyRequestAction, PolicyRequestEntry, PolicyRequest, RecoveryPolicy},
         stamp::{Confidence, StampID, Stamp, StampRevocation},
     },
-    crypto::key::SecretKey,
     private::MaybePrivate,
     util::{
         Public,
@@ -35,7 +35,7 @@ object_id! {
 }
 
 /// A set of forward types.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ForwardType {
     /// An email address
     Email(String),
@@ -265,6 +265,12 @@ impl Identity {
         Ok(self)
     }
 
+    /// Update the name/description on a subkey.
+    pub(crate) fn edit_subkey<T: Into<String>>(mut self, name: &str, new_name: T, description: Option<T>) -> Result<Self> {
+        self.set_keychain(self.keychain().clone().edit_subkey(name, new_name, description)?);
+        Ok(self)
+    }
+
     /// Revoke one of our subkeys, for instance if it has been compromised.
     pub(crate) fn revoke_subkey(mut self, name: &str, reason: RevocationReason, new_name: Option<String>) -> Result<Self> {
         self.set_keychain(self.keychain().clone().revoke_subkey(name, reason, new_name)?);
@@ -453,6 +459,7 @@ impl Identity {
 mod tests {
     use super::*;
     use crate::{
+        crypto::key::SignKeypair,
         util,
     };
 
@@ -528,30 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn identity_make_claim() {
-        let (_master_key, identity) = create_identity();
-
-        let claim_id = ClaimID::random();
-        let spec = ClaimSpec::Identity(IdentityID::random());
-        assert_eq!(identity.claims().len(), 0);
-        let identity = identity.make_claim(claim_id.clone(), spec.clone());
-        assert_eq!(identity.claims().len(), 1);
-        assert_eq!(identity.claims()[0].claim().id(), &claim_id);
-        match (identity.claims()[0].claim().spec(), &spec) {
-            (ClaimSpec::Identity(val), ClaimSpec::Identity(val2)) => assert_eq!(val, val2),
-            _ => panic!("bad claim type"),
-        }
-
-        let claim_id2 = ClaimID::random();
-        let spec2 = ClaimSpec::Name(MaybePrivate::new_public(String::from("BOND. JAMES BOND.")));
-        let identity = identity.make_claim(claim_id2.clone(), spec2.clone());
-        assert_eq!(identity.claims().len(), 2);
-        assert_eq!(identity.claims()[0].claim().id(), &claim_id);
-        assert_eq!(identity.claims()[1].claim().id(), &claim_id2);
-    }
-
-    #[test]
-    fn identity_delete_claim() {
+    fn identity_claim_make_delete() {
         let (_master_key, identity) = create_identity();
 
         let claim_id = ClaimID::random();
@@ -581,113 +565,212 @@ mod tests {
     }
 
     #[test]
-    fn identity_accept_stamp() {
-        unimplemented!();
+    fn identity_stamp_accept_delete_verify_revoke() {
+        let (_master_key_stampee, identity_stampee) = create_identity();
+        let (master_key_stamper, identity_stamper) = create_identity();
+
+        let claim_id = ClaimID::random();
+        let spec = ClaimSpec::Identity(IdentityID::random());
+        let identity_stampee = identity_stampee.make_claim(claim_id.clone(), spec.clone());
+
+        let stamp = identity_stamper.stamp(&master_key_stamper, Confidence::High, Timestamp::now(), identity_stampee.id(), identity_stampee.claims()[0].claim(), None).unwrap();
+        identity_stamper.verify_stamp(&stamp).unwrap();
+
+        let revocation = identity_stamper.revoke_stamp(&master_key_stamper, &stamp, Timestamp::now()).unwrap();
+        revocation.verify(identity_stamper.keychain().root()).unwrap();
+
+        let mut stamp_mod = stamp.clone();
+        stamp_mod.entry_mut().set_confidence(Confidence::None); // very very log energy
+        let res = identity_stamper.verify_stamp(&stamp_mod);
+        assert_eq!(res.err(), Some(Error::CryptoSignatureVerificationFailed));
+
+        let identity_stampee = identity_stampee.clone().accept_stamp(stamp.clone()).unwrap();
+        assert_eq!(identity_stampee.claims()[0].stamps().len(), 1);
+
+        let identity_stampee2 = identity_stampee.clone().delete_claim(identity_stampee.claims()[0].claim().id()).unwrap();
+        let res = identity_stampee2.clone().accept_stamp(stamp.clone());
+        assert_eq!(res.err(), Some(Error::IdentityClaimNotFound));
+
+        let identity_stampee3 = identity_stampee.clone().delete_stamp(stamp.id()).unwrap();
+        assert_eq!(identity_stampee3.claims()[0].stamps().len(), 0);
+        let res = identity_stampee3.delete_stamp(stamp.id());
+        assert_eq!(res.err(), Some(Error::IdentityStampNotFound));
     }
 
     #[test]
-    fn identity_delete_stamp() {
-        unimplemented!();
+    fn identity_set_keys_brah_whoaaa_shaka_gnargnar_so_pitted_whapow() {
+        let (master_key, identity) = create_identity();
+        macro_rules! keytest {
+            ($keyty:ident, $setter:ident, $getter:ident) => {
+                let old_keypair = identity.keychain().$getter().clone();
+                let new_keypair = $keyty::new_ed25519(&master_key).unwrap();
+                assert!(old_keypair != new_keypair);
+                let identity2 = identity.clone().$setter(new_keypair.clone(), RevocationReason::Unspecified).unwrap();
+                assert_eq!(identity2.keychain().$getter(), &new_keypair);
+                assert!(&old_keypair != identity2.keychain().$getter());
+            }
+        }
+        keytest!{ PolicyKeypair, set_policy_key, policy }
+        keytest!{ PublishKeypair, set_publish_key, publish }
+        keytest!{ RootKeypair, set_root_key, root }
     }
 
     #[test]
-    fn identity_set_policy_key() {
-        unimplemented!();
+    fn identity_subkey_add_revoke_edit_delete() {
+        let (master_key, identity) = create_identity();
+
+        assert_eq!(identity.keychain().subkeys().len(), 0);
+        let signkey = SignKeypair::new_ed25519(&master_key).unwrap();
+        let key = Key::Sign(signkey.clone());
+        let identity = identity.add_subkey(key.clone(), "default:sign", Some("get a job")).unwrap();
+        assert_eq!(identity.keychain().subkeys().len(), 1);
+        assert_eq!(identity.keychain().subkeys()[0].name(), "default:sign");
+        assert_eq!(identity.keychain().subkeys()[0].description(), &Some("get a job".into()));
+        assert_eq!(identity.keychain().subkeys()[0].key().as_signkey(), Some(&signkey));
+        assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), false);
+
+        let res = identity.clone().add_subkey(key, "default:sign", Some("get a job"));
+        assert_eq!(res.err(), Some(Error::DuplicateName));
+        assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), false);
+
+        let identity = identity.edit_subkey("default:sign", "sign:shutup-parker-thank-you-shutup", None).unwrap();
+        assert_eq!(identity.keychain().subkeys().len(), 1);
+        assert_eq!(identity.keychain().subkeys()[0].name(), "sign:shutup-parker-thank-you-shutup");
+        assert_eq!(identity.keychain().subkeys()[0].description(), &None);
+        assert_eq!(identity.keychain().subkeys()[0].key().as_signkey(), Some(&signkey));
+        assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), false);
+
+        let identity = identity.revoke_subkey("sign:shutup-parker-thank-you-shutup", RevocationReason::Superseded, Some("thank-you".into())).unwrap();
+        assert_eq!(identity.keychain().subkeys().len(), 1);
+        assert_eq!(identity.keychain().subkeys()[0].name(), "thank-you");
+        assert_eq!(identity.keychain().subkeys()[0].description(), &None);
+        assert_eq!(identity.keychain().subkeys()[0].key().as_signkey(), Some(&signkey));
+        assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), true);
+
+        let res = identity.clone().revoke_subkey("thank-you", RevocationReason::Superseded, Some("thank-you".into()));
+        assert_eq!(res.err(), Some(Error::IdentitySubkeyAlreadyRevoked));
+
+        let identity = identity.delete_subkey("thank-you").unwrap();
+        assert_eq!(identity.keychain().subkeys().len(), 0);
+
+        let res = identity.clone().delete_subkey("thank-you");
+        assert_eq!(res.err(), Some(Error::IdentitySubkeyNotFound));
     }
 
     #[test]
-    fn identity_set_publish_key() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn identity_set_root_key() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn identity_add_subkey() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn identity_revoke_subkey() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn identity_delete_subkey() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn identity_set_nickname() {
+    fn identity_nicknames() {
         let (_master_key, identity) = util::test::setup_identity_with_subkeys();
         assert_eq!(identity.extra_data().nickname().is_none(), true);
         let identity = identity.set_nickname(Some("fascistpig".into()));
         assert_eq!(identity.extra_data().nickname().as_ref().unwrap(), "fascistpig");
+        assert_eq!(identity.nickname_maybe(), Some("fascistpig".into()));
         let identity = identity.set_nickname(None);
         assert_eq!(identity.extra_data().nickname(), &None);
+        assert_eq!(identity.nickname_maybe(), None);
     }
 
     #[test]
-    fn identity_add_forward() {
-        unimplemented!();
+    fn identity_forward_add_delete() {
+        let (_master_key, identity) = util::test::setup_identity_with_subkeys();
+        assert_eq!(identity.extra_data().forwards().len(), 0);
+        let forward = ForwardType::Social("matrix".into(), "@jayjay-the-stinky-hippie:matrix.oorg".into());
+
+        let identity = identity.add_forward("matrix", forward.clone(), true).unwrap();
+        assert_eq!(identity.extra_data().forwards().len(), 1);
+        assert_eq!(identity.extra_data().forwards()[0].name(), "matrix");
+        assert_eq!(identity.extra_data().forwards()[0].val(), &forward);
+        assert_eq!(identity.extra_data().forwards()[0].is_default(), &true);
+
+        let identity = identity.delete_forward("matrix").unwrap();
+        assert_eq!(identity.extra_data().forwards().len(), 0);
+
+        let res = identity.clone().delete_forward("matrix");
+        assert_eq!(res.err(), Some(Error::IdentityForwardNotFound));
+
     }
 
     #[test]
-    fn identity_delete_forward() {
-        unimplemented!();
+    fn identity_emails_maybe() {
+        let (_master_key, identity) = create_identity();
+        assert_eq!(identity.emails().len(), 0);
+        assert_eq!(identity.email_maybe(), None);
+
+        let claim_id = ClaimID::random();
+        let spec = ClaimSpec::Email(MaybePrivate::new_public(String::from("poopy@butt.com")));
+        let identity = identity.make_claim(claim_id.clone(), spec.clone());
+        assert_eq!(identity.emails(), vec!["poopy@butt.com".to_string()]);
+        assert_eq!(identity.email_maybe(), Some("poopy@butt.com".to_string()));
+
+        let forward1 = ForwardType::Social("matrix".into(), "@jayjay-the-stinky-hippie:matrix.oorg".into());
+        let forward2 = ForwardType::Email("dirk@delta.com".into());
+        let forward3 = ForwardType::Email("jabjabjabjab@jabjabjabberjaw.com".into());
+
+        let identity2 = identity.clone().add_forward("matrixlol", forward1.clone(), true).unwrap();
+        let identity3 = identity.clone().add_forward("email", forward2.clone(), true).unwrap();
+        let identity4 = identity3.clone().add_forward("email2", forward3.clone(), true).unwrap();
+
+        assert_eq!(identity2.email_maybe(), Some("poopy@butt.com".to_string()));
+        assert_eq!(identity3.email_maybe(), Some("dirk@delta.com".to_string()));
+        assert_eq!(identity4.email_maybe(), Some("dirk@delta.com".to_string()));
+        assert_eq!(identity3.emails(), vec![
+            "dirk@delta.com".to_string(),
+            "poopy@butt.com".to_string(),
+        ]);
+        assert_eq!(identity4.emails(), vec![
+            "dirk@delta.com".to_string(),
+            "jabjabjabjab@jabjabjabberjaw.com".to_string(),
+            "poopy@butt.com".to_string(),
+        ]);
+
+        let identity5 = identity4.delete_forward("email").unwrap();
+        assert_eq!(identity5.email_maybe(), Some("jabjabjabjab@jabjabjabberjaw.com".to_string()));
     }
 
     #[test]
-    fn identity_stamp() {
-        unimplemented!();
-    }
+    fn identity_names_maybe() {
+        let (_master_key, identity) = create_identity();
+        assert_eq!(identity.names().len(), 0);
+        assert_eq!(identity.name_maybe(), None);
 
-    #[test]
-    fn identity_verify_stamp() {
-        unimplemented!();
-    }
+        let claim_id = ClaimID::random();
+        let spec = ClaimSpec::Name(MaybePrivate::new_public(String::from("BOND. JAMES BOND.")));
+        let identity = identity.make_claim(claim_id.clone(), spec.clone());
+        assert_eq!(identity.names(), vec!["BOND. JAMES BOND.".to_string()]);
+        assert_eq!(identity.name_maybe(), Some("BOND. JAMES BOND.".to_string()));
 
-    #[test]
-    fn identity_revoke_stamp() {
-        unimplemented!();
-    }
+        let claim_id2 = ClaimID::random();
+        let spec = ClaimSpec::Name(MaybePrivate::new_public(String::from("Jack Mama")));
+        let identity = identity.make_claim(claim_id2.clone(), spec.clone());
+        assert_eq!(identity.names(), vec!["BOND. JAMES BOND.".to_string(), "Jack Mama".to_string()]);
+        assert_eq!(identity.name_maybe(), Some("BOND. JAMES BOND.".to_string()));
 
-    #[test]
-    fn identity_nickname_maybe() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn identity_emails() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn identity_email_maybe() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn identity_names() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn identity_name_maybe() {
-        unimplemented!();
+        let identity2 = identity.clone().delete_claim(&claim_id).unwrap();
+        assert_eq!(identity2.names().len(), 1);
+        assert_eq!(identity2.name_maybe(), Some("Jack Mama".to_string()));
+        let identity3 = identity2.clone().delete_claim(&claim_id2).unwrap();
+        assert_eq!(identity3.names().len(), 0);
+        assert_eq!(identity3.name_maybe(), None);
     }
 
     #[test]
     fn identity_is_owned() {
-        unimplemented!();
+        let (_master_key, identity) = create_identity();
+        assert!(identity.is_owned());
+
+        let mut identity2 = identity.clone();
+        identity2.set_keychain(identity.keychain().strip_private());
+        assert!(!identity2.is_owned());
     }
 
     #[test]
-    fn identity_strip_private() {
-        unimplemented!();
+    fn identity_test_master_key() {
+        let (master_key, identity) = create_identity();
+        let master_key_fake = gen_master_key();
+        assert!(master_key.as_ref() != master_key_fake.as_ref());
+
+        identity.test_master_key(&master_key).unwrap();
+        let res = identity.test_master_key(&master_key_fake);
+        assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
     }
 }
 
