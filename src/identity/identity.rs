@@ -216,6 +216,9 @@ impl Identity {
         let claim_id = stamp.entry().claim_id();
         let claim = self.claims_mut().iter_mut().find(|x| x.claim().id() == claim_id)
             .ok_or(Error::IdentityClaimNotFound)?;
+        if claim.stamps().iter().find(|x| x.id() == stamp.id()).is_some() {
+            Err(Error::IdentityStampAlreadyExists)?;
+        }
         claim.stamps_mut().push(stamp);
         Ok(self)
     }

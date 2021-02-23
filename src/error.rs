@@ -146,6 +146,10 @@ pub enum Error {
     #[error("identity is not owned, but we attempted an operation requiring ownership")]
     IdentityNotOwned,
 
+    /// This stamp is being duplicated
+    #[error("identity stamp already exists")]
+    IdentityStampAlreadyExists,
+
     /// The stamp being operated on wasn't found
     #[error("identity stamp not found")]
     IdentityStampNotFound,

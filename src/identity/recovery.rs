@@ -218,7 +218,10 @@ impl Public for PolicyRequest {
 
 #[cfg(test)]
 mod tests {
-    //use super::*;
+    use super::*;
+    use crate::{
+        error::Error,
+    };
 
     #[test]
     fn policy_validate_request() {
@@ -226,33 +229,71 @@ mod tests {
     }
 
     #[test]
-    fn policy_request_action_strip_private() {
-        unimplemented!();
+    fn policy_request_new_verify() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+        let identity_id = IdentityID::random();
+        let policy_id = PolicyID::random();
+        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+        let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action);
+        let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
+
+        assert_eq!(req.entry().identity_id(), &identity_id);
+        assert_eq!(req.entry().policy_id(), &policy_id);
+        match req.entry().action() {
+            PolicyRequestAction::ReplaceKeys(policy, publish, root) => {
+                assert_eq!(policy, &new_policy_keypair);
+                assert_eq!(publish, &new_publish_keypair);
+                assert_eq!(root, &new_root_keypair);
+            }
+        }
+
+        req.verify(&new_policy_keypair).unwrap();
+
+        // wrong key won't verify
+        let res = req.verify(&PolicyKeypair::from(new_root_keypair.deref().clone()));
+        assert_eq!(res.err(), Some(Error::CryptoSignatureVerificationFailed));
+
+        // modified request won't verify
+        let mut req2 = req.clone();
+        let identity_id2 = IdentityID::random();
+        assert!(identity_id != identity_id2);
+        req2.entry_mut().set_identity_id(identity_id2);
+        let res = req2.verify(&new_policy_keypair);
+        assert_eq!(res.err(), Some(Error::CryptoSignatureVerificationFailed));
     }
 
     #[test]
-    fn policy_request_action_has_private() {
-        unimplemented!();
-    }
+    fn policy_request_strip_private_has_private() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+        let identity_id = IdentityID::random();
+        let policy_id = PolicyID::random();
+        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+        let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action);
+        let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
 
-    #[test]
-    fn policy_request_new() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn policy_request_verify() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn policy_request_strip_private() {
-        unimplemented!();
-    }
-
-    #[test]
-    fn policy_request_has_private() {
-        unimplemented!();
+        assert!(req.has_private());
+        match req.entry().action() {
+            PolicyRequestAction::ReplaceKeys(policy, publish, root) => {
+                assert!(policy.has_private());
+                assert!(publish.has_private());
+                assert!(root.has_private());
+            }
+        }
+        let req2 = req.strip_private();
+        assert!(!req2.has_private());
+        match req2.entry().action() {
+            PolicyRequestAction::ReplaceKeys(policy, publish, root) => {
+                assert!(!policy.has_private());
+                assert!(!publish.has_private());
+                assert!(!root.has_private());
+            }
+        }
     }
 }
 

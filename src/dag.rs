@@ -180,6 +180,16 @@ impl From<TransactionID> for String {
     }
 }
 
+#[cfg(test)]
+impl TransactionID {
+    pub(crate) fn random_alpha() -> Self {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let sig = alpha_keypair.sign(&master_key, "hi im jerry".as_bytes()).unwrap();
+        Self::Alpha(sig)
+    }
+}
+
 /// The body of an identity transaction. Holds the transaction's references to
 /// its previous transactions and the transaction type/data itself.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
@@ -256,6 +266,7 @@ impl Transaction {
                 // ...unless we're executing a recovery policy, in which case
                 // the signature must come from the POLICY key
                 match entry.body() {
+                    TransactionBody::CreateIdentityV1(..) => Err(Error::DagCreateIdentityOnExistingChain)?,
                     TransactionBody::ExecuteRecoveryPolicyV1(request) => {
                         match request.entry().action() {
                             PolicyRequestAction::ReplaceKeys(policy, ..) => {
@@ -842,43 +853,311 @@ impl Public for Transactions {
 mod tests {
     use super::*;
     use crate::{
+        crypto::key::{SignKeypair, CryptoKeypair},
         identity::{
-            claim::{ClaimBin, Relationship, RelationshipType},
+            claim::{ClaimBin, ClaimContainer, Relationship, RelationshipType},
+            recovery::PolicyRequestEntry,
+            stamp::Confidence,
         },
-        private::MaybePrivate,
+        private::{Private, MaybePrivate},
         util::{self, Date},
     };
     use std::str::FromStr;
     use url::Url;
 
     #[test]
-    fn trans_body_strip() {
-        unimplemented!();
+    fn trans_body_strip_has_private() {
+        fn test_privates(body: &TransactionBody) {
+            match body {
+                TransactionBody::Private => {}
+                TransactionBody::CreateIdentityV1(alpha, policy, publish, root) => {
+                    assert!(body.has_private());
+                    let body2 = TransactionBody::CreateIdentityV1(alpha.strip_private(), policy.clone(), publish.clone(), root.clone());
+                    assert!(body2.has_private());
+                    let body3 = TransactionBody::CreateIdentityV1(alpha.strip_private(), policy.strip_private(), publish.clone(), root.clone());
+                    assert!(body3.has_private());
+                    let body4 = TransactionBody::CreateIdentityV1(alpha.strip_private(), policy.strip_private(), publish.strip_private(), root.clone());
+                    assert!(body4.has_private());
+                    let body5 = TransactionBody::CreateIdentityV1(alpha.strip_private(), policy.strip_private(), publish.strip_private(), root.strip_private());
+                    assert!(!body5.has_private());
+                    let body6 = body.strip_private();
+                    assert!(!body6.has_private());
+                    let body7 = body6.strip_private();
+                    assert!(!body7.has_private());
+                }
+                TransactionBody::SetRecoveryPolicyV1(..) => {}
+                TransactionBody::ExecuteRecoveryPolicyV1(request) => {
+                    assert!(body.has_private());
+                    let body2 = TransactionBody::ExecuteRecoveryPolicyV1(request.strip_private());
+                    assert!(!body2.has_private());
+                    let body3 = body.strip_private();
+                    assert!(!body3.has_private());
+                    let body4 = body3.strip_private();
+                    assert!(!body4.has_private());
+                }
+                TransactionBody::MakeClaimV1(spec) => {
+                    assert_eq!(body.has_private(), spec.has_private());
+                    let body2 = TransactionBody::MakeClaimV1(spec.strip_private());
+                    assert!(!body2.has_private());
+                    let body3 = body.strip_private();
+                    assert!(!body3.has_private());
+                    let body4 = body3.strip_private();
+                    assert!(!body4.has_private());
+                }
+                TransactionBody::DeleteClaimV1(..) => {}
+                TransactionBody::AcceptStampV1(stamp) => {
+                    assert!(!body.has_private());
+                    let body2 = TransactionBody::AcceptStampV1(stamp.strip_private());
+                    assert!(!body2.has_private());
+                    let body3 = body.strip_private();
+                    assert!(!body3.has_private());
+                    let body4 = body3.strip_private();
+                    assert!(!body4.has_private());
+                }
+                TransactionBody::DeleteStampV1(..) => {}
+                TransactionBody::SetPolicyKeyV1(keypair, revocation) => {
+                    assert!(body.has_private());
+                    let body2 = TransactionBody::SetPolicyKeyV1(keypair.strip_private(), revocation.clone());
+                    assert!(!body2.has_private());
+                    let body3 = body.strip_private();
+                    assert!(!body3.has_private());
+                    let body4 = body3.strip_private();
+                    assert!(!body4.has_private());
+                }
+                TransactionBody::SetPublishKeyV1(keypair, revocation) => {
+                    assert!(body.has_private());
+                    let body2 = TransactionBody::SetPublishKeyV1(keypair.strip_private(), revocation.clone());
+                    assert!(!body2.has_private());
+                    let body3 = body.strip_private();
+                    assert!(!body3.has_private());
+                    let body4 = body3.strip_private();
+                    assert!(!body4.has_private());
+                }
+                TransactionBody::SetRootKeyV1(keypair, revocation) => {
+                    assert!(body.has_private());
+                    let body2 = TransactionBody::SetRootKeyV1(keypair.strip_private(), revocation.clone());
+                    assert!(!body2.has_private());
+                    let body3 = body.strip_private();
+                    assert!(!body3.has_private());
+                    let body4 = body3.strip_private();
+                    assert!(!body4.has_private());
+                }
+                TransactionBody::AddSubkeyV1(key, name, desc) => {
+                    assert!(body.has_private());
+                    match key.strip_private_maybe() {
+                        Some(stripped) => {
+                            let body2 = TransactionBody::AddSubkeyV1(stripped, name.clone(), desc.clone());
+                            assert!(!body2.has_private());
+                            let body3 = body.strip_private();
+                            assert!(!body3.has_private());
+                            let body4 = body3.strip_private();
+                            assert!(!body4.has_private());
+                        }
+                        None => {}
+                    }
+                }
+                TransactionBody::EditSubkeyV1(..) => {}
+                TransactionBody::RevokeSubkeyV1(..) => {}
+                TransactionBody::DeleteSubkeyV1(..) => {}
+                TransactionBody::SetNicknameV1(..) => {}
+                TransactionBody::AddForwardV1(..) => {}
+                TransactionBody::DeleteForwardV1(..) => {}
+            }
+        }
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        test_privates(&body);
+
+        test_privates(&TransactionBody::SetRecoveryPolicyV1(Some(PolicyCondition::Deny)));
+
+        let action = PolicyRequestAction::ReplaceKeys(policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let entry = PolicyRequestEntry::new(IdentityID::random(), PolicyID::random(), action);
+        let req = PolicyRequest::new(&master_key, &policy_keypair, entry).unwrap();
+        test_privates(&TransactionBody::ExecuteRecoveryPolicyV1(req));
+
+        test_privates(&TransactionBody::MakeClaimV1(ClaimSpec::Name(MaybePrivate::new_public(String::from("Negative Nancy")))));
+        test_privates(&TransactionBody::MakeClaimV1(ClaimSpec::Name(MaybePrivate::new_private(&master_key, String::from("Positive Pyotr")).unwrap())));
+        test_privates(&TransactionBody::DeleteClaimV1(ClaimID::random()));
+
+        let claim_con = ClaimContainer::new(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, String::from("Hangry Hank")).unwrap()));
+        let stamp = Stamp::stamp(&master_key, &root_keypair, &IdentityID::random(), &IdentityID::random(), Confidence::Low, Timestamp::now(), claim_con.claim(), Some(Timestamp::now())).unwrap();
+        test_privates(&TransactionBody::AcceptStampV1(stamp));
+        test_privates(&TransactionBody::DeleteStampV1(StampID::random()));
+        test_privates(&TransactionBody::SetPolicyKeyV1(policy_keypair.clone(), RevocationReason::Unspecified));
+        test_privates(&TransactionBody::SetPublishKeyV1(publish_keypair.clone(), RevocationReason::Compromised));
+        test_privates(&TransactionBody::SetRootKeyV1(root_keypair.clone(), RevocationReason::Recovery));
+
+        let key = Key::new_sign(root_keypair.deref().clone());
+        test_privates(&TransactionBody::AddSubkeyV1(key, "MY DOGECOIN KEY".into(), Some("plz send doge".into())));
+        test_privates(&TransactionBody::EditSubkeyV1("MY DOGECOIN KEY".into(), "MAI DOGE KEY".into(), None));
+        test_privates(&TransactionBody::RevokeSubkeyV1("MAI DOGE KEY".into(), RevocationReason::Compromised, Some("REVOKED DOGE KEY".into())));
+        test_privates(&TransactionBody::DeleteSubkeyV1("REVOKED DOGE KEY".into()));
+        test_privates(&TransactionBody::SetNicknameV1(Some("wreck-dum".into())));
+        test_privates(&TransactionBody::AddForwardV1("EMAIL".into(), ForwardType::Social("mobile".into(), "web2.0".into()), true));
+        test_privates(&TransactionBody::DeleteForwardV1("EMAIL".into()));
     }
 
     #[test]
-    fn trans_entry_strip() {
-        unimplemented!();
+    fn trans_entry_strip_has_private() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let body = TransactionBody::MakeClaimV1(ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Jackie Chrome".into()).unwrap()));
+        let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::random_alpha()], body);
+        assert!(entry.has_private());
+        assert!(entry.body().has_private());
+        let entry2 = entry.strip_private();
+        assert!(!entry2.has_private());
+        assert!(!entry2.body().has_private());
     }
 
     #[test]
     fn trans_new_verify() {
-        unimplemented!();
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+        let identity = Identity::create(IdentityID::random(), alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone(), Timestamp::now());
+
+        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
+        let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
+        trans.verify(None).unwrap();
+
+        let res = Transaction::new(&master_key, &None, SignWith::Policy, entry.clone());
+        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
+
+        let res = Transaction::new(&master_key, &None, SignWith::Root, entry.clone());
+        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
+
+        let body2 = TransactionBody::DeleteForwardV1("blassssstodon".into());
+        let entry2 = TransactionEntry::new(Timestamp::now(), vec![], body2);
+        let res = Transaction::new(&master_key, &None, SignWith::Alpha, entry2.clone());
+        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
+
+        let res = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Root, entry.clone());
+        assert_eq!(res.err(), Some(Error::DagCreateIdentityOnExistingChain));
+
+        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        assert!(new_policy_keypair != policy_keypair);
+        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let entry = PolicyRequestEntry::new(IdentityID::random(), PolicyID::random(), action);
+        let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
+        let body3 = TransactionBody::ExecuteRecoveryPolicyV1(req);
+        let entry3 = TransactionEntry::new(Timestamp::now(), vec![], body3);
+        let trans3 = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Policy, entry3.clone()).unwrap();
+        trans3.verify(Some(&identity)).unwrap();
+        let res = Transaction::new(&master_key, &None, SignWith::Alpha, entry3.clone());
+        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
+        let res = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Alpha, entry3.clone());
+        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
+        let res = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Root, entry3.clone());
+        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
+
+        let mut trans2 = trans.clone();
+        trans2.set_id(TransactionID::random_alpha());
+        assert_eq!(trans2.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
+
+        let mut trans3 = trans.clone();
+        trans3.entry_mut().set_created(Timestamp::now());
+        assert_eq!(trans3.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
+
+        let mut trans4 = trans.clone();
+        trans4.entry_mut().set_previous_transactions(vec![TransactionID::random_alpha()]);
+        assert_eq!(trans4.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
+
+        let mut trans5 = trans.clone();
+        let root_keypair2 = RootKeypair::new_ed25519(&master_key).unwrap();
+        assert!(root_keypair != root_keypair2);
+        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair2.clone());
+        trans5.entry_mut().set_body(body);
+        assert_eq!(trans5.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
     }
 
     #[test]
-    fn trans_strip() {
-        unimplemented!();
+    fn trans_strip_has_private() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+
+        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
+        let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
+
+        assert!(trans.has_private());
+        assert!(trans.entry().has_private());
+        assert!(trans.entry().body().has_private());
+        let trans2 = trans.strip_private();
+        assert!(!trans2.has_private());
+        assert!(!trans2.entry().has_private());
+        assert!(!trans2.entry().body().has_private());
     }
 
     #[test]
-    fn trans_versioned_verify() {
-        unimplemented!();
+    fn trans_versioned_deref() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+
+        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
+        let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
+        let versioned = TransactionVersioned::from(trans.clone());
+
+        match &versioned {
+            TransactionVersioned::V1(ref trans) => {
+                assert!(std::ptr::eq(trans, versioned.deref()));
+            }
+        }
     }
 
     #[test]
-    fn trans_versioned_strip() {
-        unimplemented!();
+    fn trans_versioned_graphinfo() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+
+        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
+        let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
+        let versioned = TransactionVersioned::from(trans.clone());
+
+        assert_eq!(versioned.id(), trans.id());
+        assert_eq!(versioned.created(), trans.entry().created());
+        assert_eq!(versioned.previous_transactions(), trans.entry().previous_transactions());
+    }
+
+    #[test]
+    fn trans_versioned_strip_has_private() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+
+        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
+        let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
+        let versioned = TransactionVersioned::from(trans.clone());
+        assert!(versioned.has_private());
+        assert!(versioned.deref().has_private());
+        assert!(versioned.deref().entry().has_private());
+        assert!(versioned.deref().entry().body().has_private());
+
+        let versioned2 = versioned.strip_private();
+        assert!(!versioned2.has_private());
+        assert!(!versioned2.deref().has_private());
+        assert!(!versioned2.deref().entry().has_private());
+        assert!(!versioned2.deref().entry().body().has_private());
     }
 
     #[test]
@@ -970,6 +1249,22 @@ mod tests {
     }
 
     #[test]
+    fn transactions_genesis() {
+        let (master_key, transactions) = genesis();
+
+        let alpha = AlphaKeypair::new_ed25519(&master_key).unwrap();
+        let policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root = RootKeypair::new_ed25519(&master_key).unwrap();
+        let res = transactions.create_identity(&master_key, Timestamp::now(), alpha, policy, publish, root);
+        assert_eq!(res.err(), Some(Error::DagCreateIdentityOnExistingChain));
+
+        let transactions2 = Transactions::new();
+        let res = transactions2.make_claim(&master_key, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Stinky Wizzleteets".into())));
+        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
+    }
+
+    #[test]
     fn transactions_create_identity() {
         let (_master_key, transactions) = genesis();
         let identity = transactions.build_identity().unwrap();
@@ -983,17 +1278,31 @@ mod tests {
             }
             _ => panic!("bad transaction type"),
         }
-        match identity.claims()[0].claim().spec() {
-            ClaimSpec::Identity(ref id) => {
-                assert_eq!(id, identity.id())
-            }
-            _ => panic!("bad claim type"),
-        }
     }
 
     #[test]
     fn transactions_set_recovery() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+        let identity = transactions.build_identity().unwrap();
+        assert!(identity.recovery_policy().is_none());
+        assert_eq!(transactions.transactions().len(), 1);
+
+        let transactions2 = transactions.clone().set_recovery_policy(&master_key, Timestamp::now(), None).unwrap();
+        let identity2 = transactions2.build_identity().unwrap();
+        assert!(identity2.recovery_policy().is_none());
+        assert_eq!(transactions2.transactions().len(), 2);
+
+        let transactions3 = transactions.clone().set_recovery_policy(&master_key, Timestamp::now(), Some(PolicyCondition::Deny)).unwrap();
+        let identity3 = transactions3.build_identity().unwrap();
+        assert_eq!(identity3.recovery_policy().as_ref().unwrap().id(), &PolicyID(transactions3.transactions[1].id().deref().clone()));
+        assert_eq!(identity3.recovery_policy().as_ref().unwrap().conditions(), &PolicyCondition::Deny);
+        assert_eq!(transactions3.transactions().len(), 2);
+
+        let transactions4 = transactions3.clone().set_recovery_policy(&master_key, Timestamp::now(), None).unwrap();
+        let identity4 = transactions4.build_identity().unwrap();
+        assert!(identity4.recovery_policy().is_none());
+        assert_eq!(transactions4.transactions().len(), 3);
+
     }
 
     #[test]
@@ -1025,11 +1334,15 @@ mod tests {
                 let identity2 = transactions2.build_identity().unwrap();
                 let maybe = $get_maybe(identity2.claims()[0].claim().spec().clone());
                 assert_eq!(maybe.open(&master_key).unwrap(), val);
+                assert_eq!(identity2.claims().len(), 1);
+                assert_eq!(transactions2.transactions().len(), 2);
 
                 let transactions2 = transactions.clone().make_claim(&master_key, Timestamp::now(), spec_public).unwrap();
                 let identity2 = transactions2.build_identity().unwrap();
                 let maybe = $get_maybe(identity2.claims()[0].claim().spec().clone());
                 assert_eq!(maybe.open(&master_key).unwrap(), val);
+                assert_eq!(identity2.claims().len(), 1);
+                assert_eq!(transactions2.transactions().len(), 2);
             };
 
             ($claimty:ident, $val:expr) => {
@@ -1043,6 +1356,9 @@ mod tests {
         }
 
         let identity = transactions.build_identity().unwrap();
+        assert_eq!(identity.claims().len(), 0);
+        assert_eq!(transactions.transactions().len(), 1);
+
         let val = identity.id().clone();
         let spec = ClaimSpec::Identity(val.clone());
         let transactions2 = transactions.clone().make_claim(&master_key, Timestamp::now(), spec).unwrap();
@@ -1053,6 +1369,8 @@ mod tests {
             }
             _ => panic!("bad claim type {:?}", identity2.claims()[0].claim().spec()),
         }
+        assert_eq!(identity2.claims().len(), 1);
+        assert_eq!(transactions2.transactions().len(), 2);
 
         assert_claim!{ Name, String::from("Marty Malt") }
         assert_claim!{ Birthday, Date::from_str("2010-01-03").unwrap() }
@@ -1074,77 +1392,368 @@ mod tests {
 
     #[test]
     fn transactions_delete_claim() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+        let identity = transactions.build_identity().unwrap();
+        assert_eq!(identity.claims().len(), 0);
+        assert_eq!(transactions.transactions().len(), 1);
+
+        let identity_id = IdentityID(transactions.transactions()[0].deref().id().deref().clone());
+        let transactions2 = transactions.make_claim(&master_key, Timestamp::now(), ClaimSpec::Identity(identity_id)).unwrap();
+        assert_eq!(transactions2.transactions().len(), 2);
+
+        let identity = transactions2.build_identity().unwrap();
+        let claim_id = identity.claims()[0].claim().id().clone();
+        let transactions3 = transactions2.clone().delete_claim(&master_key, Timestamp::now(), claim_id.clone()).unwrap();
+        assert_eq!(transactions3.transactions().len(), 3);
+
+        let res = transactions2.clone().delete_claim(&master_key, Timestamp::now(), ClaimID::random());
+        assert_eq!(res.err(), Some(Error::IdentityClaimNotFound));
+        let res = transactions3.clone().delete_claim(&master_key, Timestamp::now(), claim_id.clone());
+        assert_eq!(res.err(), Some(Error::IdentityClaimNotFound));
     }
 
     #[test]
     fn transactions_accept_stamp() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+        let identity_id = IdentityID(transactions.transactions()[0].deref().id().deref().clone());
+        let transactions2 = transactions.make_claim(&master_key, Timestamp::now(), ClaimSpec::Identity(identity_id)).unwrap();
+        let identity = transactions2.build_identity().unwrap();
+        assert_eq!(identity.claims()[0].stamps().len(), 0);
+        let claim = identity.claims()[0].claim().clone();
+
+        let (master_key_stamper, transactions_stamper) = genesis();
+        let identity_stamper = transactions_stamper.build_identity().unwrap();
+        let stamp = identity_stamper.stamp(&master_key_stamper, Confidence::Low, Timestamp::now(), identity.id(), &claim, Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap())).unwrap();
+
+        let transactions3 = transactions2.accept_stamp(&master_key, Timestamp::now(), stamp.clone()).unwrap();
+        assert_eq!(transactions3.transactions().len(), 3);
+        assert_eq!(transactions3.transactions().len(), 3);
+        let identity3 = transactions3.build_identity().unwrap();
+        assert_eq!(identity3.claims()[0].stamps().len(), 1);
+
+        let res = transactions3.clone().accept_stamp(&master_key, Timestamp::now(), stamp.clone());
+        assert_eq!(res.err(), Some(Error::IdentityStampAlreadyExists));
+
+        let transactions4 = transactions3.clone().delete_claim(&master_key, Timestamp::now(), claim.id().clone()).unwrap();
+        let res = transactions4.accept_stamp(&master_key, Timestamp::now(), stamp.clone());
+        assert_eq!(res.err(), Some(Error::IdentityClaimNotFound));
     }
 
     #[test]
     fn transactions_delete_stamp() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+        let identity_id = IdentityID(transactions.transactions()[0].deref().id().deref().clone());
+        let transactions2 = transactions.make_claim(&master_key, Timestamp::now(), ClaimSpec::Identity(identity_id)).unwrap();
+        let identity = transactions2.build_identity().unwrap();
+        assert_eq!(identity.claims()[0].stamps().len(), 0);
+        let claim = identity.claims()[0].claim().clone();
+
+        let (master_key_stamper, transactions_stamper) = genesis();
+        let identity_stamper = transactions_stamper.build_identity().unwrap();
+        let stamp = identity_stamper.stamp(&master_key_stamper, Confidence::Low, Timestamp::now(), identity.id(), &claim, Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap())).unwrap();
+
+        let transactions3 = transactions2.accept_stamp(&master_key, Timestamp::now(), stamp.clone()).unwrap();
+        assert_eq!(transactions3.transactions().len(), 3);
+        let identity3 = transactions3.build_identity().unwrap();
+        assert_eq!(identity3.claims()[0].stamps().len(), 1);
+
+        let transactions4 = transactions3.clone().delete_stamp(&master_key, Timestamp::now(), stamp.id().clone()).unwrap();
+        let identity4 = transactions4.build_identity().unwrap();
+        assert_eq!(identity4.claims()[0].stamps().len(), 0);
+
+        let res = transactions4.clone().delete_stamp(&master_key, Timestamp::now(), stamp.id().clone());
+        assert_eq!(res.err(), Some(Error::IdentityStampNotFound));
+    }
+
+    macro_rules! key_setter {
+        ($ty:ident, $keychain_getter:ident, $transaction_fn:ident, $key_getter:ident, $strname:expr) => {{
+            let (master_key, transactions) = genesis();
+            let identity = transactions.build_identity().unwrap();
+            let current_keypair = identity.keychain().$keychain_getter();
+            assert_eq!(identity.keychain().subkeys().len(), 0);
+
+            let new_keypair = $ty::new_ed25519(&master_key).unwrap();
+            assert!(&new_keypair != current_keypair);
+            let transactions2 = transactions.$transaction_fn(&master_key, Timestamp::now(), new_keypair.clone(), RevocationReason::Superseded).unwrap();
+            let identity2 = transactions2.build_identity().unwrap();
+            assert_eq!(identity2.keychain().$keychain_getter(), &new_keypair);
+            assert_eq!(identity2.keychain().subkeys()[0].key().$key_getter().as_ref().unwrap(), &current_keypair);
+            assert_eq!(identity2.keychain().subkeys()[0].name(), &format!($strname, current_keypair.key_id().as_string()));
+
+            let transactions3 = transactions2.$transaction_fn(&master_key, Timestamp::now(), new_keypair.clone(), RevocationReason::Superseded).unwrap();
+            let identity3 = transactions3.build_identity().unwrap();
+            assert_eq!(identity3.keychain().$keychain_getter(), &new_keypair);
+            assert_eq!(identity3.keychain().subkeys()[0].key().$key_getter().as_ref().unwrap(), &current_keypair);
+            assert_eq!(identity3.keychain().subkeys()[0].name(), &format!($strname, current_keypair.key_id().as_string()));
+            assert_eq!(identity3.keychain().subkeys()[1].key().$key_getter().unwrap(), &new_keypair);
+            assert_eq!(identity3.keychain().subkeys()[1].name(), &format!($strname, new_keypair.key_id().as_string()));
+            transactions3
+        }}
     }
 
     #[test]
     fn transactions_set_policy_key() {
-        unimplemented!();
+        key_setter! {
+            PolicyKeypair,
+            policy,
+            set_policy_key,
+            as_policykey,
+            "revoked:policy:{}"
+        };
     }
 
     #[test]
     fn transactions_set_publish_key() {
-        unimplemented!();
+        key_setter! {
+            PublishKeypair,
+            publish,
+            set_publish_key,
+            as_publishkey,
+            "revoked:publish:{}"
+        };
     }
 
     #[test]
     fn transactions_set_root_key() {
-        unimplemented!();
+        key_setter! {
+            RootKeypair,
+            root,
+            set_root_key,
+            as_rootkey,
+            "revoked:root:{}"
+        };
     }
 
     #[test]
     fn transactions_add_subkey() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+        let identity = transactions.build_identity().unwrap();
+        assert_eq!(identity.keychain().subkeys().len(), 0);
+
+        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let transactions2 = transactions
+            .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key")).unwrap();
+        let identity2 = transactions2.build_identity().unwrap();
+        assert_eq!(identity2.keychain().subkeys()[0].name(), "default:sign");
+        assert_eq!(identity2.keychain().subkeys()[1].name(), "default:crypto");
+        assert_eq!(identity2.keychain().subkeys()[2].name(), "default:secret");
+        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        let res = transactions2.clone()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things"));
+        assert_eq!(res.err(), Some(Error::DuplicateName));
+        let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
+        let res = transactions2.clone()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails"));
+        assert_eq!(res.err(), Some(Error::DuplicateName));
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let res = transactions2.clone()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key"));
+        assert_eq!(res.err(), Some(Error::DuplicateName));
     }
 
     #[test]
     fn transactions_revoke_subkey() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+
+        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let transactions2 = transactions
+            .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key")).unwrap();
+        let transactions3 = transactions2.clone()
+            .revoke_subkey(&master_key, Timestamp::now(), "default:crypto", RevocationReason::Superseded, Some("revoked:default:crypto")).unwrap();
+        let identity3 = transactions3.build_identity().unwrap();
+        assert!(identity3.keychain().subkeys()[0].revocation().is_none());
+        assert_eq!(identity3.keychain().subkeys()[1].revocation().as_ref().map(|x| x.reason()), Some(&RevocationReason::Superseded));
+        assert!(identity3.keychain().subkeys()[2].revocation().is_none());
+
+        let res = transactions3.clone()
+            .revoke_subkey(&master_key, Timestamp::now(), "default:crypto", RevocationReason::Superseded, Some("revoked:default:crypto"));
+        assert_eq!(res.err(), Some(Error::IdentitySubkeyNotFound));
+        let res = transactions3.clone()
+            .revoke_subkey(&master_key, Timestamp::now(), "revoked:default:crypto", RevocationReason::Superseded, Some("revoked:default:crypto"));
+        assert_eq!(res.err(), Some(Error::IdentitySubkeyAlreadyRevoked));
     }
 
     #[test]
     fn transactions_delete_subkey() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+
+        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let transactions2 = transactions
+            .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key")).unwrap();
+
+        let transactions3 = transactions2.clone()
+            .delete_subkey(&master_key, Timestamp::now(), "default:sign").unwrap();
+        let identity3 = transactions3.build_identity().unwrap();
+        assert_eq!(identity3.keychain().subkeys()[0].name(), "default:crypto");
+        assert_eq!(identity3.keychain().subkeys()[1].name(), "default:secret");
+        assert_eq!(identity3.keychain().subkeys().len(), 2);
+
+        let res = transactions3.clone()
+            .delete_subkey(&master_key, Timestamp::now(), "default:sign");
+        assert_eq!(res.err(), Some(Error::IdentitySubkeyNotFound));
     }
 
     #[test]
     fn transactions_set_nickname() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+        let identity = transactions.build_identity().unwrap();
+        assert_eq!(identity.extra_data().nickname(), &None);
+
+        let transactions2 = transactions
+            .set_nickname(&master_key, Timestamp::now(), Some("dirk-delta")).unwrap();
+        let identity2 = transactions2.build_identity().unwrap();
+        assert_eq!(identity2.extra_data().nickname(), &Some("dirk-delta".into()));
+
+        let no_name: Option<String> = None;
+        let transactions3 = transactions2
+            .set_nickname(&master_key, Timestamp::now(), no_name).unwrap();
+        let identity3 = transactions3.build_identity().unwrap();
+        assert_eq!(identity3.extra_data().nickname(), &None);
     }
 
     #[test]
     fn transactions_add_forward() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+        let identity = transactions.build_identity().unwrap();
+        assert_eq!(identity.extra_data().forwards().len(), 0);
+
+        let transactions2 = transactions
+            .add_forward(&master_key, Timestamp::now(), "email", ForwardType::Email("jackie@chrome.com".into()), true).unwrap()
+            .add_forward(&master_key, Timestamp::now(), "my-website", ForwardType::Url("https://www.cactus-petes.com/yeeeehawwww".into()), false).unwrap()
+            .add_forward(&master_key, Timestamp::now(), "twitter", ForwardType::Social("twitter".into(), "lol_twitter_sux".into()), false).unwrap();
+        let identity2 = transactions2.build_identity().unwrap();
+        assert_eq!(identity2.extra_data().forwards().len(), 3);
+        assert_eq!(identity2.extra_data().forwards()[0].name(), "email");
+        assert_eq!(identity2.extra_data().forwards()[1].name(), "my-website");
+        assert_eq!(identity2.extra_data().forwards()[2].name(), "twitter");
+
+        let res = transactions2.clone()
+            .add_forward(&master_key, Timestamp::now(), "email", ForwardType::Email("jack.mama@highland.edu".into()), true);
+        assert_eq!(res.err(), Some(Error::DuplicateName));
     }
 
     #[test]
     fn transactions_delete_forward() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+        let identity = transactions.build_identity().unwrap();
+        assert_eq!(identity.extra_data().forwards().len(), 0);
+
+        let transactions2 = transactions
+            .add_forward(&master_key, Timestamp::now(), "email", ForwardType::Email("jackie@chrome.com".into()), true).unwrap()
+            .add_forward(&master_key, Timestamp::now(), "my-website", ForwardType::Url("https://www.cactus-petes.com/yeeeehawwww".into()), false).unwrap()
+            .add_forward(&master_key, Timestamp::now(), "twitter", ForwardType::Social("twitter".into(), "lol_twitter_sux".into()), false).unwrap();
+        let transactions3 = transactions2
+            .delete_forward(&master_key, Timestamp::now(), "my-website").unwrap();
+        let identity3 = transactions3.build_identity().unwrap();
+        assert_eq!(identity3.extra_data().forwards().len(), 2);
+        assert_eq!(identity3.extra_data().forwards()[0].name(), "email");
+        assert_eq!(identity3.extra_data().forwards()[1].name(), "twitter");
+
+        let res = transactions3.clone()
+            .delete_forward(&master_key, Timestamp::now(), "my-website");
+        assert_eq!(res.err(), Some(Error::IdentityForwardNotFound));
     }
 
     #[test]
     fn transactions_is_owned() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+        let identity = transactions.build_identity().unwrap();
+        assert!(transactions.is_owned());
+        assert!(identity.is_owned());
+
+        let mut transactions2 = transactions.clone();
+        transactions2.transactions_mut()[0] = transactions2.transactions_mut()[0].strip_private();
+        let identity2 = transactions2.build_identity().unwrap();
+        assert!(!transactions2.is_owned());
+        assert!(!identity2.is_owned());
+
+        let policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let publish = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let root = RootKeypair::new_ed25519(&master_key).unwrap();
+        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let transactions3 = transactions.clone()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key")).unwrap()
+            .set_policy_key(&master_key, Timestamp::now(), policy.clone(), RevocationReason::Unspecified).unwrap()
+            .set_publish_key(&master_key, Timestamp::now(), publish.clone(), RevocationReason::Unspecified).unwrap()
+            .set_root_key(&master_key, Timestamp::now(), root.clone(), RevocationReason::Unspecified).unwrap();
+        let identity3 = transactions3.build_identity().unwrap();
+        assert!(transactions3.is_owned());
+        assert!(identity3.is_owned());
+
+        let mut transactions4 = transactions3.clone();
+        for trans in transactions4.transactions_mut() {
+            let entry = trans.entry().clone();
+            match entry.body() {
+                TransactionBody::CreateIdentityV1(..) | TransactionBody::SetPolicyKeyV1(..) | TransactionBody::SetPublishKeyV1(..) | TransactionBody::SetRootKeyV1(..) => {
+                    match trans {
+                        TransactionVersioned::V1(ref mut inner) => {
+                            inner.set_entry(entry.strip_private());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let identity4 = transactions4.build_identity().unwrap();
+        assert!(!transactions4.is_owned());
+        assert!(!identity4.is_owned());
     }
 
     #[test]
     fn transactions_test_master_key() {
-        unimplemented!();
+        let (master_key, transactions) = genesis();
+        transactions.test_master_key(&master_key).unwrap();
+        let master_key_fake = SecretKey::new_xsalsa20poly1305();
+        assert!(master_key_fake != master_key);
+        let res = transactions.test_master_key(&master_key_fake);
+        assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
     }
 
     #[test]
-    fn transactions_strip() {
-        unimplemented!();
+    fn transactions_strip_has_private() {
+        let (master_key, transactions) = genesis();
+
+        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let transactions2 = transactions
+            .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()
+            .add_subkey(&master_key, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key")).unwrap()
+            .make_claim(&master_key, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Danny Dinkel".to_string()).unwrap())).unwrap()
+            .make_claim(&master_key, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public("twinkie.doodle@amateur-spotlight.net".to_string()))).unwrap();
+
+        let mut has_priv: Vec<bool> = Vec::new();
+        for trans in transactions2.transactions() {
+            has_priv.push(trans.has_private());
+        }
+        assert_eq!(has_priv.iter().filter(|x| **x).count(), 5);
+
+        assert!(transactions2.has_private());
+        let transactions3 = transactions2.strip_private();
+        assert!(!transactions3.has_private());
+
+        let mut has_priv: Vec<bool> = Vec::new();
+        for trans in transactions3.transactions() {
+            has_priv.push(trans.has_private());
+        }
+        assert_eq!(has_priv.iter().filter(|x| **x).count(), 0);
     }
 }
 
