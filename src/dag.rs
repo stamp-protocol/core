@@ -1307,7 +1307,86 @@ mod tests {
 
     #[test]
     fn transactions_execute_recovery() {
-        unimplemented!();
+        fn id_with_subkey() -> (SecretKey, Transactions) {
+            let (master_key, transactions) = genesis();
+            let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
+            let transactions2 = transactions
+                .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "sign", None).unwrap();
+            (master_key, transactions2)
+        }
+        let (gus_master, gus) = id_with_subkey();
+        let (marty_master, marty) = id_with_subkey();
+        let (jackie_master, jackie) = id_with_subkey();
+
+        let gus_sign = gus.build_identity().unwrap().keychain().subkey_by_name("sign").unwrap().as_signkey().unwrap().clone();
+        let marty_sign = marty.build_identity().unwrap().keychain().subkey_by_name("sign").unwrap().as_signkey().unwrap().clone();
+        let jackie_sign = jackie.build_identity().unwrap().keychain().subkey_by_name("sign").unwrap().as_signkey().unwrap().clone();
+
+        let (master_key, transactions) = genesis();
+
+        let transactions2 = transactions.clone()
+            .set_recovery_policy(
+                &master_key,
+                Timestamp::now(),
+                Some(PolicyCondition::OfN {
+                    must_have: 3,
+                    pubkeys: vec![
+                        gus_sign.clone().into(),
+                        marty_sign.clone().into(),
+                        jackie_sign.clone().into(),
+                    ],
+                })
+            )
+            .unwrap();
+
+        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+
+        // cannot open a request unless you have an actual recovery policy
+        let res = transactions.build_identity().unwrap()
+            .create_recovery_request(&master_key, &new_policy_keypair, action.clone());
+        assert_eq!(res.err(), Some(Error::IdentityMissingRecoveryPolicy));
+
+        let identity2 = transactions2.build_identity().unwrap();
+        let req = identity2.create_recovery_request(&master_key, &new_policy_keypair, action.clone()).unwrap();
+
+        let res = transactions.clone().execute_recovery_policy(&master_key, Timestamp::now(), req.clone());
+        assert_eq!(res.err(), Some(Error::IdentityMissingRecoveryPolicy));
+
+        let res = transactions2.clone().execute_recovery_policy(&master_key, Timestamp::now(), req.clone());
+        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
+
+        let req_signed_1 = gus.build_identity().unwrap()
+            .sign_recovery_request(&gus_master, &gus_sign, req.clone()).unwrap();
+        let req_signed_2 = marty.build_identity().unwrap()
+            .sign_recovery_request(&marty_master, &marty_sign, req_signed_1.clone()).unwrap();
+        let req_signed_3 = jackie.build_identity().unwrap()
+            .sign_recovery_request(&jackie_master, &jackie_sign, req_signed_2.clone()).unwrap();
+
+        let res = transactions2.clone()
+            .execute_recovery_policy(&master_key, Timestamp::now(), req_signed_1.clone());
+        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
+        let res = transactions2.clone()
+            .execute_recovery_policy(&master_key, Timestamp::now(), req_signed_2.clone());
+        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
+
+        let transactions3 = transactions2.clone()
+            .execute_recovery_policy(&master_key, Timestamp::now(), req_signed_3.clone()).unwrap();
+        let identity3 = transactions3.build_identity().unwrap();
+
+        assert!(identity2.keychain().policy() != identity3.keychain().policy());
+        assert!(identity2.keychain().publish() != identity3.keychain().publish());
+        assert!(identity2.keychain().root() != identity3.keychain().root());
+        assert_eq!(identity2.keychain().subkeys().len(), 0);
+        assert_eq!(identity3.keychain().policy(), &new_policy_keypair);
+        assert_eq!(identity3.keychain().publish(), &new_publish_keypair);
+        assert_eq!(identity3.keychain().root(), &new_root_keypair);
+        assert_eq!(identity3.keychain().subkeys().len(), 3);
+        assert_eq!(identity3.keychain().subkeys()[0].name(), &format!("revoked:policy:{}", identity2.keychain().policy().key_id().as_string()));
+        assert_eq!(identity3.keychain().subkeys()[1].name(), &format!("revoked:publish:{}", identity2.keychain().publish().key_id().as_string()));
+        assert_eq!(identity3.keychain().subkeys()[2].name(), &format!("revoked:root:{}", identity2.keychain().root().key_id().as_string()));
     }
 
     #[test]

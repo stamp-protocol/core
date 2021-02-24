@@ -178,6 +178,10 @@ pub enum Error {
     #[error("keygen failed")]
     KeygenFailed,
 
+    /// The request doesn't satisfy the policy. 20 beats your 5. I'm sorry, sir.
+    #[error("the recovery request does not meet the policy's conditions")]
+    PolicyConditionMismatch,
+
     /// A key cannot be verified against the executed recovery policy chain.
     #[error("policy verification of key failed")]
     PolicyVerificationFailure,
@@ -185,6 +189,16 @@ pub enum Error {
     /// Tried to open a private container that has no data
     #[error("attempt to open private object which has no data")]
     PrivateDataMissing,
+
+    /// The recovery policy request's identity does not match the identity we're
+    /// recovering.
+    #[error("this recovery request is for another identity")]
+    RecoveryPolicyRequestIdentityMismatch,
+
+    /// The recovery policy request's policy does not match the policy we're
+    /// recovering against.
+    #[error("this recovery request is for a different policy")]
+    RecoveryPolicyRequestPolicyMismatch,
 
     /// An error while engaging in msgpack serialization.
     #[error("msgpack serialization error")]

@@ -37,8 +37,8 @@
 //! available at the time of verification.
 
 use crate::{
-    error::Result,
-    crypto::key::{SecretKey, SignKeypairPublic, SignKeypairSignature},
+    error::{Error, Result},
+    crypto::key::{SecretKey, SignKeypair, SignKeypairPublic, SignKeypairSignature},
     identity::{
         Public,
         identity::IdentityID,
@@ -80,6 +80,45 @@ pub enum PolicyCondition {
     Deny,
 }
 
+impl PolicyCondition {
+    /// Tests whether the given signatures match the policy condition
+    pub(crate) fn test<F>(&self, signatures: &Vec<SignKeypairSignature>, sigtest: &F) -> Result<()>
+        where F: Fn(&SignKeypairPublic, &SignKeypairSignature) -> Result<()>,
+    {
+        match self {
+            Self::All(conditions) => {
+                conditions.iter()
+                    .map(|c| c.test(signatures, sigtest))
+                    .collect::<Result<Vec<_>>>()?;
+            }
+            Self::Any(conditions) => {
+                conditions.iter()
+                    .find(|c| c.test(signatures, sigtest).is_ok())
+                    .ok_or(Error::PolicyConditionMismatch)?;
+            }
+            Self::OfN { must_have, pubkeys } => {
+                let has = pubkeys.iter()
+                    .filter_map(|pubkey| {
+                        for sig in signatures {
+                            if sigtest(pubkey, sig).is_ok() {
+                                return Some(());
+                            }
+                        }
+                        None
+                    })
+                    .count();
+                if &(has as u16) < must_have {
+                    Err(Error::PolicyConditionMismatch)?;
+                }
+            }
+            Self::Deny => {
+                Err(Error::PolicyConditionMismatch)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A recovery policy.
 #[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
@@ -98,17 +137,29 @@ impl RecoveryPolicy {
     }
 
     pub(crate) fn validate_request(&self, identity_id: &IdentityID, request: &PolicyRequest) -> Result<()> {
+        // make sure the request signature is valid
         match request.entry().action() {
             PolicyRequestAction::ReplaceKeys(policy, ..) => request.verify(&policy)?,
         }
-        drop(identity_id);
-        // TODO: make sure the request entry identity_id matches the current
-        //       identity id
-        // TODO: make sure the request entry policy matches the current policy
-        // TODO: make sure each request signature actually matches the entry
-        // TODO: make sure the given signatures match the conditions in the
-        //       policy itself
-        unimplemented!();
+
+        // check the identity matches the request
+        if identity_id != request.entry().identity_id() {
+            Err(Error::RecoveryPolicyRequestIdentityMismatch)?;
+        }
+
+        // check the polocy matches the request
+        if self.id() != request.entry().policy_id() {
+            Err(Error::RecoveryPolicyRequestPolicyMismatch)?;
+        }
+
+        // check the signatures match the policy conditions
+        let serialized = ser::serialize(request.entry())?;
+        self.conditions().test(
+            request.signatures(),
+            &|pubkey, sig| pubkey.verify(sig, &serialized),
+        )?;
+
+        Ok(())
     }
 }
 
@@ -202,6 +253,16 @@ impl PolicyRequest {
         let serialized = ser::serialize(self.entry())?;
         sign_keypair.verify(&PolicyKeypairSignature::from(self.id().deref().clone()), &serialized)
     }
+
+    /// Sign this policy request and add the signature to the `signatures` list.
+    /// Generally, this is done by someone in the policy's condition lists,
+    /// although that's not enforced in any way.
+    pub(crate) fn sign(mut self, master_key: &SecretKey, sign_keypair: &SignKeypair) -> Result<Self> {
+        let serialized = ser::serialize(self.entry())?;
+        let sig = sign_keypair.sign(master_key, &serialized)?;
+        self.signatures_mut().push(sig);
+        Ok(self)
+    }
 }
 
 impl Public for PolicyRequest {
@@ -220,12 +281,225 @@ impl Public for PolicyRequest {
 mod tests {
     use super::*;
     use crate::{
+        crypto::key::{SignKeypair},
         error::Error,
+        util,
     };
 
     #[test]
-    fn policy_validate_request() {
-        unimplemented!();
+    fn policy_condition_test() {
+        let conditions = PolicyCondition::Deny;
+        let res = conditions.test(&vec![], &|_, _| Ok(()));
+        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
+
+        let master_key = SecretKey::new_xsalsa20poly1305();
+
+        let gus = SignKeypair::new_ed25519(&master_key).unwrap();
+        let marty = SignKeypair::new_ed25519(&master_key).unwrap();
+        let jackie = SignKeypair::new_ed25519(&master_key).unwrap();
+        let rosarita = SignKeypair::new_ed25519(&master_key).unwrap();
+        let dirk = SignKeypair::new_ed25519(&master_key).unwrap();
+        let twinkee = SignKeypair::new_ed25519(&master_key).unwrap();
+        let syd = SignKeypair::new_ed25519(&master_key).unwrap();
+        let scurvy = SignKeypair::new_ed25519(&master_key).unwrap();
+        let kitty = SignKeypair::new_ed25519(&master_key).unwrap();
+
+        let conditions = PolicyCondition::Any(vec![
+            PolicyCondition::All(vec![
+                PolicyCondition::OfN {
+                    must_have: 1, 
+                    pubkeys: vec![
+                        dirk.clone().into(),
+                        jackie.clone().into(),
+                    ],
+                },
+                PolicyCondition::OfN {
+                    must_have: 1, 
+                    pubkeys: vec![
+                        syd.clone().into(),
+                        twinkee.clone().into(),
+                    ],
+                },
+            ]),
+            PolicyCondition::OfN {
+                must_have: 3, 
+                pubkeys: vec![
+                    gus.clone().into(),
+                    marty.clone().into(),
+                    jackie.clone().into(),
+                    dirk.clone().into(),
+                ],
+            }
+        ]);
+
+        let people = vec![
+            &gus, &marty, &jackie,
+            &rosarita, &dirk, &twinkee,
+            &syd, &scurvy, &kitty,
+        ];
+        let combinations = util::test::generate_combinations(&vec![
+            "gus", "marty", "jackie",
+            "rosarita", "dirk", "twinkee",
+            "syd", "scurvy", "kitty",
+        ]);
+        let obj = "Pretend entry";
+        let possible_signatures = people.into_iter()
+            .map(|key| (key, key.sign(&master_key, obj.as_bytes()).unwrap()))
+            .collect::<Vec<_>>();
+
+        let kn = |name| {
+            match name {
+                "gus" => &gus,
+                "marty" => &marty,
+                "jackie" => &jackie,
+                "rosarita" => &rosarita,
+                "dirk" => &dirk,
+                "twinkee" => &twinkee,
+                "syd" => &syd,
+                "scurvy" => &scurvy,
+                "kitty" => &kitty,
+                _ => panic!("bad key name"),
+            }
+        };
+        let fs = |key| {
+            possible_signatures.iter()
+                .find(|ent| ent.0 == key)
+                .map(|x| x.1.clone())
+                .unwrap()
+        };
+        let passing_combinations = vec![
+            vec!["dirk", "syd"],
+            vec!["dirk", "twinkee"],
+            vec!["jackie", "syd"],
+            vec!["jackie", "twinkee"],
+            vec!["gus", "marty", "jackie"],
+            vec!["marty", "jackie", "dirk"],
+            vec!["gus", "jackie", "dirk"],
+            vec!["gus", "marty", "dirk"],
+        ];
+        let sigtest = |pubkey: &SignKeypairPublic, sig: &SignKeypairSignature| {
+            pubkey.verify(sig, obj.as_bytes())
+        };
+        let should_pass = |names: &Vec<&str>| -> bool {
+            if names.len() == 0 {
+                return false;
+            }
+            for entry in &passing_combinations {
+                let mut has_all_names = true;
+                for must_have in entry {
+                    if !names.contains(must_have) {
+                        has_all_names = false;
+                        break;
+                    }
+                }
+                if has_all_names {
+                    return true;
+                }
+            }
+            false
+        };
+        for combo in combinations {
+            let combo_sigs = combo.iter().map(|name| fs(kn(name))).collect::<Vec<_>>();
+            let res = conditions.test(&combo_sigs, &sigtest);
+            match res {
+                Ok(_) => {
+                    if !should_pass(&combo) {
+                        panic!("Combination passed but should not have: {:?}", combo);
+                    }
+                }
+                Err(_) => {
+                    if should_pass(&combo) {
+                        panic!("Combination errored but should have passed: {:?}", combo);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn policy_sign_request_validate_request() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let gus = SignKeypair::new_ed25519(&master_key).unwrap();
+        let marty = SignKeypair::new_ed25519(&master_key).unwrap();
+        let jackie = SignKeypair::new_ed25519(&master_key).unwrap();
+        let rosarita = SignKeypair::new_ed25519(&master_key).unwrap();
+        let dirk = SignKeypair::new_ed25519(&master_key).unwrap();
+
+        let identity_id = IdentityID::random();
+        let policy_id = PolicyID::random();
+
+        let policy = RecoveryPolicy::new(policy_id.clone(), PolicyCondition::OfN {
+            must_have: 3,
+            pubkeys: vec![
+                gus.clone().into(),
+                marty.clone().into(),
+                jackie.clone().into(),
+                rosarita.clone().into(),
+                dirk.clone().into(),
+            ],
+        });
+
+        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+        let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action.clone());
+        let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
+
+        let entry2 = PolicyRequestEntry::new(identity_id.clone(), PolicyID::random(), action.clone());
+        let req_random_policy = PolicyRequest::new(&master_key, &new_policy_keypair, entry2).unwrap();
+
+        macro_rules! sig_failed {
+            ($req_mod:ident, $setter:expr) => {
+                let mut $req_mod = req.clone();
+                $setter;
+                let res = policy.validate_request(&identity_id, &$req_mod);
+                assert_eq!(res.err(), Some(Error::CryptoSignatureVerificationFailed));
+            }
+        }
+
+        sig_failed! { req_mod, req_mod.set_id(RequestID::random()) }
+        sig_failed! { req_mod, req_mod.entry_mut().set_identity_id(IdentityID::random()) }
+        sig_failed! { req_mod, req_mod.entry_mut().set_policy_id(PolicyID::random()) }
+        match req.entry().action().clone() {
+            PolicyRequestAction::ReplaceKeys(_, publish, root) => {
+                let new_policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
+                let new_action = PolicyRequestAction::ReplaceKeys(new_policy, publish, root);
+                sig_failed! { req_mod, req_mod.entry_mut().set_action(new_action) }
+            }
+        }
+
+        let res = policy.validate_request(&IdentityID::random(), &req);
+        assert_eq!(res.err(), Some(Error::RecoveryPolicyRequestIdentityMismatch));
+
+        let res = policy.validate_request(&identity_id, &req_random_policy);
+        assert_eq!(res.err(), Some(Error::RecoveryPolicyRequestPolicyMismatch));
+
+        let res = policy.validate_request(&identity_id, &req);
+        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
+
+        // ok, let's get some sigs
+        let req_signed = req
+            .sign(&master_key, &gus).unwrap()
+            .sign(&master_key, &marty).unwrap();
+        // almost there...
+        let res = policy.validate_request(&identity_id, &req_signed);
+        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
+
+        // marty signs again...shouldn't count
+        let req_signed_2 = req_signed.clone()
+            .sign(&master_key, &marty).unwrap();
+        assert_eq!(req_signed_2.signatures().len(), 3);
+        // nice try
+        let res = policy.validate_request(&identity_id, &req_signed_2);
+        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
+
+        // rosarita to the rescue
+        let req_signed_3 = req_signed.clone()
+            .sign(&master_key, &rosarita).unwrap();
+        // this shoudl get it
+        let res = policy.validate_request(&identity_id, &req_signed_3);
+        assert_eq!(res, Ok(()));
     }
 
     #[test]

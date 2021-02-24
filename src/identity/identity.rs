@@ -6,7 +6,7 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::key::SecretKey,
+    crypto::key::{SecretKey, SignKeypair},
     identity::{
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
         keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, RevocationReason, Key, Keychain},
@@ -323,11 +323,8 @@ impl Identity {
 
     /// Sign someone else's recovery policy request. This is how signatures are
     /// added to the request, possibly allowing for the recovery of an identity.
-    pub fn sign_recovery_request(&self, master_key: &SecretKey, policy: &RecoveryPolicy, request: PolicyRequest) -> Result<PolicyRequest> {
-        drop(master_key);
-        drop(policy);
-        drop(request);
-        unimplemented!();
+    pub fn sign_recovery_request(&self, master_key: &SecretKey, sign_keypair: &SignKeypair, request: PolicyRequest) -> Result<PolicyRequest> {
+        request.sign(master_key, sign_keypair)
     }
 
     /// Stamp a claim with our identity.
@@ -514,27 +511,64 @@ mod tests {
     }
 
     #[test]
-    fn identity_execute_recovery() {
+    fn identity_create_sign_execute_recovery() {
         let (master_key, identity) = create_identity();
-        let new_policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
-        let new_publish = PublishKeypair::new_ed25519(&master_key).unwrap();
-        let new_root = RootKeypair::new_ed25519(&master_key).unwrap();
-        let action = PolicyRequestAction::ReplaceKeys(new_policy.clone(), new_publish.clone(), new_root.clone());
+        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
 
-        let res = identity.create_recovery_request(&master_key, &new_policy, action.clone());
+        let res = identity.create_recovery_request(&master_key, &new_policy_keypair, action.clone());
         // you can't triple-stamp a double-stamp
         assert_eq!(res.err(), Some(Error::IdentityMissingRecoveryPolicy));
 
         let policy_id = PolicyID::random();
         let conditions = PolicyCondition::Deny;
-        let identity2 = identity.set_recovery(policy_id, Some(conditions));
+        let identity2 = identity.set_recovery(policy_id.clone(), Some(conditions));
 
-        let req = identity2.create_recovery_request(&master_key, &new_policy, action).unwrap();
-        drop(req);
+        let req = identity2.create_recovery_request(&master_key, &new_policy_keypair, action.clone()).unwrap();
+        let res = identity2.clone().execute_recovery(req);
+        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
 
-        //let friend_key = RootKeypair::new_ed25519(&master_key).unwrap();
-        //let conditions = PolicyCondition::OfN { must_have: 1, pubkeys: vec![friend_key.deref().into()] };
-        unimplemented!();
+        let (gus_master, gus) = util::test::setup_identity_with_subkeys();
+        let (_marty_master, marty) = util::test::setup_identity_with_subkeys();
+        let (jackie_master, jackie) = util::test::setup_identity_with_subkeys();
+        let gus_sign = gus.keychain().subkey_by_name("sign").unwrap().as_signkey().unwrap().clone();
+        let marty_sign = marty.keychain().subkey_by_name("sign").unwrap().as_signkey().unwrap().clone();
+        let jackie_sign = jackie.keychain().subkey_by_name("sign").unwrap().as_signkey().unwrap().clone();
+
+        let identity3 = identity2.set_recovery(policy_id.clone(), Some(PolicyCondition::OfN {
+            must_have: 2,
+            pubkeys: vec![
+                gus_sign.clone().into(),
+                marty_sign.clone().into(),
+                jackie_sign.clone().into(),
+            ],
+        }));
+
+        let req = identity3.create_recovery_request(&master_key, &new_policy_keypair, action.clone()).unwrap();
+        let res = identity3.clone().execute_recovery(req);
+        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
+
+        let req = identity3.create_recovery_request(&master_key, &new_policy_keypair, action.clone()).unwrap();
+        let req_signed_1 = gus.sign_recovery_request(&gus_master, &gus_sign, req.clone()).unwrap();
+        let res = identity3.clone().execute_recovery(req_signed_1.clone());
+        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
+
+        let req_signed_2 = jackie.sign_recovery_request(&jackie_master, &jackie_sign, req_signed_1.clone()).unwrap();
+        let identity4 = identity3.clone().execute_recovery(req_signed_2.clone()).unwrap();
+
+        assert!(identity3.keychain().policy() != identity4.keychain().policy());
+        assert!(identity3.keychain().publish() != identity4.keychain().publish());
+        assert!(identity3.keychain().root() != identity4.keychain().root());
+        assert_eq!(identity3.keychain().subkeys().len(), 0);
+        assert_eq!(identity4.keychain().policy(), &new_policy_keypair);
+        assert_eq!(identity4.keychain().publish(), &new_publish_keypair);
+        assert_eq!(identity4.keychain().root(), &new_root_keypair);
+        assert_eq!(identity4.keychain().subkeys().len(), 3);
+        assert_eq!(identity4.keychain().subkeys()[0].name(), &format!("revoked:policy:{}", identity3.keychain().policy().key_id().as_string()));
+        assert_eq!(identity4.keychain().subkeys()[1].name(), &format!("revoked:publish:{}", identity3.keychain().publish().key_id().as_string()));
+        assert_eq!(identity4.keychain().subkeys()[2].name(), &format!("revoked:root:{}", identity3.keychain().root().key_id().as_string()));
     }
 
     #[test]
