@@ -58,6 +58,12 @@ macro_rules! object_id {
             }
         }
 
+        impl std::convert::From<crate::crypto::key::SignKeypairSignature> for $name {
+            fn from(sig: crate::crypto::key::SignKeypairSignature) -> Self {
+                Self(sig)
+            }
+        }
+
         impl std::convert::From<&$name> for String {
             fn from(id: &$name) -> String {
                 let ser_val: u8 = match &id.0 {

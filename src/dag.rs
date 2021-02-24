@@ -46,7 +46,7 @@ use crate::{
         Public,
         PublicMaybe,
         Timestamp,
-        ser,
+        ser::{self, SerdeBinary},
     },
 };
 use getset;
@@ -87,6 +87,53 @@ pub enum TransactionBody {
     SetNicknameV1(Option<String>),
     AddForwardV1(String, ForwardType, bool),
     DeleteForwardV1(String),
+}
+
+impl TransactionBody {
+    /// Reencrypt this transaction body
+    fn reencrypt(self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        let new_self = match self {
+            Self::Private => Self::Private,
+            Self::CreateIdentityV1(alpha, policy, publish, root) => {
+                let new_alpha = alpha.reencrypt(old_master_key, new_master_key)?;
+                let new_policy = policy.reencrypt(old_master_key, new_master_key)?;
+                let new_publish = publish.reencrypt(old_master_key, new_master_key)?;
+                let new_root = root.reencrypt(old_master_key, new_master_key)?;
+                Self::CreateIdentityV1(new_alpha, new_policy, new_publish, new_root)
+            }
+            Self::SetRecoveryPolicyV1(policy) => Self::SetRecoveryPolicyV1(policy),
+            Self::ExecuteRecoveryPolicyV1(req) => {
+                Self::ExecuteRecoveryPolicyV1(req.reencrypt(old_master_key, new_master_key)?)
+            }
+            Self::MakeClaimV1(spec) => Self::MakeClaimV1(spec.reencrypt(old_master_key, new_master_key)?),
+            Self::DeleteClaimV1(claim_id) => Self::DeleteClaimV1(claim_id),
+            Self::AcceptStampV1(stamp) => Self::AcceptStampV1(stamp),
+            Self::DeleteStampV1(stamp_id) => Self::DeleteStampV1(stamp_id),
+            Self::SetPolicyKeyV1(keypair, reason) => {
+                let new_keypair = keypair.reencrypt(old_master_key, new_master_key)?;
+                Self::SetPolicyKeyV1(new_keypair, reason)
+            }
+            Self::SetPublishKeyV1(keypair, reason) => {
+                let new_keypair = keypair.reencrypt(old_master_key, new_master_key)?;
+                Self::SetPublishKeyV1(new_keypair, reason)
+            }
+            Self::SetRootKeyV1(keypair, reason) => {
+                let new_keypair = keypair.reencrypt(old_master_key, new_master_key)?;
+                Self::SetRootKeyV1(new_keypair, reason)
+            }
+            Self::AddSubkeyV1(key, name, desc) => {
+                let new_subkey = key.reencrypt(old_master_key, new_master_key)?;
+                Self::AddSubkeyV1(new_subkey, name, desc)
+            }
+            Self::EditSubkeyV1(name, new_name, desc) => Self::EditSubkeyV1(name, new_name, desc),
+            Self::RevokeSubkeyV1(name, reason, new_name) => Self::RevokeSubkeyV1(name, reason, new_name),
+            Self::DeleteSubkeyV1(name) => Self::DeleteSubkeyV1(name),
+            Self::SetNicknameV1(nick) => Self::SetNicknameV1(nick),
+            Self::AddForwardV1(name, ty, def) => Self::AddForwardV1(name, ty, def),
+            Self::DeleteForwardV1(name) => Self::DeleteForwardV1(name),
+        };
+        Ok(new_self)
+    }
 }
 
 impl Public for TransactionBody {
@@ -351,6 +398,13 @@ impl Transaction {
             }
         }
     }
+
+    /// Reencrypt this transaction.
+    fn reencrypt(mut self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        let new_body = self.entry().body().clone().reencrypt(old_master_key, new_master_key)?;
+        self.entry_mut().set_body(new_body);
+        Ok(self)
+    }
 }
 
 impl Public for Transaction {
@@ -383,6 +437,15 @@ pub trait GraphInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TransactionVersioned {
     V1(Transaction),
+}
+
+impl TransactionVersioned {
+    /// Reencrypt this transaction.
+    fn reencrypt(self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        match self {
+            Self::V1(trans) => Ok(Self::V1(trans.reencrypt(old_master_key, new_master_key)?)),
+        }
+    }
 }
 
 // NOTE: if we ever add more versions, this will need to be removed and we'll
@@ -802,6 +865,14 @@ impl Transactions {
         Ok(self)
     }
 
+    /// Reencrypt this transaction set with a new master key.
+    pub fn reencrypt(mut self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        for trans in self.transactions_mut() {
+            *trans = trans.clone().reencrypt(old_master_key, new_master_key)?;
+        }
+        Ok(self)
+    }
+
     /// Determine if this identity is owned (ie, we have the private keys stored
     /// locally) or it is imported (ie, someone else's identity).
     pub fn is_owned(&self) -> bool {
@@ -848,6 +919,8 @@ impl Public for Transactions {
         self.transactions().iter().find(|x| x.has_private()).is_some()
     }
 }
+
+impl SerdeBinary for Transactions {}
 
 #[cfg(test)]
 mod tests {
@@ -1746,6 +1819,44 @@ mod tests {
     }
 
     #[test]
+    fn transactions_reencrypt() {
+        let (master_key, transactions) = genesis();
+        let transactions = transactions
+            .make_claim(&master_key, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Hooty McOwl".to_string()).unwrap())).unwrap()
+            .set_root_key(&master_key, Timestamp::now(), RootKeypair::new_ed25519(&master_key).unwrap(), RevocationReason::Unspecified).unwrap()
+            .set_nickname(&master_key, Timestamp::now(), Some("dirk-delta")).unwrap()
+            .add_forward(&master_key, Timestamp::now(), "my-website", ForwardType::Url("https://www.cactus-petes.com/yeeeehawwww".into()), false).unwrap();
+        transactions.test_master_key(&master_key).unwrap();
+        let identity = transactions.build_identity().unwrap();
+        match identity.claims()[0].claim().spec() {
+            ClaimSpec::Name(maybe) => {
+                let val = maybe.open(&master_key).unwrap();
+                assert_eq!(val, "Hooty McOwl".to_string());
+            }
+            _ => panic!("bad claim type"),
+        }
+        let sig = identity.keychain().root().sign(&master_key, "KILL...ME....".as_bytes()).unwrap();
+
+        let master_key_new = SecretKey::new_xsalsa20poly1305();
+        let transactions2 = transactions.reencrypt(&master_key, &master_key_new).unwrap();
+        transactions2.test_master_key(&master_key_new).unwrap();
+        let res = transactions2.test_master_key(&master_key);
+        assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
+        let identity2 = transactions2.build_identity().unwrap();
+        let sig2 = identity2.keychain().root().sign(&master_key_new, "KILL...ME....".as_bytes()).unwrap();
+        assert_eq!(sig, sig2);
+        match identity2.claims()[0].claim().spec() {
+            ClaimSpec::Name(maybe) => {
+                let val = maybe.open(&master_key_new).unwrap();
+                assert_eq!(val, "Hooty McOwl".to_string());
+                let res = maybe.open(&master_key);
+                assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
+            }
+            _ => panic!("bad claim type"),
+        }
+    }
+
+    #[test]
     fn transactions_is_owned() {
         let (master_key, transactions) = genesis();
         let identity = transactions.build_identity().unwrap();
@@ -1833,6 +1944,17 @@ mod tests {
             has_priv.push(trans.has_private());
         }
         assert_eq!(has_priv.iter().filter(|x| **x).count(), 0);
+    }
+
+    #[test]
+    fn transactions_serde_binary() {
+        let (_master_key, transactions) = genesis();
+        let identity = transactions.build_identity().unwrap();
+        let ser = transactions.serialize_binary().unwrap();
+        let des = Transactions::deserialize_binary(ser.as_slice()).unwrap();
+        let identity2 = des.build_identity().unwrap();
+        // quick and dirty. oh well.
+        assert_eq!(identity.id(), identity2.id());
     }
 }
 

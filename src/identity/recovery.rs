@@ -170,6 +170,19 @@ pub enum PolicyRequestAction {
     ReplaceKeys(PolicyKeypair, PublishKeypair, RootKeypair),
 }
 
+impl PolicyRequestAction {
+    fn reencrypt(self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        match self {
+            Self::ReplaceKeys(policy, publish, root) => {
+                let new_policy = policy.reencrypt(old_master_key, new_master_key)?;
+                let new_publish = publish.reencrypt(old_master_key, new_master_key)?;
+                let new_root = root.reencrypt(old_master_key, new_master_key)?;
+                Ok(Self::ReplaceKeys(new_policy, new_publish, new_root))
+            }
+        }
+    }
+}
+
 impl Public for PolicyRequestAction {
     fn strip_private(&self) -> Self {
         match self {
@@ -261,6 +274,13 @@ impl PolicyRequest {
         let serialized = ser::serialize(self.entry())?;
         let sig = sign_keypair.sign(master_key, &serialized)?;
         self.signatures_mut().push(sig);
+        Ok(self)
+    }
+
+    /// Reencrypt this policy request.
+    pub(crate) fn reencrypt(mut self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        let new_action = self.entry().action().clone().reencrypt(old_master_key, new_master_key)?;
+        self.entry_mut().set_action(new_action);
         Ok(self)
     }
 }
@@ -537,6 +557,40 @@ mod tests {
         req2.entry_mut().set_identity_id(identity_id2);
         let res = req2.verify(&new_policy_keypair);
         assert_eq!(res.err(), Some(Error::CryptoSignatureVerificationFailed));
+    }
+
+    #[test]
+    fn policy_request_reencrypt() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
+        let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
+        let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
+        let identity_id = IdentityID::random();
+        let policy_id = PolicyID::random();
+        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+        let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action);
+        let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
+
+        // i'm detective john kimble
+        let obj = "yeah sure you are.";
+
+        let sig = match req.entry().action() {
+            PolicyRequestAction::ReplaceKeys(policy, ..) => {
+                policy.sign(&master_key, obj.as_bytes()).unwrap()
+            }
+        };
+
+        let new_master_key = SecretKey::new_xsalsa20poly1305();
+        let req2 = req.reencrypt(&master_key, &new_master_key).unwrap();
+
+        match req2.entry().action() {
+            PolicyRequestAction::ReplaceKeys(policy, ..) => {
+                let sig2 = policy.sign(&new_master_key, obj.as_bytes()).unwrap();
+                assert_eq!(sig, sig2);
+                let res = policy.sign(&master_key, obj.as_bytes());
+                assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
+            }
+        }
     }
 
     #[test]
