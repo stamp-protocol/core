@@ -196,8 +196,8 @@ impl Identity {
 
     /// Create a new claim from the given data, sign it, and attach it to this
     /// identity.
-    pub(crate) fn make_claim(mut self, claim_id: ClaimID, claim: ClaimSpec) -> Self {
-        let claim_container = ClaimContainer::new(claim_id, claim);
+    pub(crate) fn make_claim(mut self, claim_id: ClaimID, claim: ClaimSpec, created: Timestamp) -> Self {
+        let claim_container = ClaimContainer::new(claim_id, claim, created);
         self.claims_mut().push(claim_container);
         self
     }
@@ -601,7 +601,7 @@ mod tests {
         let claim_id = ClaimID::random();
         let spec = ClaimSpec::Identity(IdentityID::random());
         assert_eq!(identity.claims().len(), 0);
-        let identity = identity.make_claim(claim_id.clone(), spec.clone());
+        let identity = identity.make_claim(claim_id.clone(), spec.clone(), Timestamp::now());
         assert_eq!(identity.claims().len(), 1);
         assert_eq!(identity.claims()[0].claim().id(), &claim_id);
         match (identity.claims()[0].claim().spec(), &spec) {
@@ -611,7 +611,7 @@ mod tests {
 
         let claim_id2 = ClaimID::random();
         let spec2 = ClaimSpec::Name(MaybePrivate::new_public(String::from("BOND. JAMES BOND.")));
-        let identity = identity.make_claim(claim_id2.clone(), spec2.clone());
+        let identity = identity.make_claim(claim_id2.clone(), spec2.clone(), Timestamp::now());
         assert_eq!(identity.claims().len(), 2);
         assert_eq!(identity.claims()[0].claim().id(), &claim_id);
         assert_eq!(identity.claims()[1].claim().id(), &claim_id2);
@@ -631,7 +631,7 @@ mod tests {
 
         let claim_id = ClaimID::random();
         let spec = ClaimSpec::Identity(IdentityID::random());
-        let identity_stampee = identity_stampee.make_claim(claim_id.clone(), spec.clone());
+        let identity_stampee = identity_stampee.make_claim(claim_id.clone(), spec.clone(), Timestamp::now());
 
         let stamp = identity_stamper.stamp(&master_key_stamper, Confidence::High, Timestamp::now(), identity_stampee.id(), identity_stampee.claims()[0].claim(), None).unwrap();
         identity_stamper.verify_stamp(&stamp).unwrap();
@@ -757,7 +757,7 @@ mod tests {
 
         let claim_id = ClaimID::random();
         let spec = ClaimSpec::Email(MaybePrivate::new_public(String::from("poopy@butt.com")));
-        let identity = identity.make_claim(claim_id.clone(), spec.clone());
+        let identity = identity.make_claim(claim_id.clone(), spec.clone(), Timestamp::now());
         assert_eq!(identity.emails(), vec!["poopy@butt.com".to_string()]);
         assert_eq!(identity.email_maybe(), Some("poopy@butt.com".to_string()));
 
@@ -794,13 +794,13 @@ mod tests {
 
         let claim_id = ClaimID::random();
         let spec = ClaimSpec::Name(MaybePrivate::new_public(String::from("BOND. JAMES BOND.")));
-        let identity = identity.make_claim(claim_id.clone(), spec.clone());
+        let identity = identity.make_claim(claim_id.clone(), spec.clone(), Timestamp::now());
         assert_eq!(identity.names(), vec!["BOND. JAMES BOND.".to_string()]);
         assert_eq!(identity.name_maybe(), Some("BOND. JAMES BOND.".to_string()));
 
         let claim_id2 = ClaimID::random();
         let spec = ClaimSpec::Name(MaybePrivate::new_public(String::from("Jack Mama")));
-        let identity = identity.make_claim(claim_id2.clone(), spec.clone());
+        let identity = identity.make_claim(claim_id2.clone(), spec.clone(), Timestamp::now());
         assert_eq!(identity.names(), vec!["BOND. JAMES BOND.".to_string(), "Jack Mama".to_string()]);
         assert_eq!(identity.name_maybe(), Some("BOND. JAMES BOND.".to_string()));
 
@@ -885,7 +885,7 @@ extra_data:
     #[test]
     fn identity_strip_has_private() {
         let (master_key, identity) = create_identity();
-        let identity = identity.make_claim(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Bozotron".to_string()).unwrap()));
+        let identity = identity.make_claim(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Bozotron".to_string()).unwrap()), Timestamp::now());
         assert!(identity.has_private());
         assert!(identity.keychain().has_private());
         assert!(identity.claims().iter().find(|c| c.has_private()).is_some());

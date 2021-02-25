@@ -15,7 +15,7 @@ use crate::{
     },
     crypto::key::SecretKey,
     private::MaybePrivate,
-    util::Date,
+    util::{Timestamp, Date},
 };
 use getset;
 use serde_derive::{Serialize, Deserialize};
@@ -303,14 +303,17 @@ pub struct Claim {
     id: ClaimID,
     /// The data we're claiming.
     spec: ClaimSpec,
+    /// The date we created this claim.
+    created: Timestamp,
 }
 
 impl Claim {
     /// Create a new claim.
-    fn new(id: ClaimID, spec: ClaimSpec) -> Self {
+    fn new(id: ClaimID, spec: ClaimSpec, created: Timestamp) -> Self {
         Self {
             id,
             spec,
+            created,
         }
     }
 
@@ -389,8 +392,8 @@ pub struct ClaimContainer {
 impl ClaimContainer {
     /// Create a new claim, sign it with our signing key, and return a container
     /// that holds the claim (with an empty set of stamps).
-    pub fn new(claim_id: ClaimID, spec: ClaimSpec) -> Self {
-        let claim = Claim::new(claim_id, spec);
+    pub fn new(claim_id: ClaimID, spec: ClaimSpec, created: Timestamp) -> Self {
+        let claim = Claim::new(claim_id, spec, created);
         Self {
             claim,
             stamps: Vec::new(),
@@ -501,11 +504,11 @@ pub(crate) mod tests {
                     MaybePrivate::Private(_, Some(_)) => {},
                     _ => panic!("bad maybe val: {}", stringify!($claimtype)),
                 }
-                let claim = ClaimContainer::new(ClaimID::random(), spec);
+                let claim = ClaimContainer::new(ClaimID::random(), spec, Timestamp::now());
                 assert_eq!(claim.has_private(), true);
 
                 assert_eq!(spec2.has_private(), false);
-                let claim2 = ClaimContainer::new(ClaimID::random(), spec2);
+                let claim2 = ClaimContainer::new(ClaimID::random(), spec2, Timestamp::now());
                 assert_eq!(claim2.has_private(), false);
             };
             ($claimty:ident, $val:expr) => {
@@ -626,8 +629,8 @@ pub(crate) mod tests {
         macro_rules! assert_instant {
             (raw, $claimmaker:expr, $val:expr, $expected:expr) => {
                 let (_master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
-                let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
-                let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
+                let container_private = ClaimContainer::new(ClaimID::random(), spec_private, Timestamp::now());
+                let container_public = ClaimContainer::new(ClaimID::random(), spec_public, Timestamp::now());
 
                 match_container! { container_public, $expected }
                 match_container! { container_private, $expected }
@@ -669,8 +672,8 @@ pub(crate) mod tests {
             (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
                 let (master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
                 let fake_master_key = SecretKey::new_xsalsa20poly1305();
-                let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
-                let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
+                let container_private = ClaimContainer::new(ClaimID::random(), spec_private, Timestamp::now());
+                let container_public = ClaimContainer::new(ClaimID::random(), spec_public, Timestamp::now());
                 let opened_claim = container_private.claim().as_public(&master_key).unwrap();
                 assert_eq!(container_private.has_private(), true);
                 assert_eq!(container_public.has_private(), false);
@@ -689,7 +692,7 @@ pub(crate) mod tests {
         }
 
         let (master_key, spec_private, _) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
-        let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
+        let container_private = ClaimContainer::new(ClaimID::random(), spec_private, Timestamp::now());
         match (container_private.claim().spec(), container_private.claim().as_public(&master_key).unwrap().spec()) {
             (ClaimSpec::Identity(val1), ClaimSpec::Identity(val2)) => {
                 assert_eq!(val1, val2);
@@ -720,8 +723,8 @@ pub(crate) mod tests {
         macro_rules! has_priv {
             (raw, $claimmaker:expr, $val:expr, $haspriv:expr) => {
                 let (_master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
-                let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
-                let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
+                let container_private = ClaimContainer::new(ClaimID::random(), spec_private, Timestamp::now());
+                let container_public = ClaimContainer::new(ClaimID::random(), spec_public, Timestamp::now());
                 assert_eq!(container_private.has_private(), $haspriv);
                 assert_eq!(container_public.has_private(), false);
 

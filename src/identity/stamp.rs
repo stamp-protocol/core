@@ -307,7 +307,7 @@ mod tests {
         let ts = ts.unwrap_or(Timestamp::now());
         // kind of stupid to sign the claim with the same key creating the stamp
         // but it's also not incorrect.
-        let claim = ClaimContainer::new(claim_id, ClaimSpec::Name(maybe));
+        let claim = ClaimContainer::new(claim_id, ClaimSpec::Name(maybe), Timestamp::now());
         Stamp::stamp(&master_key, &sign_keypair, &stamper, &stampee, Confidence::Medium, ts, claim.claim(), None).unwrap()
     }
 
@@ -392,8 +392,8 @@ entry:
                 let root = RootKeypair::new_ed25519(&sender_master_key).unwrap();
                 let sender_keychain = Keychain::new(alpha, policy, publish, root)
                     .add_subkey(subkey_key, "default:crypto", None).unwrap();
-                let container_private = ClaimContainer::new(ClaimID::random(), spec_private);
-                let container_public = ClaimContainer::new(ClaimID::random(), spec_public);
+                let container_private = ClaimContainer::new(ClaimID::random(), spec_private, Timestamp::now());
+                let container_public = ClaimContainer::new(ClaimID::random(), spec_public, Timestamp::now());
                 let sender_subkey = sender_keychain.subkey_by_name("default:crypto").unwrap();
 
                 let recipient_master_key = SecretKey::new_xsalsa20poly1305();

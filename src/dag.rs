@@ -591,7 +591,7 @@ impl Transactions {
                     TransactionBody::MakeClaimV1(spec) => {
                         let claim_id = ClaimID(trans.id().deref().clone());
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                            .make_claim(claim_id, spec);
+                            .make_claim(claim_id, spec, trans.entry().created().clone());
                         Ok(identity_mod)
                     }
                     TransactionBody::DeleteClaimV1(claim_id) => {
@@ -1056,7 +1056,7 @@ mod tests {
         test_privates(&TransactionBody::MakeClaimV1(ClaimSpec::Name(MaybePrivate::new_private(&master_key, String::from("Positive Pyotr")).unwrap())));
         test_privates(&TransactionBody::DeleteClaimV1(ClaimID::random()));
 
-        let claim_con = ClaimContainer::new(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, String::from("Hangry Hank")).unwrap()));
+        let claim_con = ClaimContainer::new(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, String::from("Hangry Hank")).unwrap()), Timestamp::now());
         let stamp = Stamp::stamp(&master_key, &root_keypair, &IdentityID::random(), &IdentityID::random(), Confidence::Low, Timestamp::now(), claim_con.claim(), Some(Timestamp::now())).unwrap();
         test_privates(&TransactionBody::AcceptStampV1(stamp));
         test_privates(&TransactionBody::DeleteStampV1(StampID::random()));
