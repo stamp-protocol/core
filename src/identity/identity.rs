@@ -17,6 +17,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
+        ser,
     },
 };
 use getset;
@@ -453,6 +454,27 @@ impl Identity {
         }
         Ok(())
     }
+
+    /// Serialize this identity in human readable format.
+    ///
+    /// Note that this cannot be undone: an identity cannot be deserialized from
+    /// this format. This is for display only.
+    pub fn serialize(&self) -> Result<String> {
+        ser::serialize_human(self)
+    }
+}
+
+impl Public for Identity {
+    fn strip_private(&self) -> Self {
+        let mut clone = self.clone();
+        clone.set_keychain(clone.keychain().strip_private());
+        clone.set_claims(clone.claims().iter().map(|c| c.strip_private()).collect::<Vec<_>>());
+        clone
+    }
+
+    fn has_private(&self) -> bool {
+        self.keychain().has_private() || self.claims().iter().find(|c| c.has_private()).is_some()
+    }
 }
 
 #[cfg(test)]
@@ -462,6 +484,7 @@ mod tests {
         crypto::key::SignKeypair,
         util,
     };
+    use std::str::FromStr;
 
     fn gen_master_key() -> SecretKey {
         SecretKey::new_xsalsa20poly1305()
@@ -808,6 +831,68 @@ mod tests {
         identity.test_master_key(&master_key).unwrap();
         let res = identity.test_master_key(&master_key_fake);
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
+    }
+
+    #[test]
+    fn identity_serialize() {
+        let master_key = SecretKey::new_xsalsa20poly1305();
+        let now = Timestamp::from_str("1977-06-07T04:32:06Z").unwrap();
+        let seeds = [
+            &[33, 90, 159, 88, 22, 24, 84, 4, 237, 121, 198, 195, 71, 238, 107, 91, 235, 93, 9, 129, 252, 221, 2, 149, 250, 142, 49, 36, 161, 184, 44, 156],
+            &[170, 39, 114, 32, 79, 238, 151, 138, 85, 59, 44, 153, 147, 105, 161, 127, 180, 225, 13, 119, 143, 46, 119, 153, 203, 41, 129, 240, 180, 88, 201, 37],
+            &[67, 150, 243, 61, 128, 149, 195, 141, 16, 154, 144, 63, 21, 245, 243, 226, 244, 55, 168, 59, 66, 45, 15, 61, 152, 5, 101, 219, 43, 137, 197, 90],
+            &[179, 112, 207, 116, 174, 196, 118, 123, 235, 202, 236, 69, 169, 209, 65, 238, 204, 235, 194, 187, 37, 246, 180, 124, 8, 116, 207, 175, 95, 87, 159, 137],
+        ];
+        let alpha = AlphaKeypair::new_ed25519_from_seed(&master_key, seeds[0]).unwrap();
+        let policy = PolicyKeypair::new_ed25519_from_seed(&master_key, seeds[1]).unwrap();
+        let publish = PublishKeypair::new_ed25519_from_seed(&master_key, seeds[2]).unwrap();
+        let root = RootKeypair::new_ed25519_from_seed(&master_key, seeds[3]).unwrap();
+
+        let sig = alpha.sign(&master_key, "get a job".as_bytes()).unwrap();
+        let id = IdentityID::from(sig.deref().clone());
+
+        let identity = Identity::create(id.clone(), alpha.clone(), policy.clone(), publish.clone(), root.clone(), now.clone());
+        let ser = identity.serialize().unwrap();
+        assert_eq!(ser, r#"---
+id:
+  Ed25519: ed2mesdW8i5YsIfoGjsJnP0sleJAi9zEkIsE6CnnvFlGSIHm9huG33MozicdqfKAzTI9rz8fpwu3MZbS4hCWCw
+created: "1977-06-07T04:32:06Z"
+recovery_policy: ~
+keychain:
+  alpha:
+    Ed25519:
+      - rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
+      - ~
+  policy:
+    Ed25519:
+      - _iO_wIyxzlWS0OvOKJYR67L80nQoNTCE_JYDcxs1lRk
+      - ~
+  publish:
+    Ed25519:
+      - PRtrFNJJpYsNNYIZEgspwxVtgLqrMx1-3nXuLnTtWlc
+      - ~
+  root:
+    Ed25519:
+      - Yl7xQtHuYPpQQwBfppPROI0jYqetVxvChC2EofFrNhU
+      - ~
+  subkeys: []
+claims: []
+extra_data:
+  nickname: ~
+  forwards: []"#);
+    }
+
+    #[test]
+    fn identity_strip_has_private() {
+        let (master_key, identity) = create_identity();
+        let identity = identity.make_claim(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Bozotron".to_string()).unwrap()));
+        assert!(identity.has_private());
+        assert!(identity.keychain().has_private());
+        assert!(identity.claims().iter().find(|c| c.has_private()).is_some());
+        let identity2 = identity.strip_private();
+        assert!(!identity2.has_private());
+        assert!(!identity2.keychain().has_private());
+        assert!(!identity2.claims().iter().find(|c| c.has_private()).is_some());
     }
 }
 

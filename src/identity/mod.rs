@@ -28,9 +28,6 @@ use crate::{
     error::Result,
     crypto::key::SecretKey,
     dag::Transactions,
-    identity::{
-        ExtendKeypair,
-    },
     util::{
         Public,
         Timestamp,
