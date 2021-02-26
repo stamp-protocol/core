@@ -801,7 +801,7 @@ impl Transactions {
               S: Into<String>,
     {
         let body = TransactionBody::AddSubkeyV1(key, name.into(), description.map(|x| x.into()));
-        self.push_transaction(master_key, SignWith::Alpha, now, body)?;
+        self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
 
@@ -937,6 +937,15 @@ mod tests {
     };
     use std::str::FromStr;
     use url::Url;
+
+    macro_rules! assert_signkey {
+        ($trans:expr, $keyty:ident) => {
+            match $trans.id() {
+                TransactionID::$keyty(..) => {}
+                _ => panic!("Expected sign key type {}, found {:?}", stringify!($keyty), $trans.id()),
+            }
+        }
+    }
 
     #[test]
     fn trans_body_strip_has_private() {
@@ -1342,7 +1351,7 @@ mod tests {
         let (_master_key, transactions) = genesis();
         let identity = transactions.build_identity().unwrap();
         assert_eq!(identity.id(), &IdentityID(transactions.transactions()[0].id().deref().clone()));
-        match &transactions.transactions()[0].entry().body() {
+        match transactions.transactions()[0].entry().body() {
             TransactionBody::CreateIdentityV1(ref alpha, ref policy, ref publish, ref root) => {
                 assert_eq!(identity.keychain().alpha(), alpha);
                 assert_eq!(identity.keychain().policy(), policy);
@@ -1351,6 +1360,7 @@ mod tests {
             }
             _ => panic!("bad transaction type"),
         }
+        assert_signkey! { transactions.transactions()[0], Alpha }
     }
 
     #[test]
@@ -1364,6 +1374,7 @@ mod tests {
         let identity2 = transactions2.build_identity().unwrap();
         assert!(identity2.recovery_policy().is_none());
         assert_eq!(transactions2.transactions().len(), 2);
+        assert_signkey! { transactions2.transactions()[1], Policy }
 
         let transactions3 = transactions.clone().set_recovery_policy(&master_key, Timestamp::now(), Some(PolicyCondition::Deny)).unwrap();
         let identity3 = transactions3.build_identity().unwrap();
@@ -1375,7 +1386,6 @@ mod tests {
         let identity4 = transactions4.build_identity().unwrap();
         assert!(identity4.recovery_policy().is_none());
         assert_eq!(transactions4.transactions().len(), 3);
-
     }
 
     #[test]
@@ -1449,6 +1459,7 @@ mod tests {
             .execute_recovery_policy(&master_key, Timestamp::now(), req_signed_3.clone()).unwrap();
         let identity3 = transactions3.build_identity().unwrap();
 
+        assert_signkey! { transactions3.transactions()[2], Policy }
         assert!(identity2.keychain().policy() != identity3.keychain().policy());
         assert!(identity2.keychain().publish() != identity3.keychain().publish());
         assert!(identity2.keychain().root() != identity3.keychain().root());
@@ -1495,6 +1506,7 @@ mod tests {
                 assert_eq!(maybe.open(&master_key).unwrap(), val);
                 assert_eq!(identity2.claims().len(), 1);
                 assert_eq!(transactions2.transactions().len(), 2);
+                assert_signkey! { transactions2.transactions()[1], Root }
             };
 
             ($claimty:ident, $val:expr) => {
@@ -1557,6 +1569,7 @@ mod tests {
         let claim_id = identity.claims()[0].claim().id().clone();
         let transactions3 = transactions2.clone().delete_claim(&master_key, Timestamp::now(), claim_id.clone()).unwrap();
         assert_eq!(transactions3.transactions().len(), 3);
+        assert_signkey! { transactions3.transactions()[2], Root }
 
         let res = transactions2.clone().delete_claim(&master_key, Timestamp::now(), ClaimID::random());
         assert_eq!(res.err(), Some(Error::IdentityClaimNotFound));
@@ -1579,7 +1592,7 @@ mod tests {
 
         let transactions3 = transactions2.accept_stamp(&master_key, Timestamp::now(), stamp.clone()).unwrap();
         assert_eq!(transactions3.transactions().len(), 3);
-        assert_eq!(transactions3.transactions().len(), 3);
+        assert_signkey! { transactions3.transactions()[2], Root }
         let identity3 = transactions3.build_identity().unwrap();
         assert_eq!(identity3.claims()[0].stamps().len(), 1);
 
@@ -1612,6 +1625,7 @@ mod tests {
         let transactions4 = transactions3.clone().delete_stamp(&master_key, Timestamp::now(), stamp.id().clone()).unwrap();
         let identity4 = transactions4.build_identity().unwrap();
         assert_eq!(identity4.claims()[0].stamps().len(), 0);
+        assert_signkey! { transactions4.transactions()[3], Root }
 
         let res = transactions4.clone().delete_stamp(&master_key, Timestamp::now(), stamp.id().clone());
         assert_eq!(res.err(), Some(Error::IdentityStampNotFound));
@@ -1627,12 +1641,14 @@ mod tests {
             let new_keypair = $ty::new_ed25519(&master_key).unwrap();
             assert!(&new_keypair != current_keypair);
             let transactions2 = transactions.$transaction_fn(&master_key, Timestamp::now(), new_keypair.clone(), RevocationReason::Superseded).unwrap();
+            assert_signkey! { transactions2.transactions()[1], Alpha }
             let identity2 = transactions2.build_identity().unwrap();
             assert_eq!(identity2.keychain().$keychain_getter(), &new_keypair);
             assert_eq!(identity2.keychain().subkeys()[0].key().$key_getter().as_ref().unwrap(), &current_keypair);
             assert_eq!(identity2.keychain().subkeys()[0].name(), &format!($strname, current_keypair.key_id().as_string()));
 
             let transactions3 = transactions2.$transaction_fn(&master_key, Timestamp::now(), new_keypair.clone(), RevocationReason::Superseded).unwrap();
+            assert_signkey! { transactions3.transactions()[2], Alpha }
             let identity3 = transactions3.build_identity().unwrap();
             assert_eq!(identity3.keychain().$keychain_getter(), &new_keypair);
             assert_eq!(identity3.keychain().subkeys()[0].key().$key_getter().as_ref().unwrap(), &current_keypair);
@@ -1689,6 +1705,9 @@ mod tests {
             .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
             .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()
             .add_subkey(&master_key, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key")).unwrap();
+        assert_signkey! { transactions2.transactions()[1], Root }
+        assert_signkey! { transactions2.transactions()[2], Root }
+        assert_signkey! { transactions2.transactions()[3], Root }
         let identity2 = transactions2.build_identity().unwrap();
         assert_eq!(identity2.keychain().subkeys()[0].name(), "default:sign");
         assert_eq!(identity2.keychain().subkeys()[1].name(), "default:crypto");
@@ -1720,6 +1739,7 @@ mod tests {
             .add_subkey(&master_key, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key")).unwrap();
         let transactions3 = transactions2.clone()
             .revoke_subkey(&master_key, Timestamp::now(), "default:crypto", RevocationReason::Superseded, Some("revoked:default:crypto")).unwrap();
+        assert_signkey! { transactions3.transactions()[4], Root }
         let identity3 = transactions3.build_identity().unwrap();
         assert!(identity3.keychain().subkeys()[0].revocation().is_none());
         assert_eq!(identity3.keychain().subkeys()[1].revocation().as_ref().map(|x| x.reason()), Some(&RevocationReason::Superseded));
@@ -1747,6 +1767,7 @@ mod tests {
 
         let transactions3 = transactions2.clone()
             .delete_subkey(&master_key, Timestamp::now(), "default:sign").unwrap();
+        assert_signkey! { transactions3.transactions()[4], Root }
         let identity3 = transactions3.build_identity().unwrap();
         assert_eq!(identity3.keychain().subkeys()[0].name(), "default:crypto");
         assert_eq!(identity3.keychain().subkeys()[1].name(), "default:secret");
@@ -1765,6 +1786,7 @@ mod tests {
 
         let transactions2 = transactions
             .set_nickname(&master_key, Timestamp::now(), Some("dirk-delta")).unwrap();
+        assert_signkey! { transactions2.transactions()[1], Root }
         let identity2 = transactions2.build_identity().unwrap();
         assert_eq!(identity2.extra_data().nickname(), &Some("dirk-delta".into()));
 
@@ -1785,6 +1807,9 @@ mod tests {
             .add_forward(&master_key, Timestamp::now(), "email", ForwardType::Email("jackie@chrome.com".into()), true).unwrap()
             .add_forward(&master_key, Timestamp::now(), "my-website", ForwardType::Url("https://www.cactus-petes.com/yeeeehawwww".into()), false).unwrap()
             .add_forward(&master_key, Timestamp::now(), "twitter", ForwardType::Social("twitter".into(), "lol_twitter_sux".into()), false).unwrap();
+        assert_signkey! { transactions2.transactions()[1], Root }
+        assert_signkey! { transactions2.transactions()[2], Root }
+        assert_signkey! { transactions2.transactions()[3], Root }
         let identity2 = transactions2.build_identity().unwrap();
         assert_eq!(identity2.extra_data().forwards().len(), 3);
         assert_eq!(identity2.extra_data().forwards()[0].name(), "email");
@@ -1808,6 +1833,7 @@ mod tests {
             .add_forward(&master_key, Timestamp::now(), "twitter", ForwardType::Social("twitter".into(), "lol_twitter_sux".into()), false).unwrap();
         let transactions3 = transactions2
             .delete_forward(&master_key, Timestamp::now(), "my-website").unwrap();
+        assert_signkey! { transactions3.transactions()[4], Root }
         let identity3 = transactions3.build_identity().unwrap();
         assert_eq!(identity3.extra_data().forwards().len(), 2);
         assert_eq!(identity3.extra_data().forwards()[0].name(), "email");
