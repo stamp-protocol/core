@@ -4,7 +4,7 @@
 //! have blonde hair, blue eyes, and a cute little button nose."
 //!
 //! However, a claim by itself is not meaningful or useful unless it is
-//! [stamped](crate::identity::stamp) by someone withing your trust network.
+//! [stamped](crate::identity::stamp) by someone within your trust network.
 
 use crate::{
     error::{Error, Result},
@@ -108,7 +108,8 @@ pub enum ClaimSpec {
     Birthday(MaybePrivate<Date>),
     /// A claim that I own an email address.
     Email(MaybePrivate<String>),
-    /// A claim that the attached photo is a photo of me.
+    /// A claim that the attached photo is a photo of me (ie, not an anime
+    /// avatar).
     Photo(MaybePrivate<ClaimBin>),
     /// A claim that I own a PGP keypair (using the key's ID as the value).
     ///
