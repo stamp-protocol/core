@@ -119,11 +119,11 @@ of transactions, allowing quick lookups of identity information without the BS.
 - [ ] Stamp core proof of concept
   - [x] Key hierarchy
   - [x] Root signature and verification
-  - [ ] Keychain management
+  - [x] Keychain management
     - [x] Policy, publish, root key management
-    - [ ] Subkey management
+    - [x] Subkey management
       - [x] Add
-      - [ ] Update name/description
+      - [x] Update name/description
       - [x] Revoke
       - [x] Delete
     - [x] Reencryption via new master key
@@ -158,10 +158,10 @@ of transactions, allowing quick lookups of identity information without the BS.
     - [x] Encrypted messages between identities
     - [x] Cryptographic signatures
     - [ ] Personal data encryption/decryption
-  - [ ] Recovery system
-  - [ ] Extra data management
-    - [ ] Nickname
-    - [ ] Forwards
+  - [x] Recovery system
+  - [x] Extra data management
+    - [x] Nickname
+    - [x] Forwards
   - [ ] Whole identity revocation
   - [ ] Trust system
     - [ ] Trust of specific identities
