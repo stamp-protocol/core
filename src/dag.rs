@@ -727,7 +727,7 @@ impl Transactions {
         if self.transactions().len() > 0 {
             Err(Error::DagCreateIdentityOnExistingChain)?;
         }
-        let body = TransactionBody::CreateIdentityV1(alpha.clone(), policy, publish, root);
+        let body = TransactionBody::CreateIdentityV1(alpha, policy, publish, root);
         self.push_transaction(master_key, SignWith::Alpha, now.clone(), body)?;
         Ok(self)
     }
