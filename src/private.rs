@@ -4,7 +4,7 @@
 //! method, given the correct unlocking key.
 //!
 //! This allows for secure storage of things like private keys, or even claims
-//! we wish to be verifyable but not publicly available.
+//! we wish to be verifiable but not publicly available.
 //!
 //! In this module is also the [MaybePrivate](crate::private::MaybePrivate)
 //! container which gives us a choice to either make something public or to keep
@@ -74,14 +74,18 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> Private<T> {
 /// This is a somewhat ephemeral container, mainly used for encryption and
 /// decryption and then thrown away.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PrivateVerifiableInner<T> {
+struct PrivateVerifiableInner<T> {
     /// The value we're storing.
     value: T,
     /// The HMAC key we use to hash the data.
     hmac_key: HmacKey,
 }
 
-/// Holds private data such that
+/// Holds private data along with an HMAC of the data being stored, allowing
+/// the HMAC to be signed for verification without leaking information about the
+/// private data itself.
+///
+/// This works such that:
 ///
 /// - The private data is stored alonside an HMAC key (both encrypted)
 /// - The HMAC key can be used to derive a hash of the data

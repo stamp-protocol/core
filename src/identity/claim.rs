@@ -329,7 +329,7 @@ impl Claim {
     ///
     /// For instance, if you claim you own a URL, we can immediately verify that
     /// claim by reading that URL (provided it's a protocol we understand, like
-    /// HTTP[S]) and checking if the claim is included in the response.
+    /// HTTP\[S\]) and checking if the claim is included in the response.
     ///
     /// The following claim types can currently be automated:
     ///

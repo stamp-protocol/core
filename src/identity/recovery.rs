@@ -2,23 +2,23 @@
 //! has ultimate control over the keychain) in the event it is lost or stolen.
 //!
 //! The idea here is that using our policy keypair, we can create and sign a
-//! recovery policy that allows us to generate a new recovery keypair and
-//! assign it to our identity, provided that it is ratified by some combination
+//! recovery policy that allows us to generate new policy, publish, and root
+//! keypairs for our identity, provided that it is ratified by some combination
 //! of signatures from other keys. So let's say you create a recovery policy
 //! that requires you to have at least three signatures of the five public
 //! keys that you list (which might belong to family members, identity
-//! companies, or other trusted third parties). If you lose your recovery key,
-//! you can create a recovery request, sign it with the recovery key you hope
+//! companies, or other trusted third parties). If you lose any non-alpha key,
+//! you can create a recovery request, sign it with the policy key you hope
 //! to replace the lost one, and try to get three or more signatures on that
 //! request from your trusted circle. If you get the signatures you need, the
 //! protocol will "honor" the replacement request and grant you your new
-//! recovery key, which can be used to then rotate the keys in your keychain.
+//! keys.
 //!
-//! The recovery request can do two things: replace the recovery key, and also
-//! set a new policy to replace the old one. In essence, this allows you to
+//! The recovery request currently only has one action available to it, which is
+//! to replace the policy, publis and root keys. In essence, this allows you to
 //! manage most aspects of your identity even without having ready access to the
-//! recovery keypair or policy keypair, which allows them to be safely locked
-//! away (only to be used during emergencies).
+//! alpha or policy keypair, which allows them to be safely locked away (only to
+//! be used during emergencies).
 //!
 //! The policy itself can require any arbitrary combination of signatures, so
 //! it's really up to the identity holder to choose a policy they feel gives
@@ -27,8 +27,8 @@
 //! It's important to weigh accessibilty and security here. You can say *all ten
 //! of the following identities must sign* in order to recover, but if one of
 //! those ten people dies, then you're SOL. If your policy is too difficult to
-//! actually satisfy, then you'll likely keep your recovery key or policy key
-//! hanging around, which might increase your attack surface.
+//! actually satisfy, then you'll likely keep your higher-powered keys laying
+//! around more often, increasing your attack surface.
 //!
 //! Another note: the recovery keys we list must be exact matches: signatures
 //! from a subkey of one of those keys won't work. A person must sign a recovery

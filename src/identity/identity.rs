@@ -116,6 +116,13 @@ pub struct IdentityExtraData {
     /// avoid accidental collisions, and any malicious immitations must be
     /// weeded out by inclusion of an ID (prefix or full), stamp verification,
     /// and trust levels.
+    ///
+    /// NOTE that the nickname is only useful for discovery of an identity in
+    /// the network. It must *not* be included in forwards or claim proofs,
+    /// because if the nickname changes then the forward or claim proof will
+    /// break. It's really meant as a quick way to allow people to find your
+    /// identity, as opposed to a piece of static information used by other
+    /// systems.
     nickname: Option<String>,
     /// A canonical list of places this identity forwards to.
     forwards: Vec<Forward>,
