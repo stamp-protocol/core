@@ -722,6 +722,44 @@ impl Transactions {
         Ok(identity)
     }
 
+    /// Merge the transactions from two transaction sets together.
+    pub fn merge(mut branch1: Self, branch2: Self) -> Result<Self> {
+        for trans2 in branch2.transactions() {
+            // if it already exists, don't merge it
+            if branch1.transactions().iter().find(|t| t.id() == trans2.id()).is_some() {
+                continue;
+            }
+            branch1.transactions_mut().push(trans2.clone());
+        }
+        // make sure it's all copasetic.
+        branch1.build_identity()?;
+        Ok(branch1)
+    }
+
+    /// Reset a set of transactions to a previous state.
+    ///
+    /// Effectively, we take a transaction ID and remove any transactions that
+    /// came after it. This may create many trailing transactions, which will be
+    /// connected the next time a new transaction is created.
+    pub fn reset(mut self, txid: &TransactionID) -> Result<Self> {
+        // recursively find all transactions referencing the given one
+        fn find_tx_to_rm(transactions: &Vec<TransactionVersioned>, txid: &TransactionID) -> Vec<TransactionID> {
+            let mut to_remove = Vec::new();
+            for trans in transactions {
+                if trans.entry().previous_transactions().contains(txid) {
+                    to_remove.push(trans.id().clone()); // i hate this clone, but w/e
+                    to_remove.append(&mut find_tx_to_rm(transactions, trans.id()));
+                }
+            }
+            to_remove
+        }
+        let remove_tx = find_tx_to_rm(self.transactions(), txid);
+        self.transactions_mut().retain(|t| !remove_tx.contains(t.id()));
+        Ok(self)
+    }
+
+    // -------------------------------------------------------------------------
+
     /// Create an identity.
     pub fn create_identity<T: Into<Timestamp> + Clone>(mut self, master_key: &SecretKey, now: T, alpha: AlphaKeypair, policy: PolicyKeypair, publish: PublishKeypair, root: RootKeypair) -> Result<Self> {
         if self.transactions().len() > 0 {
@@ -1328,6 +1366,26 @@ mod tests {
         let root = RootKeypair::new_ed25519(&master_key).unwrap();
         let transactions2 = transactions.create_identity(&master_key, now, alpha.clone(), policy.clone(), publish.clone(), root.clone()).unwrap();
         (master_key, transactions2)
+    }
+
+    #[test]
+    fn transactions_merge_reset() {
+        let (master_key, transactions) = genesis();
+        // make some claims on my smart refrigerator
+        let branch1 = transactions.clone()
+            .make_claim(&master_key, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Hooty McOwl".to_string()))).unwrap()
+            .set_root_key(&master_key, Timestamp::now(), RootKeypair::new_ed25519(&master_key).unwrap(), RevocationReason::Unspecified).unwrap()
+            .set_nickname(&master_key, Timestamp::now(), Some("dirk-delta")).unwrap();
+        // make some claims on my Facebook (TM) (R) (C) brain AND NOW A WORD FROM OUR SPONSORS implant
+        let branch2 = transactions.clone()
+            .add_forward(&master_key, Timestamp::now(), "my-website", ForwardType::Url("https://www.cactus-petes.com/yeeeehawwww".into()), false).unwrap()
+            .make_claim(&master_key, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public(String::from("dirk.delta@hollywood.com")))).unwrap();
+        branch1.build_identity().unwrap();
+        branch2.build_identity().unwrap();
+        let mut transactions2 = Transactions::merge(branch1.clone(), branch2.clone()).unwrap();
+        assert_eq!(branch1.transactions().len(), 4);
+        assert_eq!(branch2.transactions().len(), 3);
+        assert_eq!(transactions2.transactions().len(), 6);
     }
 
     #[test]
