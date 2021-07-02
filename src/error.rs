@@ -78,6 +78,10 @@ pub enum Error {
     #[error("the given signature is in the wrong format")]
     CryptoWrongSignatureType,
 
+    /// Could not build identity from DAG
+    #[error("DAG build error")]
+    DagBuildError,
+
     /// You're trying to create an identity on a non-empty transaction set. New
     /// identities can only be created on empty transaction sets.
     #[error("cannot create a new identity on an existing transaction chain")]
