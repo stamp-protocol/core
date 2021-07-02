@@ -52,6 +52,7 @@ use crate::{
 use getset;
 use serde_derive::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 
 /// This is all of the possible transactions that can be performed on an
@@ -226,6 +227,15 @@ impl From<TransactionID> for String {
         ser::base64_encode(id.deref().as_ref())
     }
 }
+
+impl Hash for TransactionID {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let stringified = String::from(self.clone());
+        stringified.hash(state);
+    }
+}
+
+impl Eq for TransactionID {}
 
 #[cfg(test)]
 impl TransactionID {
@@ -517,53 +527,6 @@ impl Transactions {
         Self {transactions: vec![]}
     }
 
-    /// Make sure the given transaction list is ordered based on the graph of
-    /// the entries in it.
-    ///
-    /// Uses Kahn's algorithm: https://en.wikipedia.org/wiki/Topological_sorting#Kahn's_algorithm
-    /// Thanks, Kahn. I tried doing it my own way but flubbed it pretty hard.
-    pub(crate) fn order_transactions<T: GraphInfo>(transaction_list: &Vec<T>) -> Result<Vec<&T>> {
-        let first = transaction_list.iter().find(|t| t.previous_transactions().len() == 0)
-            .ok_or(Error::DagNoGenesis)?;
-        let mut index: HashMap<String, &T> = HashMap::new();
-        let mut edges_idx: HashMap<String, Vec<TransactionID>> = HashMap::new();
-        let mut transaction_list = transaction_list.iter().collect::<Vec<_>>();
-        // this always gives us a deterministic result, regardless of the order
-        // of the given list.
-        transaction_list.sort_by_key(|t| t.created());
-        for trans in &transaction_list {
-            let key = String::from(trans.id().clone());
-            index.insert(key.clone(), trans);
-            edges_idx.insert(key, trans.previous_transactions().clone());
-        }
-        let mut res = Vec::new();
-        let mut start = vec![first];
-        let mut start_idx = 0;
-        loop {
-            let current = start[start_idx];
-            res.push(current);
-            for next in &transaction_list {
-                let key = String::from(next.id().clone());
-                let edges = edges_idx.get_mut(&key).ok_or(Error::DagOrderingError)?;
-                let edges_len = edges.len();
-                edges.retain(|x| x != current.id());
-                // if our len has changed, it means that the `next` transaction
-                // we're looking at referenced the `current` transaction, and if
-                // the current -> next edge is removed AND that leaves `next`
-                // with no more edges, we push it onto our list of "start" nodes
-                // (ie, nodes that don't reference any other nodes).
-                if edges_len != edges.len() && edges.len() == 0 {
-                    start.push(next);
-                }
-            }
-            start_idx += 1;
-            if start_idx >= start.len() {
-                break;
-            }
-        }
-        Ok(res)
-    }
-
     /// Run a transaction and return the output
     fn apply_transaction(identity: Option<Identity>, transaction: &TransactionVersioned) -> Result<Identity> {
         match transaction {
@@ -664,39 +627,227 @@ impl Transactions {
         }
     }
 
-    /// Build an identity by replaying our transactions in order.
+    /// Build an identity from our heroic transactions.
+    ///
+    /// Sounds easy, but it's actually a bit...odd. First we reverse our tree
+    /// of transactions so it's forward-looking. This means for any transaction
+    /// we can see which transactions come directly after it (as opposed to
+    /// directly before it).
+    ///
+    /// Then, we walk the tree and assign a unique branch number any time the
+    /// transactions branch or merge. This branch number can be looked up by
+    /// txid.
+    ///
+    /// Lastly, instead of trying to order the transactions what we do is push
+    /// the first one onto a "pending transactions" list, then run it. Once run,
+    /// we add any transactions that come after it to the pending list. The
+    /// pending list is them sorted by the transactions dates ascending (oldest
+    /// first) and we loop again, plucking the oldest transaction off the list
+    /// and running it. Now, for each transaction we run, we also apply it to
+    /// an identity that is specific to each previous branch the transaction
+    /// descended from. This allows us to easily merge identities from many
+    /// trees as we move along, but also has the benefit that the branch-
+    /// specific identity for our first branch (0) is also our *final* identity
+    /// because ALL transactions have been applied to it. It's a big, burly mess
+    /// but it works...
+    ///
+    /// NOTE: this algorithm handles signing key conflicts by only using the
+    /// nearest branch-level identity to *validate* the current transaction,
+    /// although the transaction is applied to all identities from previous
+    /// branches as well. However, this algorithm does not handle other
+    /// conflicts (such as duplicate entries).
     pub fn build_identity(&self) -> Result<Identity> {
         if self.transactions().len() == 0 {
             Err(Error::DagEmpty)?;
         }
-        let transactions = Self::order_transactions(self.transactions())?;
+        let transactions = self.transactions.clone();
         if transactions.len() == 0 {
             Err(Error::DagEmpty)?;
         }
-        fn looper(transactions: &[&TransactionVersioned], identity: Identity) -> Result<Identity> {
-            if transactions.len() == 0 {
-                Ok(identity)
-            } else {
-                transactions[0].verify(Some(&identity))?;
-                looper(&transactions[1..], Transactions::apply_transaction(Some(identity), transactions[0])?)
+
+        // use the `previous_transactions` collection to build a feed-forward
+        // index for transactions (basically, reverse the order of our tree).
+        // also, index our transactions by id.
+        let mut transaction_idx: HashMap<TransactionID, &TransactionVersioned> = HashMap::new();
+        let mut next_transactions_idx: HashMap<TransactionID, Vec<TransactionID>> = HashMap::new();
+        for trans in &transactions {
+            transaction_idx.insert(trans.id().clone(), trans);
+            let prev = trans.entry().previous_transactions();
+            if prev.len() == 0 { continue; }
+            for trans_prev in prev {
+                let entry = next_transactions_idx.entry(trans_prev.clone()).or_insert(Vec::new());
+                (*entry).push(trans.id().clone());
             }
         }
-        transactions[0].verify(None)?;
-        looper(&transactions[1..], Transactions::apply_transaction(None, transactions[0])?)
+
+        // populate a transaction_id -> branchnum index
+        let mut transaction_branch_idx: HashMap<TransactionID, Vec<u32>> = HashMap::new();
+        fn walker_identity_ranger(transaction_idx: &HashMap<TransactionID, &TransactionVersioned>, next_transactions_idx: &HashMap<TransactionID, Vec<TransactionID>>, transaction_branch_idx: &mut HashMap<TransactionID, Vec<u32>>, transaction: &TransactionVersioned, cur_branch: Vec<u32>) -> Result<()> {
+            fn push_branch(list: &Vec<u32>, branch_num: u32) -> Vec<u32> {
+                let mut list = list.clone();
+                if list.contains(&branch_num) {
+                    return list;
+                }
+                list.append(&mut vec![branch_num]);
+                list
+            }
+            let mut new_branch = 0;
+            // if this transaction merges one or more branches, it gets its own
+            // branch id
+            if transaction.previous_transactions().len() > 1 {
+                new_branch += 1;
+            }
+            let default = Vec::new();
+            let next = next_transactions_idx.get(transaction.id()).unwrap_or(&default);
+            transaction_branch_idx.insert(transaction.id().clone(), push_branch(&cur_branch, new_branch));
+            // if this is a branch, give each branch a unique id
+            if next.len() > 1 {
+                new_branch += 1;
+            }
+            for trans_id in next {
+                let trans = transaction_idx.get(trans_id).ok_or(Error::DagBuildError)?;
+                walker_identity_ranger(transaction_idx, next_transactions_idx, transaction_branch_idx, trans, push_branch(&cur_branch, new_branch))?;
+                new_branch += 1;
+            }
+            Ok(())
+        }
+        walker_identity_ranger(&transaction_idx, &next_transactions_idx, &mut transaction_branch_idx, &transactions[0], vec![0])?;
+
+        #[derive(Debug, Default)]
+        struct WalkState<'a> {
+            // tracks our current run list
+            transactions_to_run: Vec<&'a TransactionVersioned>,
+            // tracks merge transactions, and how many ancestors have been run.
+            // when this number reaches previous_transactions().len(), then the
+            // merge is free to run.
+            pending_merges: HashMap<TransactionID, usize>,
+        }
+
+        impl<'a> WalkState<'a> {
+            fn next(&self) -> Option<&TransactionVersioned> {
+                self.transactions_to_run.get(0).map(|x| *x)
+            }
+
+            fn remove_first(&mut self) {
+                let tx_id = self.transactions_to_run[0].id();
+                self.transactions_to_run.retain(|tx| tx.id() != tx_id);
+            }
+
+            fn pop_transaction(&mut self, transaction_idx: &HashMap<TransactionID, &'a TransactionVersioned>, next_transactions_idx: &HashMap<TransactionID, Vec<TransactionID>>) -> Result<bool> {
+                if self.transactions_to_run.len() == 0 {
+                    return Err(Error::DagBuildError)?;
+                }
+                let trans = self.transactions_to_run[0];
+                self.remove_first();
+                if let Some(next) = next_transactions_idx.get(trans.id()) {
+                    for next_trans_id in next {
+                        let entry = self.pending_merges.entry(next_trans_id.clone()).or_insert(0);
+                        (*entry) += 1;
+                        self.transactions_to_run.push(transaction_idx.get(next_trans_id).ok_or(Error::DagBuildError)?);
+                    }
+                    // TODO: optimize. sorting on every loop, tsk tsk.
+                    self.transactions_to_run.sort_by_key(|t| t.created());
+                }
+                Ok(true)
+            }
+        }
+
+        let mut state = WalkState::default();
+        state.transactions_to_run.push(
+            transactions.iter().find(|x| x.previous_transactions().len() == 0).ok_or(Error::DagNoGenesis)?
+        );
+        let first_trans = match state.next() {
+            Some(trans) => trans,
+            None => Err(Error::DagBuildError)?,
+        };
+        first_trans.verify(None)?;
+        // tracks our per-branch identities
+        let mut branch_identities: HashMap<u32, Identity> = HashMap::new();
+        branch_identities.insert(0, Transactions::apply_transaction(None, first_trans)?);
+        state.pop_transaction(&transaction_idx, &next_transactions_idx)?;
+        loop {
+            if let Some(trans) = state.next() {
+                let root_identity = branch_identities.get(&0).ok_or(Error::DagMissingIdentity)?.clone();
+                let ancestors = transaction_branch_idx.get(trans.id()).ok_or(Error::DagBuildError)?;
+                let previous_len = trans.previous_transactions().len();
+                if previous_len > 1 {
+                    let pending_count = state.pending_merges.get(trans.id()).unwrap_or(&0);
+                    // ONLY run a merge transaction if all of its children have
+                    // run!!1
+                    if *pending_count >= previous_len {
+                        let ancestor_collection = trans.previous_transactions().iter()
+                            .map(|x| {
+                                transaction_branch_idx.get(x)
+                                    .map(|ancestors| ancestors.clone().into_iter().rev().collect::<Vec<_>>())
+                                    .ok_or(Error::DagBuildError)
+                            })
+                            .collect::<Result<Vec<Vec<u32>>>>()?;
+                        // now find the highest (ie, youngest) branch that is the
+                        // common ancestor to the N branches we're merging right now
+                        let first = ancestor_collection.get(0).ok_or(Error::DagBuildError)?;
+                        let mut found_branch = None;
+                        for branch in first {
+                            let mut has = true;
+                            for anc in &ancestor_collection[1..] {
+                                if !has || !anc.contains(branch) {
+                                    has = false;
+                                }
+                            }
+                            if has {
+                                found_branch = Some(branch);
+                                break;
+                            }
+                        }
+                        let found_branch = found_branch.ok_or(Error::DagBuildError)?;
+                        {
+                            let common_ancestor_identity = branch_identities.get_mut(found_branch).ok_or(Error::DagBuildError)?;
+                            trans.verify(Some(&common_ancestor_identity))?;
+                        }
+                        // apply this transaction to all of its ancestor branches
+                        let mut tracker = HashMap::new();
+                        for ancestors in ancestor_collection {
+                            for branch in &ancestors {
+                                if tracker.get(branch).is_some() {
+                                    continue;
+                                }
+                                let branch_identity = branch_identities.entry(*branch).or_insert(root_identity.clone());
+                                (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), trans)?;
+                                tracker.insert(*branch, true);
+                            }
+                        }
+                    } else {
+                        state.remove_first();
+                        continue;
+                    }
+                } else {
+                    let current_branch_identity = branch_identities.entry(*(*ancestors).last().unwrap()).or_insert(root_identity.clone());
+                    trans.verify(Some(&current_branch_identity))?;
+                    // apply this transaction to all of its ancestor branches
+                    for branch in ancestors {
+                        let branch_identity = branch_identities.entry(*branch).or_insert(root_identity.clone());
+                        (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), trans)?;
+                    }
+                }
+                state.pop_transaction(&transaction_idx, &next_transactions_idx)?;
+            } else {
+                break;
+            }
+        }
+        Ok(branch_identities.get(&0).ok_or(Error::DagMissingIdentity)?.clone())
     }
 
     /// Find any transactions that are not referenced as previous transactions.
     /// Effectively, the leaves of our graph.
     fn find_leaf_transactions<T: GraphInfo>(transaction_list: &Vec<T>) -> Vec<TransactionID> {
-        let mut seen: HashMap<String, bool> = HashMap::new();
+        let mut seen: HashMap<TransactionID, bool> = HashMap::new();
         for trans in transaction_list {
             for prev in trans.previous_transactions() {
-                seen.insert(String::from(prev.clone()), true);
+                seen.insert(prev.clone(), true);
             }
         }
         transaction_list.iter()
             .filter_map(|t| {
-                if seen.get(&String::from(t.id().clone())).is_some() {
+                if seen.get(t.id()).is_some() {
                     None
                 } else {
                     Some(t.id().clone())
@@ -1280,86 +1431,9 @@ mod tests {
         assert!(!versioned2.deref().entry().body().has_private());
     }
 
-    #[test]
-    fn transactions_order() {
-        #[derive(Debug, Clone)]
-        struct MyTransaction {
-            id: TransactionID,
-            created: Timestamp,
-            prev: Vec<TransactionID>,
-        }
-
-        impl GraphInfo for MyTransaction {
-            fn id(&self) -> &TransactionID { &self.id }
-            fn created(&self) -> &Timestamp { &self.created }
-            fn previous_transactions(&self) -> &Vec<TransactionID> { &self.prev }
-        }
-
-        let mut idx = 0;
-        let master_key = SecretKey::new_xsalsa20poly1305();
-        let mut make_trans = |prev: Vec<&TransactionID>| {
-            let root = RootKeypair::new_ed25519(&master_key).unwrap();
-            let sig = root.sign(&master_key, format!("idx:{}", idx).as_bytes()).unwrap();
-            let id = TransactionID::Root(sig);
-            idx += 1;
-            util::test::sleep(2);
-            MyTransaction {
-                id,
-                created: Timestamp::now(),
-                prev: prev.into_iter().map(|x| x.clone()).collect::<Vec<_>>(),
-            }
-        };
-
-        fn assert_order(transactions: Vec<&MyTransaction>, shouldbe_ids: Vec<&TransactionID>) {
-            let list = transactions.into_iter().map(|x| x.clone()).collect::<Vec<_>>();
-            let ordered = Transactions::order_transactions(&list).unwrap();
-            assert_eq!(
-                ordered.iter().map(|x| x.id()).collect::<Vec<_>>(), 
-                shouldbe_ids
-            );
-        }
-
-        // make some basic graphs and hand-fuzz them. honestly need some kind of
-        // input fuzzing lib for this.
-
-        let ta = make_trans(vec![]);
-        let tb = make_trans(vec![ta.id()]);
-        let tc = make_trans(vec![ta.id()]);
-        let td = make_trans(vec![tc.id(), tb.id()]);
-        assert_order(vec![&td, &tb, &ta, &tc], vec![ta.id(), tb.id(), tc.id(), td.id()]);
-        assert_order(vec![&ta, &td, &tc, &tb], vec![ta.id(), tb.id(), tc.id(), td.id()]);
-        assert_order(vec![&tb, &td, &ta, &tc], vec![ta.id(), tb.id(), tc.id(), td.id()]);
-        assert_order(vec![&tc, &td, &tb, &ta], vec![ta.id(), tb.id(), tc.id(), td.id()]);
-
-        let t01 = make_trans(vec![]);
-        let t02 = make_trans(vec![t01.id()]);
-        let t03 = make_trans(vec![t01.id()]);
-        let t04 = make_trans(vec![t03.id()]);
-        let t05 = make_trans(vec![t03.id(), t02.id()]);
-        let t06 = make_trans(vec![t05.id(), t03.id(), t04.id()]);
-
-        assert_order(
-            vec![&t05, &t03, &t01, &t02, &t04, &t06],
-            vec![t01.id(), t02.id(), t03.id(), t04.id(), t05.id(), t06.id()]
-        );
-        assert_order(
-            vec![&t06, &t03, &t05, &t02, &t04, &t01],
-            vec![t01.id(), t02.id(), t03.id(), t04.id(), t05.id(), t06.id()]
-        );
-        assert_order(
-            vec![&t05, &t04, &t02, &t01, &t03, &t06],
-            vec![t01.id(), t02.id(), t03.id(), t04.id(), t05.id(), t06.id()]
-        );
-        assert_order(
-            vec![&t01, &t05, &t04, &t03, &t02, &t06],
-            vec![t01.id(), t02.id(), t03.id(), t04.id(), t05.id(), t06.id()]
-        );
-    }
-
-    fn genesis() -> (SecretKey, Transactions) {
+    fn genesis_time(now: Timestamp) -> (SecretKey, Transactions) {
         let transactions = Transactions::new();
         let master_key = SecretKey::new_xsalsa20poly1305();
-        let now = Timestamp::now();
         let alpha = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -1368,24 +1442,45 @@ mod tests {
         (master_key, transactions2)
     }
 
+    fn genesis() -> (SecretKey, Transactions) {
+        genesis_time(Timestamp::now())
+    }
+
     #[test]
     fn transactions_merge_reset() {
-        let (master_key, transactions) = genesis();
+        let (master_key, transactions) = genesis_time(Timestamp::from_str("2021-04-20T00:00:00Z").unwrap());
         // make some claims on my smart refrigerator
+        let new_root1 = RootKeypair::new_ed25519(&master_key).unwrap();
+        let new_root2 = RootKeypair::new_ed25519(&master_key).unwrap();
         let branch1 = transactions.clone()
-            .make_claim(&master_key, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Hooty McOwl".to_string()))).unwrap()
-            .set_root_key(&master_key, Timestamp::now(), RootKeypair::new_ed25519(&master_key).unwrap(), RevocationReason::Unspecified).unwrap()
-            .set_nickname(&master_key, Timestamp::now(), Some("dirk-delta")).unwrap();
-        // make some claims on my Facebook (TM) (R) (C) brain AND NOW A WORD FROM OUR SPONSORS implant
+            .make_claim(&master_key, Timestamp::from_str("2021-04-20T00:00:10Z").unwrap(), ClaimSpec::Name(MaybePrivate::new_public("Hooty McOwl".to_string()))).unwrap()
+            .set_root_key(&master_key, Timestamp::from_str("2021-04-20T00:01:00Z").unwrap(), new_root1.clone(), RevocationReason::Unspecified).unwrap()
+            .set_nickname(&master_key, Timestamp::from_str("2021-04-20T00:01:33Z").unwrap(), Some("dirk-delta")).unwrap();
+        // make some claims on my Facebook (TM) (R) (C) Brain (AND NOW A WORD FROM OUR SPONSORS) Implant
         let branch2 = transactions.clone()
-            .add_forward(&master_key, Timestamp::now(), "my-website", ForwardType::Url("https://www.cactus-petes.com/yeeeehawwww".into()), false).unwrap()
-            .make_claim(&master_key, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public(String::from("dirk.delta@hollywood.com")))).unwrap();
-        branch1.build_identity().unwrap();
-        branch2.build_identity().unwrap();
-        let mut transactions2 = Transactions::merge(branch1.clone(), branch2.clone()).unwrap();
+            .add_forward(&master_key, Timestamp::from_str("2021-04-20T00:00:30Z").unwrap(), "my-website", ForwardType::Url("https://www.cactus-petes.com/yeeeehawwww".into()), false).unwrap()
+            .set_root_key(&master_key, Timestamp::from_str("2021-04-20T00:01:36Z").unwrap(), new_root2.clone(), RevocationReason::Unspecified).unwrap()
+            .set_nickname(&master_key, Timestamp::from_str("2021-04-20T00:01:45Z").unwrap(), Some("liberal hokes")).unwrap()
+            .make_claim(&master_key, Timestamp::from_str("2021-04-20T00:01:56Z").unwrap(), ClaimSpec::Email(MaybePrivate::new_public(String::from("dirk.delta@hollywood.com")))).unwrap();
+        let identity1 = branch1.build_identity().unwrap();
+        let identity2 = branch2.build_identity().unwrap();
+        assert_eq!(identity1.extra_data().nickname(), &Some(String::from("dirk-delta")));
+        assert_eq!(identity1.keychain().root(), &new_root1);
+        assert_eq!(identity2.extra_data().nickname(), &Some(String::from("liberal hokes")));
+        assert!(identity2.keychain().root() != &new_root1);
+        assert_eq!(identity2.keychain().root(), &new_root2);
+        let transactions2 = Transactions::merge(branch1.clone(), branch2.clone()).unwrap();
         assert_eq!(branch1.transactions().len(), 4);
-        assert_eq!(branch2.transactions().len(), 3);
-        assert_eq!(transactions2.transactions().len(), 6);
+        assert_eq!(branch2.transactions().len(), 5);
+        assert_eq!(transactions2.transactions().len(), 8);
+        let transactions3 = transactions2.clone()
+            .add_forward(&master_key, Timestamp::from_str("2021-04-20T00:05:22Z").unwrap(), "get-a-job", ForwardType::Url("https://www.cactus-petes.com/yeeeehawwww".into()), false).unwrap();
+        assert_eq!(transactions3.transactions().len(), 9);
+        let identity3 = transactions3.build_identity().unwrap();
+        assert_eq!(identity3.extra_data().nickname(), &Some(String::from("liberal hokes")));
+        assert_eq!(identity3.claims().len(), 2);
+        assert_eq!(identity3.extra_data().forwards().len(), 2);
+        assert_eq!(identity3.keychain().root(), &new_root2);
     }
 
     #[test]
