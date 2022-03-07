@@ -36,6 +36,10 @@ pub enum Error {
     #[error("could not update hash state")]
     CryptoHashStateUpdateError,
 
+    /// HMAC failed to build properly
+    #[error("HMAC failed to build properly")]
+    CryptoHmacBuildFailure,
+
     /// An HMAC failed to verify.
     #[error("the given HMAC combo does not verify")]
     CryptoHmacVerificationFailed,
@@ -59,6 +63,10 @@ pub enum Error {
     /// Failed to open a sealed message. This is a bummer, man.
     #[error("failed to open a sealed object")]
     CryptoOpenFailed,
+
+    /// Failed to seal a message.
+    #[error("failed to seal a message")]
+    CryptoSealFailed,
 
     /// Failed to produce a signature
     #[error("failed to create a signature")]
@@ -193,6 +201,10 @@ pub enum Error {
     /// Tried to open a private container that has no data
     #[error("attempt to open private object which has no data")]
     PrivateDataMissing,
+
+    /// Error generating random numbers
+    #[error("error generating random")]
+    Random,
 
     /// The recovery policy request's identity does not match the identity we're
     /// recovering.

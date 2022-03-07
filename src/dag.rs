@@ -240,7 +240,7 @@ impl Eq for TransactionID {}
 #[cfg(test)]
 impl TransactionID {
     pub(crate) fn random_alpha() -> Self {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let sig = alpha_keypair.sign(&master_key, "hi im jerry".as_bytes()).unwrap();
         Self::Alpha(sig)
@@ -1122,7 +1122,7 @@ mod tests {
             stamp::Confidence,
         },
         private::{Private, MaybePrivate},
-        util::{self, Date},
+        util::{Date},
     };
     use std::str::FromStr;
     use url::Url;
@@ -1235,7 +1235,7 @@ mod tests {
                 TransactionBody::DeleteForwardV1(..) => {}
             }
         }
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -1274,7 +1274,7 @@ mod tests {
 
     #[test]
     fn trans_entry_strip_has_private() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let body = TransactionBody::MakeClaimV1(ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Jackie Chrome".into()).unwrap()));
         let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::random_alpha()], body);
         assert!(entry.has_private());
@@ -1286,7 +1286,7 @@ mod tests {
 
     #[test]
     fn trans_new_verify() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -1350,7 +1350,7 @@ mod tests {
 
     #[test]
     fn trans_strip_has_private() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -1371,7 +1371,7 @@ mod tests {
 
     #[test]
     fn trans_versioned_deref() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -1391,7 +1391,7 @@ mod tests {
 
     #[test]
     fn trans_versioned_graphinfo() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -1409,7 +1409,7 @@ mod tests {
 
     #[test]
     fn trans_versioned_strip_has_private() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -1433,7 +1433,7 @@ mod tests {
 
     fn genesis_time(now: Timestamp) -> (SecretKey, Transactions) {
         let transactions = Transactions::new();
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let alpha = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -1853,7 +1853,7 @@ mod tests {
 
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
-        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305().unwrap()).unwrap();
         let transactions2 = transactions
             .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
             .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()
@@ -1873,7 +1873,7 @@ mod tests {
         let res = transactions2.clone()
             .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails"));
         assert_eq!(res.err(), Some(Error::DuplicateName));
-        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305().unwrap()).unwrap();
         let res = transactions2.clone()
             .add_subkey(&master_key, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key"));
         assert_eq!(res.err(), Some(Error::DuplicateName));
@@ -1885,7 +1885,7 @@ mod tests {
 
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
-        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305().unwrap()).unwrap();
         let transactions2 = transactions
             .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
             .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()
@@ -1912,7 +1912,7 @@ mod tests {
 
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
-        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305().unwrap()).unwrap();
         let transactions2 = transactions
             .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
             .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()
@@ -2016,7 +2016,7 @@ mod tests {
         }
         let sig = identity.keychain().root().sign(&master_key, "KILL...ME....".as_bytes()).unwrap();
 
-        let master_key_new = SecretKey::new_xsalsa20poly1305();
+        let master_key_new = SecretKey::new_xsalsa20poly1305().unwrap();
         let transactions2 = transactions.reencrypt(&master_key, &master_key_new).unwrap();
         transactions2.test_master_key(&master_key_new).unwrap();
         let res = transactions2.test_master_key(&master_key);
@@ -2053,7 +2053,7 @@ mod tests {
         let root = RootKeypair::new_ed25519(&master_key).unwrap();
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
-        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305().unwrap()).unwrap();
         let transactions3 = transactions.clone()
             .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
             .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()
@@ -2088,7 +2088,7 @@ mod tests {
     fn transactions_test_master_key() {
         let (master_key, transactions) = genesis();
         transactions.test_master_key(&master_key).unwrap();
-        let master_key_fake = SecretKey::new_xsalsa20poly1305();
+        let master_key_fake = SecretKey::new_xsalsa20poly1305().unwrap();
         assert!(master_key_fake != master_key);
         let res = transactions.test_master_key(&master_key_fake);
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
@@ -2100,7 +2100,7 @@ mod tests {
 
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
-        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305()).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305().unwrap()).unwrap();
         let transactions2 = transactions
             .add_subkey(&master_key, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things")).unwrap()
             .add_subkey(&master_key, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails")).unwrap()

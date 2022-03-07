@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn message_anonymous_signed_maybe() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let sender_key = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
         let recipient_key = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
 

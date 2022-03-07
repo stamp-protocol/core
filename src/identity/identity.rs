@@ -494,7 +494,7 @@ mod tests {
     use std::str::FromStr;
 
     fn gen_master_key() -> SecretKey {
-        SecretKey::new_xsalsa20poly1305()
+        SecretKey::new_xsalsa20poly1305().unwrap()
     }
 
     fn create_identity() -> (SecretKey, Identity) {
@@ -842,7 +842,7 @@ mod tests {
 
     #[test]
     fn identity_serialize() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let now = Timestamp::from_str("1977-06-07T04:32:06Z").unwrap();
         let seeds = [
             &[33, 90, 159, 88, 22, 24, 84, 4, 237, 121, 198, 195, 71, 238, 107, 91, 235, 93, 9, 129, 252, 221, 2, 149, 250, 142, 49, 36, 161, 184, 44, 156],

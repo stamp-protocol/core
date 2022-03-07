@@ -21,26 +21,29 @@ use crate::{
         sign::Signable,
     },
 };
+use hmac::{
+    Mac,
+    digest::{
+        FixedOutput,
+        crypto_common::generic_array::GenericArray,
+    },
+};
 use serde_derive::{Serialize, Deserialize};
 use sodiumoxide::{
     crypto::{
-        auth::hmacsha512,
         box_::curve25519xsalsa20poly1305,
         pwhash::argon2id13,
-        secretbox::xsalsa20poly1305,
         sign::ed25519,
     },
 };
 use std::convert::TryInto;
+use std::ops::Deref;
+use xsalsa20poly1305::aead::{Aead, NewAead};
 
 impl_try_from_slice!(ed25519::PublicKey);
-impl_try_from_slice!(xsalsa20poly1305::Nonce);
-impl_try_from_slice!(xsalsa20poly1305::Key);
 impl_try_from_slice!(ed25519::Signature);
 impl_try_from_slice!(curve25519xsalsa20poly1305::Nonce);
 impl_try_from_slice!(curve25519xsalsa20poly1305::PublicKey);
-impl_try_from_slice!(hmacsha512::Tag);
-impl_try_from_slice!(hmacsha512::Key);
 
 /// A value that lets us reference asymmetric keypairs by their public key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,14 +74,14 @@ impl KeyID {
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn random_sign() -> Self {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         Self::SignKeypair(SignKeypair::new_ed25519(&master_key).unwrap().into())
     }
 
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn random_crypto() -> Self {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         Self::CryptoKeypair(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap().into())
     }
 }
@@ -86,32 +89,38 @@ impl KeyID {
 /// A symmetric encryption key nonce
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SecretKeyNonce {
-    #[serde(with = "crate::util::ser::human_binary_from_slice")]
-    Xsalsa20Poly1305(xsalsa20poly1305::Nonce),
+    #[serde(with = "crate::util::ser::human_bytes")]
+    Xsalsa20Poly1305(Vec<u8>),
 }
 
 /// A symmetric encryption key
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SecretKey {
-    #[serde(with = "crate::util::ser::human_binary_from_slice")]
-    Xsalsa20Poly1305(xsalsa20poly1305::Key),
+    #[serde(with = "crate::util::ser::human_bytes")]
+    Xsalsa20Poly1305(Vec<u8>),
 }
 
 impl SecretKey {
     /// Create a new xsalsa20poly1305 key
-    pub fn new_xsalsa20poly1305() -> Self {
-        Self::Xsalsa20Poly1305(xsalsa20poly1305::gen_key())
+    pub fn new_xsalsa20poly1305() -> Result<Self> {
+        let mut randbuf = [0u8; 32];
+        getrandom::getrandom(&mut randbuf).map_err(|_| Error::Random)?;
+        Ok(Self::Xsalsa20Poly1305(Vec::from(&randbuf[..])))
     }
 
     /// Try to create a SecretKey from a byte slice
     pub fn new_xsalsa20poly1305_from_slice(bytes: &[u8]) -> Result<Self> {
-        Ok(Self::Xsalsa20Poly1305(xsalsa20poly1305::Key::from_slice(bytes).ok_or(Error::CryptoBadKey)?))
+        Ok(Self::Xsalsa20Poly1305(Vec::from(bytes)))
     }
 
     /// Create a nonce for use with this secret key
-    pub fn gen_nonce(&self) -> SecretKeyNonce {
+    pub fn gen_nonce(&self) -> Result<SecretKeyNonce> {
         match self {
-            SecretKey::Xsalsa20Poly1305(_) => SecretKeyNonce::Xsalsa20Poly1305(xsalsa20poly1305::gen_nonce()),
+            SecretKey::Xsalsa20Poly1305(_) => {
+                let mut randbuf = [0u8; 24];
+                getrandom::getrandom(&mut randbuf).map_err(|_| Error::Random)?;
+                Ok(SecretKeyNonce::Xsalsa20Poly1305(Vec::from(&randbuf[..])))
+            }
         }
     }
 
@@ -119,7 +128,9 @@ impl SecretKey {
     pub fn seal(&self, data: &[u8], nonce: &SecretKeyNonce) -> Result<Vec<u8>> {
         match (self, nonce) {
             (SecretKey::Xsalsa20Poly1305(ref key), SecretKeyNonce::Xsalsa20Poly1305(ref nonce)) => {
-                Ok(xsalsa20poly1305::seal(data, nonce, key))
+                let cipher = xsalsa20poly1305::XSalsa20Poly1305::new(xsalsa20poly1305::Key::from_slice(key.as_slice().clone()));
+                let enc = cipher.encrypt(xsalsa20poly1305::Nonce::from_slice(nonce.as_slice()), data).map_err(|_| Error::CryptoSealFailed)?;
+                Ok(enc)
             },
         }
     }
@@ -128,9 +139,9 @@ impl SecretKey {
     pub fn open(&self, data: &[u8], nonce: &SecretKeyNonce) -> Result<Vec<u8>> {
         match (self, nonce) {
             (SecretKey::Xsalsa20Poly1305(ref key), SecretKeyNonce::Xsalsa20Poly1305(ref nonce)) => {
-                let open_bytes = xsalsa20poly1305::open(data, nonce, key)
-                    .map_err(|_| Error::CryptoOpenFailed)?;
-                Ok(open_bytes)
+                let cipher = xsalsa20poly1305::XSalsa20Poly1305::new(xsalsa20poly1305::Key::from_slice(key.as_slice().clone()));
+                let dec = cipher.decrypt(xsalsa20poly1305::Nonce::from_slice(nonce.as_slice()), data).map_err(|_| Error::CryptoOpenFailed)?;
+                Ok(dec)
             },
         }
     }
@@ -146,14 +157,14 @@ impl SecretKey {
 impl Lockable for SecretKey {
     fn mem_lock(&mut self) -> Result<()> {
         let res = match self {
-            Self::Xsalsa20Poly1305(ref mut inner) => sodiumoxide::utils::mlock(&mut inner.0),
+            Self::Xsalsa20Poly1305(ref mut inner) => sodiumoxide::utils::mlock(inner.as_mut_slice()),
         };
         res.map_err(|_| Error::CryptoMemLockFailed)
     }
 
     fn mem_unlock(&mut self) -> Result<()> {
         let res = match self {
-            Self::Xsalsa20Poly1305(ref mut inner) => sodiumoxide::utils::munlock(&mut inner.0),
+            Self::Xsalsa20Poly1305(ref mut inner) => sodiumoxide::utils::munlock(inner.as_mut_slice()),
         };
         res.map_err(|_| Error::CryptoMemUnlockFailed)
     }
@@ -471,22 +482,44 @@ impl From<CryptoKeypair> for CryptoKeypairPublic {
 /// A key for deriving an HMAC
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HmacKey {
-    #[serde(with = "crate::util::ser::human_binary_from_slice")]
-    HmacSha512(hmacsha512::Key),
+    #[serde(with = "crate::util::ser::human_bytes")]
+    HmacSha512(Vec<u8>),
+}
+
+impl Deref for HmacKey {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            HmacKey::HmacSha512(bytes) => &bytes[..],
+        }
+    }
 }
 
 impl HmacKey {
     /// Create a new sha512 HMAC key
-    pub fn new_sha512() -> Self {
-        Self::HmacSha512(hmacsha512::gen_key())
+    pub fn new_sha512() -> Result<Self> {
+        let mut randbuf = [0u8; 32];
+        getrandom::getrandom(&mut randbuf).map_err(|_| Error::Random)?;
+        Ok(Self::HmacSha512(Vec::from(randbuf)))
     }
 }
 
 /// An HMAC hash
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Hmac {
-    #[serde(with = "crate::util::ser::human_binary_from_slice")]
-    HmacSha512(hmacsha512::Tag),
+    #[serde(with = "crate::util::ser::human_bytes")]
+    HmacSha512(Vec<u8>),
+}
+
+impl Deref for Hmac {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Hmac::HmacSha512(bytes) => &bytes[..],
+        }
+    }
 }
 
 impl Hmac {
@@ -494,8 +527,11 @@ impl Hmac {
     pub fn new_sha512(hmac_key: &HmacKey, data: &[u8]) -> Result<Self> {
         match hmac_key {
             HmacKey::HmacSha512(hmac_key) => {
-                let hmac = hmacsha512::authenticate(data, hmac_key);
-                Ok(Hmac::HmacSha512(hmac))
+                let mut mac = hmac::SimpleHmac::<sha2::Sha512>::new_from_slice(hmac_key.deref())
+                    .map_err(|_| Error::CryptoBadKey)?;
+                mac.update(data);
+                let output = Vec::from(mac.finalize_fixed().as_slice());
+                Ok(Hmac::HmacSha512(output))
             }
         }
     }
@@ -504,7 +540,11 @@ impl Hmac {
     pub fn verify(&self, hmac_key: &HmacKey, data: &[u8]) -> Result<()> {
         match (self, hmac_key) {
             (Self::HmacSha512(hmac), HmacKey::HmacSha512(hmac_key)) => {
-                if !hmacsha512::verify(hmac, data, hmac_key) {
+                let mut mac_ver = hmac::SimpleHmac::<sha2::Sha512>::new_from_slice(hmac_key.deref())
+                    .map_err(|_| Error::CryptoBadKey)?;
+                mac_ver.update(data);
+                let ct_out = hmac::digest::CtOutput::new(GenericArray::from_slice(hmac.deref()).clone());
+                if ct_out != mac_ver.finalize() {
                     // the data has been tampered with, my friend.
                     Err(Error::CryptoHmacVerificationFailed)?;
                 }
@@ -516,7 +556,7 @@ impl Hmac {
 
 /// Generate a master key from a passphrase/salt
 pub fn derive_master_key(passphrase: &[u8], salt_bytes: &[u8], ops: usize, mem: usize) -> Result<SecretKey> {
-    let len = xsalsa20poly1305::KEYBYTES;
+    let len = xsalsa20poly1305::KEY_SIZE;
     let salt: &[u8; argon2id13::SALTBYTES] = salt_bytes[0..argon2id13::SALTBYTES].try_into()
         .map_err(|_| Error::CryptoBadSalt)?;
     let mut key: Vec<u8> = vec![0; len];
@@ -526,7 +566,7 @@ pub fn derive_master_key(passphrase: &[u8], salt_bytes: &[u8], ops: usize, mem: 
     };
     match argon2id13::derive_key(key.as_mut_slice(), passphrase, &salt_wrap, argon2id13::OpsLimit(ops), argon2id13::MemLimit(mem)) {
         Ok(x) => {
-            let rawkey = xsalsa20poly1305::Key::from_slice(x).ok_or(Error::CryptoKDFFailed)?;
+            let rawkey = Vec::from(x);
             let seckey = SecretKey::Xsalsa20Poly1305(rawkey);
             Ok(seckey)
         }
@@ -540,14 +580,14 @@ pub(crate) mod tests {
     use crate::util;
 
     pub(crate) fn secret_from_vec(bytes: Vec<u8>) -> SecretKey {
-        SecretKey::Xsalsa20Poly1305(sodiumoxide::crypto::secretbox::xsalsa20poly1305::Key::from_slice(bytes.as_ref()).unwrap())
+        SecretKey::Xsalsa20Poly1305(bytes)
     }
 
     #[test]
     fn secretkey_xsalsa20poly1305_enc_dec() {
-        let key = SecretKey::new_xsalsa20poly1305();
+        let key = SecretKey::new_xsalsa20poly1305().unwrap();
         let val = String::from("get a job");
-        let nonce = key.gen_nonce();
+        let nonce = key.gen_nonce().unwrap();
         let enc = key.seal(val.as_bytes(), &nonce).unwrap();
         let dec_bytes = key.open(&enc, &nonce).unwrap();
         let dec = String::from_utf8(dec_bytes).unwrap();
@@ -565,7 +605,7 @@ pub(crate) mod tests {
 
     #[test]
     fn signkeypair_ed25519_sign_verify() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let our_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
 
         let msg_real = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
@@ -579,7 +619,7 @@ pub(crate) mod tests {
 
     #[test]
     fn signkeypair_ed25519_seed_sign_verify() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let seed: [u8; 32] = vec![233, 229, 76, 13, 231, 38, 253, 27, 53, 2, 235, 174, 151, 186, 192, 33, 16, 2, 57, 32, 170, 23, 13, 47, 44, 234, 231, 35, 38, 107, 93, 198].try_into().unwrap();
         let our_keypair = SignKeypair::new_ed25519_from_seed(&master_key, &seed).unwrap();
 
@@ -600,8 +640,8 @@ pub(crate) mod tests {
 
     #[test]
     fn signkeypair_ed25519_reencrypt() {
-        let master_key1 = SecretKey::new_xsalsa20poly1305();
-        let master_key2 = SecretKey::new_xsalsa20poly1305();
+        let master_key1 = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key2 = SecretKey::new_xsalsa20poly1305().unwrap();
         assert!(master_key1 != master_key2);    // lazy, but ok
         let keypair = SignKeypair::new_ed25519(&master_key1).unwrap();
         let data = vec![1, 2, 3, 4, 5];
@@ -617,7 +657,7 @@ pub(crate) mod tests {
 
     #[test]
     fn signkeypair_ed25519_blank() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let keypair1 = SignKeypair::new_ed25519(&master_key).unwrap();
         let keypair2 = SignKeypair::new_ed25519(&master_key).unwrap();
         let blank1 = SignKeypairSignature::blank(&keypair1);
@@ -628,7 +668,7 @@ pub(crate) mod tests {
 
     #[test]
     fn signkeypair_ed25519_strip_has_private() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         match &keypair {
             SignKeypair::Ed25519(_, Some(_)) => {
@@ -647,7 +687,7 @@ pub(crate) mod tests {
 
     #[test]
     fn signkeypair_ed25519_eq() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let keypair1 = SignKeypair::new_ed25519(&master_key).unwrap();
         let keypair2 = keypair1.clone();
         assert_eq!(keypair1, keypair2);
@@ -657,7 +697,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cryptokeypair_curve25519xsalsa20poly1305_anonymous_enc_dec() {
-        let our_master_key = SecretKey::new_xsalsa20poly1305();
+        let our_master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let our_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&our_master_key).unwrap();
         let fake_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&our_master_key).unwrap();
 
@@ -673,9 +713,9 @@ pub(crate) mod tests {
 
     #[test]
     fn cryptokeypair_curve25519xsalsa20poly1305_enc_dec() {
-        let sender_master_key = SecretKey::new_xsalsa20poly1305();
+        let sender_master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let sender_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&sender_master_key).unwrap();
-        let recipient_master_key = SecretKey::new_xsalsa20poly1305();
+        let recipient_master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let recipient_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&recipient_master_key).unwrap();
         let fake_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&recipient_master_key).unwrap();
 
@@ -691,8 +731,8 @@ pub(crate) mod tests {
 
     #[test]
     fn cryptokeypair_curve25519xsalsa20poly1305_reencrypt() {
-        let master_key1 = SecretKey::new_xsalsa20poly1305();
-        let master_key2 = SecretKey::new_xsalsa20poly1305();
+        let master_key1 = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key2 = SecretKey::new_xsalsa20poly1305().unwrap();
         assert!(master_key1 != master_key2);
         let keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key1).unwrap();
         let message = String::from("get a job");
@@ -708,7 +748,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cryptokeypair_curve25519xsalsa20poly1305_strip_has_private() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
         match &keypair {
             CryptoKeypair::Curve25519Xsalsa20Poly1305(_, Some(_)) => {
@@ -737,8 +777,8 @@ pub(crate) mod tests {
     fn hmac_verify() {
         let data1 = String::from("hai plz verify me. oh and could you verify my cousin too? he's just over there, with his wife and four children...if it's not too much trouble, maybe you could verify them as we...");
         let data2 = String::from("hai plz verify me. oh and could you verify my cousin too? he's just over there, with his wife and seven children...if it's not too much trouble, maybe you could verify them as we...");
-        let hmac_key1 = HmacKey::new_sha512();
-        let hmac_key2 = HmacKey::new_sha512();
+        let hmac_key1 = HmacKey::new_sha512().unwrap();
+        let hmac_key2 = HmacKey::new_sha512().unwrap();
         let hmac = Hmac::new_sha512(&hmac_key1, data1.as_bytes()).unwrap();
         hmac.verify(&hmac_key1, data1.as_bytes()).unwrap();
         let res = hmac.verify(&hmac_key2, data1.as_bytes());

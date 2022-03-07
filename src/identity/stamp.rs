@@ -255,7 +255,7 @@ impl StampRequest {
     /// This re-encryptes the claim with a new key, then creates a signed
     /// message to the recipient (stamper) using one of their keys.
     pub fn new(sender_master_key: &SecretKey, sender_identity_id: &IdentityID, sender_key: &Subkey, recipient_key: &Subkey, claim: &Claim) -> Result<Message> {
-        let one_time_key = SecretKey::new_xsalsa20poly1305();
+        let one_time_key = SecretKey::new_xsalsa20poly1305()?;
         let claim_reencrypted_spec = claim.spec().clone().reencrypt(sender_master_key, &one_time_key)?;
         let mut claim_reencrypted = claim.clone();
         claim_reencrypted.set_spec(claim_reencrypted_spec);
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn stamp_verify() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let sign_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
         let mut stamp = make_stamp(&master_key, &sign_keypair, ClaimID::random(), &IdentityID::random(), &IdentityID::random(), None);
         stamp.verify(&sign_keypair).unwrap();
@@ -353,7 +353,7 @@ entry:
 
     #[test]
     fn stamp_strip() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
         let stamp = make_stamp(&master_key, &root_keypair, ClaimID::random(), &IdentityID::random(), &IdentityID::random(), None);
         let stamp2 = stamp.strip_private();
@@ -370,7 +370,7 @@ entry:
         macro_rules! make_specs {
             ($claimmaker:expr, $val:expr) => {{
                 let val = $val;
-                let master_key = SecretKey::new_xsalsa20poly1305();
+                let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
                 let root_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
                 let maybe_private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
                 let maybe_public = MaybePrivate::new_public(val.clone());
@@ -396,7 +396,7 @@ entry:
                 let container_public = ClaimContainer::new(ClaimID::random(), spec_public, Timestamp::now());
                 let sender_subkey = sender_keychain.subkey_by_name("default:crypto").unwrap();
 
-                let recipient_master_key = SecretKey::new_xsalsa20poly1305();
+                let recipient_master_key = SecretKey::new_xsalsa20poly1305().unwrap();
                 let subkey_key = Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&recipient_master_key).unwrap());
                 let alpha = AlphaKeypair::new_ed25519(&sender_master_key).unwrap();
                 let policy = PolicyKeypair::new_ed25519(&sender_master_key).unwrap();
@@ -479,7 +479,7 @@ entry:
 
     #[test]
     fn stamp_revocation_create_verify() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
         let stamp = make_stamp(&master_key, &root_keypair, ClaimID::random(), &IdentityID::random(), &IdentityID::random(), None);
 

@@ -26,7 +26,7 @@
 //! The goals of this protocol are as follows:
 //!
 //! 1. To provide a semi-permanent container for a cryptographically-verified
-//! online identity.
+//! online/offline electronic identity.
 //! 1. To allow signing and verification of any number of custom pieces of
 //! information ("claims") that assert one's identity, including ones that are
 //! private and only accessible by the identity owner (and those who they choose

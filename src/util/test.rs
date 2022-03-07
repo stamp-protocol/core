@@ -10,12 +10,13 @@ use std::thread;
 use std::time::Duration;
 
 /// Go to sleeeeep
+#[allow(dead_code)]
 pub(crate) fn sleep(millis: u64) {
     thread::sleep(Duration::from_millis(millis));
 }
 
 pub(crate) fn setup_identity_with_subkeys() -> (SecretKey, Identity) {
-    let master_key = SecretKey::new_xsalsa20poly1305();
+    let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
     let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
     let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
     let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();

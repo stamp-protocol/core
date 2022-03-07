@@ -426,7 +426,7 @@ pub(crate) mod tests {
 
     macro_rules! make_specs {
         ($claimmaker:expr, $val:expr) => {{
-            let master_key = SecretKey::new_xsalsa20poly1305();
+            let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
             let val = $val;
             let maybe_private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
             let maybe_public = MaybePrivate::new_public(val.clone());
@@ -443,7 +443,7 @@ pub(crate) mod tests {
                 let val = $val;
                 let (master_key, spec_private, spec_public) = make_specs!($claimmaker, val.clone());
                 assert_eq!($get_maybe(spec_private.clone()).open(&master_key).unwrap(), val);
-                let master_key2 = SecretKey::new_xsalsa20poly1305();
+                let master_key2 = SecretKey::new_xsalsa20poly1305().unwrap();
                 assert!(master_key != master_key2);
                 let spec_private2 = spec_private.reencrypt(&master_key, &master_key2).unwrap();
                 let maybe_private2 = $get_maybe(spec_private2);
@@ -470,7 +470,7 @@ pub(crate) mod tests {
         }
 
         let (master_key, _, spec) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
-        let master_key2 = SecretKey::new_xsalsa20poly1305();
+        let master_key2 = SecretKey::new_xsalsa20poly1305().unwrap();
         let spec2 = spec.clone().reencrypt(&master_key, &master_key2).unwrap();
         match (spec, spec2) {
             (ClaimSpec::Identity(id), ClaimSpec::Identity(id2)) => assert_eq!(id, id2),
@@ -554,7 +554,7 @@ pub(crate) mod tests {
         macro_rules! thtrip {
             (next, $val:expr, $createfn:expr) => {
                 let val = $val;
-                let master_key = SecretKey::new_xsalsa20poly1305();
+                let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
                 let private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
                 let claimspec = $createfn(private);
                 let claimspec2 = claimspec.clone().strip_private();
@@ -672,7 +672,7 @@ pub(crate) mod tests {
         macro_rules! as_pub {
             (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
                 let (master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
-                let fake_master_key = SecretKey::new_xsalsa20poly1305();
+                let fake_master_key = SecretKey::new_xsalsa20poly1305().unwrap();
                 let container_private = ClaimContainer::new(ClaimID::random(), spec_private, Timestamp::now());
                 let container_public = ClaimContainer::new(ClaimID::random(), spec_public, Timestamp::now());
                 let opened_claim = container_private.claim().as_public(&master_key).unwrap();
