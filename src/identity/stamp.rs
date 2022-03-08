@@ -22,7 +22,9 @@ use crate::{
     },
 };
 use getset;
+#[cfg(test)] use rand::RngCore;
 use serde_derive::{Serialize, Deserialize};
+use std::convert::TryInto;
 use std::ops::Deref;
 
 object_id! {
@@ -326,9 +328,11 @@ mod tests {
 
     #[test]
     fn stamp_serde() {
-        let id1 = IdentityID::try_from("Q8LwXx3nZvCn13Y49OydJ0OioG8_2idvEZGlmYeiBd2VHr5GOa5C3vxE_l-zWzhc5KcMiV_enu8LxpP4TIpUqwA").unwrap();
-        let id2 = IdentityID::try_from("c1lZ31CxrYGk4D3jXWrbhtetQ93kigNtJmOm09cptryHhOfeX3PMltqZet6Gql-7A0CkELbaqu_u1qXW95DkgAA").unwrap();
-        let claim_id = ClaimID::try_from("FG7ACMlbgAkT9mvJ6Qt8TACLQ-zQoE7o92VySsvHSUBnaSUlSbhRL8V6e0wnMu5aL6_Hy4HTXEllPF7rMTnQAQA").unwrap();
+        let rand_id: String = String::from(&IdentityID::random());
+        println!("id1: {}", rand_id);
+        let id1 = IdentityID::try_from("RUHyjlNbE7u7BCd9kp3_3jhKiC4w-8fpkox3HiTMD7gQDhGNS6dYCpJiU1C029gpqxjvLUmZmsokeQsjSC9gAAA").unwrap();
+        let id2 = IdentityID::try_from("izTWRLHDYRY1qwkgxXgxe1D0Ft-TcJS95OpghVsplpu1S-5rpa7tGvCzmAVP9WhxKALZlOCiijAT1q6AMknuAAA").unwrap();
+        let claim_id = ClaimID::try_from("K9fUQ28tp-azWhlysEyQisdt6qKh4-OEF1-ZYEetSVQuYQpa62DTREgAwtljpOYZZbrrxhBv7XnwBDDd9BFNAAA").unwrap();
         let master_key = key::tests::secret_from_vec(vec![58, 30, 74, 149, 49, 101, 115, 190, 250, 4, 99, 141, 245, 201, 209, 83, 46, 121, 28, 174, 1, 150, 149, 118, 181, 228, 215, 78, 226, 248, 53, 152]);
         let root_keypair = RootKeypair::new_ed25519_from_seed(&master_key, &[190, 106, 28, 143, 162, 234, 87, 8, 20, 209, 219, 44, 136, 152, 126, 189, 46, 129, 12, 125, 138, 173, 37, 220, 174, 42, 218, 199, 95, 127, 97, 92]).unwrap();
         let ts = Timestamp::from_str("2021-06-06T00:00:00-06:00").unwrap();
@@ -336,14 +340,14 @@ mod tests {
         let ser = stamp.serialize().unwrap();
         assert_eq!(ser, r#"---
 id:
-  Ed25519: zzCUbVE1VAhvEkQGARoK0Gfrlib232YzjUmFDwlEEdGF6xoNzgInhfKPCLFH5TQj3gZGdjJKsS6y5fFzuoixBw
+  Ed25519: 3cqOO1vDaIvAL8fx1EkfZb4b_9-3NvOsG1EieT4_aZfhHePrxEuaqXmuDkbOUwuzbYtomejye__677-0a8W0Bw
 entry:
   stamper:
-    Ed25519: Q8LwXx3nZvCn13Y49OydJ0OioG8_2idvEZGlmYeiBd2VHr5GOa5C3vxE_l-zWzhc5KcMiV_enu8LxpP4TIpUqw
+    Ed25519: RUHyjlNbE7u7BCd9kp3_3jhKiC4w-8fpkox3HiTMD7gQDhGNS6dYCpJiU1C029gpqxjvLUmZmsokeQsjSC9gAA
   stampee:
-    Ed25519: c1lZ31CxrYGk4D3jXWrbhtetQ93kigNtJmOm09cptryHhOfeX3PMltqZet6Gql-7A0CkELbaqu_u1qXW95DkgA
+    Ed25519: izTWRLHDYRY1qwkgxXgxe1D0Ft-TcJS95OpghVsplpu1S-5rpa7tGvCzmAVP9WhxKALZlOCiijAT1q6AMknuAA
   claim_id:
-    Ed25519: FG7ACMlbgAkT9mvJ6Qt8TACLQ-zQoE7o92VySsvHSUBnaSUlSbhRL8V6e0wnMu5aL6_Hy4HTXEllPF7rMTnQAQ
+    Ed25519: K9fUQ28tp-azWhlysEyQisdt6qKh4-OEF1-ZYEetSVQuYQpa62DTREgAwtljpOYZZbrrxhBv7XnwBDDd9BFNAA
   confidence: Medium
   date_signed: "2021-06-06T06:00:00Z"
   expires: ~"#);

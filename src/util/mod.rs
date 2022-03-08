@@ -38,15 +38,16 @@ macro_rules! object_id {
         #[allow(dead_code)]
         impl $name {
             pub(crate) fn blank() -> Self {
-                let sigbytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(sodiumoxide::crypto::sign::ed25519::Signature::from_slice(sigbytes.as_slice()).unwrap());
+                let sigbytes = [0u8; ed25519_dalek::SIGNATURE_LENGTH];
+                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(ed25519_dalek::Signature::from(sigbytes));
                 $name(sig)
             }
 
-            #[cfg(test)]
             pub(crate) fn random() -> Self {
-                let sigbytes = sodiumoxide::randombytes::randombytes(64);
-                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(sodiumoxide::crypto::sign::ed25519::Signature::from_slice(sigbytes.as_slice()).unwrap());
+                let mut sigbytes = [0u8; ed25519_dalek::SIGNATURE_LENGTH];
+                rand::rngs::OsRng.fill_bytes(&mut sigbytes);
+                sigbytes[ed25519_dalek::SIGNATURE_LENGTH - 1] = 0;
+                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(ed25519_dalek::Signature::from(sigbytes));
                 $name(sig)
             }
         }
@@ -82,8 +83,9 @@ macro_rules! object_id {
                 let ser_val = bytes.pop().ok_or(crate::error::Error::SignatureMissing)?;
                 let id_sig = match ser_val {
                     _ => {
-                        let sig = sodiumoxide::crypto::sign::ed25519::Signature::from_slice(bytes.as_slice())
-                            .ok_or(crate::error::Error::SignatureMissing)?;
+                        let bytes_arr: [u8; ed25519_dalek::SIGNATURE_LENGTH] = bytes.try_into()
+                            .map_err(|_| crate::error::Error::BadLength)?;
+                        let sig = ed25519_dalek::Signature::from(bytes_arr);
                         crate::crypto::key::SignKeypairSignature::Ed25519(sig)
                     }
                 };
@@ -224,7 +226,8 @@ mod tests {
     use crate::{
         crypto::key::{SignKeypairSignature},
     };
-    use std::convert::TryFrom;
+    use rand::prelude::*;
+    use std::convert::{TryFrom, TryInto};
     use std::ops::Deref;
 
     #[test]
@@ -234,7 +237,8 @@ mod tests {
         }
 
         let sigbytes = vec![61, 47, 37, 255, 130, 49, 42, 60, 55, 247, 221, 146, 149, 13, 27, 227, 23, 228, 6, 170, 103, 177, 184, 3, 124, 102, 180, 148, 228, 67, 30, 140, 172, 59, 90, 94, 220, 123, 143, 239, 97, 164, 186, 213, 141, 217, 174, 43, 186, 16, 184, 236, 166, 130, 38, 5, 176, 33, 22, 5, 111, 171, 57, 2];
-        let sig = SignKeypairSignature::Ed25519(sodiumoxide::crypto::sign::ed25519::Signature::from_slice(sigbytes.as_slice()).unwrap());
+        let sigarr: [u8; 64] = sigbytes.try_into().unwrap();
+        let sig = SignKeypairSignature::Ed25519(ed25519_dalek::Signature::from(sigarr));
 
         let id = TestID(sig);
 

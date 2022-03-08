@@ -19,7 +19,7 @@ use serde_derive::{Serialize, Deserialize};
 use std::marker::PhantomData;
 
 /// Holds private data, which can only be opened if you have the special key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Private<T> {
     /// Allows us to cast this container to T without this container ever
     /// actually storing any T value (because it's encrypted).
@@ -31,6 +31,16 @@ pub struct Private<T> {
     sealed: Vec<u8>,
     /// A nonce used to decrypt our heroic data (given the correct secret key).
     nonce: SecretKeyNonce,
+}
+
+impl<T> Clone for Private<T> {
+    fn clone(&self) -> Self {
+        Self {
+            _phantom: PhantomData,
+            sealed: self.sealed.clone(),
+            nonce: self.nonce.clone(),
+        }
+    }
 }
 
 impl<T: serde::Serialize + serde::de::DeserializeOwned> Private<T> {

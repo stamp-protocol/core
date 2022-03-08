@@ -64,14 +64,18 @@ pub trait SerdeBinary: Serialize + DeserializeOwned {
 }
 
 macro_rules! impl_try_from_slice {
-    ($class:ty) => {
+    ($class:ty, $slice:ident, $op:expr) => {
         impl TryFromSlice for $class {
             type Item = $class;
-            fn try_from_slice(slice: &[u8]) -> std::result::Result<Self::Item, ()> {
-                Self::from_slice(slice).ok_or(())
+            fn try_from_slice($slice: &[u8]) -> std::result::Result<Self::Item, ()> {
+                $op
             }
         }
-    }
+    };
+
+    ($class:ty) => {
+        impl_try_from_slice! { $class, slice, Self::from_slice(slice).ok_or(()) }
+    };
 }
 
 pub(crate) mod human_bytes {
@@ -106,12 +110,12 @@ pub(crate) mod human_binary_from_slice {
 
     pub fn serialize<S, T>(bytes: &T, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer,
-              T: AsRef<[u8]>,
+              T: AsRef<[u8]> + serde::Serialize,
     {
         if serializer.is_human_readable() {
             serializer.serialize_str(&base64_encode(bytes))
         } else {
-            serializer.serialize_bytes(bytes.as_ref())
+            bytes.serialize(serializer)
         }
     }
 

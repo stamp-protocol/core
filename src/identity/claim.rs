@@ -18,7 +18,9 @@ use crate::{
     util::{Timestamp, Date},
 };
 use getset;
+#[cfg(test)] use rand::RngCore;
 use serde_derive::{Serialize, Deserialize};
+use std::convert::TryInto;
 use std::ops::Deref;
 use url::Url;
 

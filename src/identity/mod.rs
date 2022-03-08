@@ -230,53 +230,53 @@ mod tests {
         let ser = published.serialize().unwrap();
         assert_eq!(ser, r#"---
 publish_signature:
-  Ed25519: sa63FcjCTJvb9m04xuUJrzo63Jn7oNAkfcw1V-SIpoiufFNQzBp65oI9QWDdq7aKym97JFw7cQ9-pyOY1wyUAw
+  Ed25519: ouwBiHEHk6aludnxRhFJ5-eT2_hsnDNtV0DhWYn-BiS6M-L1fFlo3HlG4Q-D7B77GXLjN9c1D783KC2w5e99AA
 publish_date: "1977-06-07T04:32:06Z"
 identity:
   transactions:
     - V1:
         id:
           Alpha:
-            Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+            Ed25519: rdjnll1H48XN4WSaqXrCn_kwxv_cWF2tPl8lCa_KKtTNhbb2Qg2GaNHXQ01ScHW8KZNnsQckeorMy-MZpemgAA
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions: []
           body:
             CreateIdentityV1:
               - Ed25519:
-                  - rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
+                  - dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
                   - ~
               - Ed25519:
-                  - _iO_wIyxzlWS0OvOKJYR67L80nQoNTCE_JYDcxs1lRk
+                  - s5YuvOaxr4y1qQBzZyJJ0SduYXf8toYfLa2izUgcT2I
                   - ~
               - Ed25519:
-                  - PRtrFNJJpYsNNYIZEgspwxVtgLqrMx1-3nXuLnTtWlc
+                  - B1NXKqP26jGll8tT12CCLbGxo09Do2M-A6VvRJoW87M
                   - ~
               - Ed25519:
-                  - Yl7xQtHuYPpQQwBfppPROI0jYqetVxvChC2EofFrNhU
+                  - 75w-F9acRAKDCDdeAiOYTAz9BUoky98lO5rHNSeodQg
                   - ~
     - V1:
         id:
           Root:
-            Ed25519: 6MrVBIEVXNRxnLAQZIuY41I9g5ximL0FkyNqh7AI5uRHgRtabThEyuQA9N5A4_6jKg9ClDr9Yb1YWbfzz_K1Dg
+            Ed25519: 27C2RwGYtsZnFVrkv4QDIVWoJkb6g04BuBQY6mJo07IgCnxj7Q1Lta_ZMTtv3MOm1bRZnPvMLE1tvlj2AkqBAQ
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions:
             - Alpha:
-                Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+                Ed25519: rdjnll1H48XN4WSaqXrCn_kwxv_cWF2tPl8lCa_KKtTNhbb2Qg2GaNHXQ01ScHW8KZNnsQckeorMy-MZpemgAA
           body:
             MakeClaimV1:
               Identity:
-                Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+                Ed25519: rdjnll1H48XN4WSaqXrCn_kwxv_cWF2tPl8lCa_KKtTNhbb2Qg2GaNHXQ01ScHW8KZNnsQckeorMy-MZpemgAA
     - V1:
         id:
           Root:
-            Ed25519: k1pFH_SBskA4aj-AFgDB1oKZFsyHch2W3Lrqw5nO-A4gV7XOVp4_uyYztMpkF-P1NzuhJyNotAgCkfei8FflAA
+            Ed25519: tu_FxF5tjcqxnSOE-au34-plcGcG9ljTLwJLgezoIVGrfZqPbomf21UY3TT3euYaRehXnIZFCGx_IOMLbI1yDw
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions:
             - Root:
-                Ed25519: 6MrVBIEVXNRxnLAQZIuY41I9g5ximL0FkyNqh7AI5uRHgRtabThEyuQA9N5A4_6jKg9ClDr9Yb1YWbfzz_K1Dg
+                Ed25519: 27C2RwGYtsZnFVrkv4QDIVWoJkb6g04BuBQY6mJo07IgCnxj7Q1Lta_ZMTtv3MOm1bRZnPvMLE1tvlj2AkqBAQ
           body:
             MakeClaimV1:
               Name:

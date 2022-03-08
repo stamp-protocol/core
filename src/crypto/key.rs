@@ -21,6 +21,7 @@ use crate::{
         sign::Signable,
     },
 };
+use ed25519_dalek::Signer;
 use hmac::{
     Mac,
     digest::{
@@ -28,20 +29,22 @@ use hmac::{
         crypto_common::generic_array::GenericArray,
     },
 };
+use rand::{prelude::*, rngs::OsRng};
+use rand_chacha::rand_core::SeedableRng;
 use serde_derive::{Serialize, Deserialize};
 use sodiumoxide::{
     crypto::{
         box_::curve25519xsalsa20poly1305,
         pwhash::argon2id13,
-        sign::ed25519,
+        //sign::ed25519,
     },
 };
-use std::convert::TryInto;
+use std::convert::{TryInto, TryFrom};
 use std::ops::Deref;
 use xsalsa20poly1305::aead::{Aead, NewAead};
 
-impl_try_from_slice!(ed25519::PublicKey);
-impl_try_from_slice!(ed25519::Signature);
+impl_try_from_slice!(ed25519_dalek::PublicKey, slice, Self::from_bytes(slice).map_err(|_| ()));
+impl_try_from_slice!(ed25519_dalek::Signature, slice, Self::try_from(slice).map_err(|_| ()));
 impl_try_from_slice!(curve25519xsalsa20poly1305::Nonce);
 impl_try_from_slice!(curve25519xsalsa20poly1305::PublicKey);
 
@@ -104,7 +107,7 @@ impl SecretKey {
     /// Create a new xsalsa20poly1305 key
     pub fn new_xsalsa20poly1305() -> Result<Self> {
         let mut randbuf = [0u8; 32];
-        getrandom::getrandom(&mut randbuf).map_err(|_| Error::Random)?;
+        OsRng.fill_bytes(&mut randbuf);
         Ok(Self::Xsalsa20Poly1305(Vec::from(&randbuf[..])))
     }
 
@@ -118,7 +121,7 @@ impl SecretKey {
         match self {
             SecretKey::Xsalsa20Poly1305(_) => {
                 let mut randbuf = [0u8; 24];
-                getrandom::getrandom(&mut randbuf).map_err(|_| Error::Random)?;
+                OsRng.fill_bytes(&mut randbuf);
                 Ok(SecretKeyNonce::Xsalsa20Poly1305(Vec::from(&randbuf[..])))
             }
         }
@@ -174,7 +177,7 @@ impl Lockable for SecretKey {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SignKeypairSignature {
     #[serde(with = "crate::util::ser::human_binary_from_slice")]
-    Ed25519(ed25519::Signature),
+    Ed25519(ed25519_dalek::Signature),
 }
 
 impl SignKeypairSignature {
@@ -188,7 +191,7 @@ impl SignKeypairSignature {
     /// once it's constructed? I prefer the latter.
     pub fn blank(sign_keypair: &SignKeypair) -> Self {
         match sign_keypair {
-            SignKeypair::Ed25519(..) => Self::Ed25519(ed25519::Signature::from_slice(vec![0; ed25519::SIGNATUREBYTES].as_slice()).unwrap()),
+            SignKeypair::Ed25519(..) => Self::Ed25519(ed25519_dalek::Signature::from([0u8; ed25519_dalek::SIGNATURE_LENGTH])),
         }
     }
 }
@@ -202,23 +205,34 @@ impl AsRef<[u8]> for SignKeypairSignature {
 }
 
 /// An asymmetric signing keypair.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum SignKeypair {
-    Ed25519(#[serde(with = "crate::util::ser::human_binary_from_slice")] ed25519::PublicKey, Option<Private<ed25519::SecretKey>>),
+    Ed25519(#[serde(with = "crate::util::ser::human_binary_from_slice")] ed25519_dalek::PublicKey, Option<Private<ed25519_dalek::SecretKey>>),
+}
+
+impl Clone for SignKeypair {
+    fn clone(&self) -> Self {
+        match self {
+            SignKeypair::Ed25519(public, secret_maybe) => {
+                SignKeypair::Ed25519(public.clone(), secret_maybe.as_ref().map(|x| x.clone()))
+            }
+        }
+    }
 }
 
 impl SignKeypair {
     /// Create a new ed25519 keypair
     pub fn new_ed25519(master_key: &SecretKey) -> Result<Self> {
-        let (public, secret) = ed25519::gen_keypair();
-        Ok(Self::Ed25519(public, Some(Private::seal(master_key, &secret)?)))
+        let mut rng = OsRng {};
+        let keypair = ed25519_dalek::Keypair::generate(&mut rng);
+        Ok(Self::Ed25519(keypair.public, Some(Private::seal(master_key, &keypair.secret)?)))
     }
 
     /// Create a new ed25519 keypair
     pub fn new_ed25519_from_seed(master_key: &SecretKey, seed_bytes: &[u8; 32]) -> Result<Self> {
-        let seed = ed25519::Seed::from_slice(seed_bytes).ok_or(Error::CryptoBadSeed)?;
-        let (public, secret) = ed25519::keypair_from_seed(&seed);
-        Ok(Self::Ed25519(public, Some(Private::seal(master_key, &secret)?)))
+        let mut rng = rand_chacha::ChaCha20Rng::from_seed(*seed_bytes);
+        let pair = ed25519_dalek::Keypair::generate(&mut rng);
+        Ok(Self::Ed25519(pair.public, Some(Private::seal(master_key, &pair.secret)?)))
     }
 
     /// Sign a value with our secret signing key.
@@ -229,7 +243,9 @@ impl SignKeypair {
             Self::Ed25519(_, ref sec_locked_opt) => {
                 let sec_locked = sec_locked_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let seckey = sec_locked.open(master_key)?;
-                Ok(SignKeypairSignature::Ed25519(ed25519::sign_detached(data, &seckey)))
+                let pubkey: ed25519_dalek::PublicKey = (&seckey).into();
+                let keypair = ed25519_dalek::Keypair { public: pubkey, secret: seckey };
+                Ok(SignKeypairSignature::Ed25519(keypair.sign(data)))
             }
         }
     }
@@ -239,11 +255,8 @@ impl SignKeypair {
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
         match (self, signature) {
             (Self::Ed25519(ref pubkey, _), SignKeypairSignature::Ed25519(ref sig)) => {
-                if ed25519::verify_detached(sig, data, pubkey) {
-                    Ok(())
-                } else {
-                    Err(Error::CryptoSignatureVerificationFailed)
-                }
+                pubkey.verify_strict(data, sig)
+                    .map_err(|_| Error::CryptoSignatureVerificationFailed)
             }
         }
     }
@@ -298,7 +311,7 @@ impl Signable for SignKeypair {
 /// An asymmetric signing public key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SignKeypairPublic {
-    Ed25519(#[serde(with = "crate::util::ser::human_binary_from_slice")] ed25519::PublicKey),
+    Ed25519(#[serde(with = "crate::util::ser::human_binary_from_slice")] ed25519_dalek::PublicKey),
 }
 
 impl SignKeypairPublic {
@@ -307,11 +320,8 @@ impl SignKeypairPublic {
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
         match (self, signature) {
             (Self::Ed25519(ref pubkey), SignKeypairSignature::Ed25519(ref sig)) => {
-                if ed25519::verify_detached(sig, data, pubkey) {
-                    Ok(())
-                } else {
-                    Err(Error::CryptoSignatureVerificationFailed)
-                }
+                pubkey.verify_strict(data, sig)
+                    .map_err(|_| Error::CryptoSignatureVerificationFailed)
             }
         }
     }
@@ -500,7 +510,7 @@ impl HmacKey {
     /// Create a new sha512 HMAC key
     pub fn new_sha512() -> Result<Self> {
         let mut randbuf = [0u8; 32];
-        getrandom::getrandom(&mut randbuf).map_err(|_| Error::Random)?;
+        OsRng.fill_bytes(&mut randbuf);
         Ok(Self::HmacSha512(Vec::from(randbuf)))
     }
 }
@@ -508,8 +518,7 @@ impl HmacKey {
 /// An HMAC hash
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Hmac {
-    #[serde(with = "crate::util::ser::human_bytes")]
-    HmacSha512(Vec<u8>),
+    HmacSha512(#[serde(with = "crate::util::ser::human_bytes")] Vec<u8>),
 }
 
 impl Deref for Hmac {
@@ -628,7 +637,7 @@ pub(crate) mod tests {
         let sig = our_keypair.sign(&master_key, msg_real.as_bytes()).unwrap();
         match sig {
             SignKeypairSignature::Ed25519(sig) => {
-                let should_be: Vec<u8> = vec![161, 93, 247, 4, 187, 12, 160, 118, 111, 79, 16, 100, 205, 38, 238, 153, 217, 214, 230, 195, 175, 228, 165, 183, 5, 151, 159, 114, 7, 32, 156, 115, 34, 108, 194, 252, 86, 102, 133, 35, 129, 224, 146, 254, 91, 185, 97, 207, 0, 63, 241, 184, 144, 15, 20, 26, 187, 235, 95, 207, 43, 144, 216, 6];
+                let should_be: Vec<u8> = vec![81, 54, 50, 92, 69, 78, 205, 207, 10, 242, 222, 154, 70, 18, 242, 16, 67, 142, 59, 63, 41, 129, 98, 223, 161, 173, 210, 23, 78, 208, 43, 79, 130, 225, 189, 179, 88, 103, 74, 71, 116, 212, 6, 207, 194, 212, 25, 107, 56, 91, 185, 214, 146, 78, 185, 212, 90, 22, 99, 77, 193, 231, 239, 5];
                 assert_eq!(sig.as_ref(), should_be.as_slice());
             }
         }
@@ -663,7 +672,7 @@ pub(crate) mod tests {
         let blank1 = SignKeypairSignature::blank(&keypair1);
         let blank2 = SignKeypairSignature::blank(&keypair2);
         assert_eq!(blank1, blank2);
-        assert_eq!(blank1.as_ref(), vec![0; ed25519::SIGNATUREBYTES].as_slice());
+        assert_eq!(blank1.as_ref(), vec![0; ed25519_dalek::SIGNATURE_LENGTH].as_slice());
     }
 
     #[test]

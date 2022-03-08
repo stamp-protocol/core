@@ -8,9 +8,11 @@ edition = "2018"
 base64 = "0.13"
 chacha20poly1305 = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
+ed25519-dalek = { version = "1.0", features = ["serde"] }
 getset = "0.1"
 hmac = "0.12"
-getrandom = "0.2"
+rand = { version = "0.7", features = ["getrandom"] }
+rand_chacha = "0.2"
 rmp-serde = "0.15"
 serde = "1.0"
 serde_bytes = "0.11"

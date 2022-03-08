@@ -21,7 +21,9 @@ use crate::{
     },
 };
 use getset;
+#[cfg(test)] use rand::RngCore;
 use serde_derive::{Serialize, Deserialize};
+use std::convert::TryInto;
 use std::ops::Deref;
 
 object_id! {
@@ -862,25 +864,25 @@ mod tests {
         let ser = identity.serialize().unwrap();
         assert_eq!(ser, r#"---
 id:
-  Ed25519: ed2mesdW8i5YsIfoGjsJnP0sleJAi9zEkIsE6CnnvFlGSIHm9huG33MozicdqfKAzTI9rz8fpwu3MZbS4hCWCw
+  Ed25519: fCIX7Z3EiXIanC2819hWhF3oNW9gg6ujZKW8D_Y1lfZJJODmkkjVJlOZKCtM6YMa_fSS4i6Witse0k2UlZ-GAQ
 created: "1977-06-07T04:32:06Z"
 recovery_policy: ~
 keychain:
   alpha:
     Ed25519:
-      - rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
+      - dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
       - ~
   policy:
     Ed25519:
-      - _iO_wIyxzlWS0OvOKJYR67L80nQoNTCE_JYDcxs1lRk
+      - s5YuvOaxr4y1qQBzZyJJ0SduYXf8toYfLa2izUgcT2I
       - ~
   publish:
     Ed25519:
-      - PRtrFNJJpYsNNYIZEgspwxVtgLqrMx1-3nXuLnTtWlc
+      - B1NXKqP26jGll8tT12CCLbGxo09Do2M-A6VvRJoW87M
       - ~
   root:
     Ed25519:
-      - Yl7xQtHuYPpQQwBfppPROI0jYqetVxvChC2EofFrNhU
+      - 75w-F9acRAKDCDdeAiOYTAz9BUoky98lO5rHNSeodQg
       - ~
   subkeys: []
 claims: []

@@ -7,6 +7,11 @@ use thiserror::Error;
 /// which an expectation is not met or a problem occurs.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// Trying to deserialize a value with the wrong length of data (ie, we
+    /// usually see this when trying to populate a [u8; 64]
+    #[error("incorrect data length")]
+    BadLength,
+
     /// Trying to use an xsalsa20poly1305 (or other) nonce with a
     /// NON-xsalsa20poly1305 algo, or vice versa, etc.
     #[error("cryptographic algorithm mismatch")]
