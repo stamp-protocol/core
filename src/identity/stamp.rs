@@ -328,8 +328,6 @@ mod tests {
 
     #[test]
     fn stamp_serde() {
-        let rand_id: String = String::from(&IdentityID::random());
-        println!("id1: {}", rand_id);
         let id1 = IdentityID::try_from("RUHyjlNbE7u7BCd9kp3_3jhKiC4w-8fpkox3HiTMD7gQDhGNS6dYCpJiU1C029gpqxjvLUmZmsokeQsjSC9gAAA").unwrap();
         let id2 = IdentityID::try_from("izTWRLHDYRY1qwkgxXgxe1D0Ft-TcJS95OpghVsplpu1S-5rpa7tGvCzmAVP9WhxKALZlOCiijAT1q6AMknuAAA").unwrap();
         let claim_id = ClaimID::try_from("K9fUQ28tp-azWhlysEyQisdt6qKh4-OEF1-ZYEetSVQuYQpa62DTREgAwtljpOYZZbrrxhBv7XnwBDDd9BFNAAA").unwrap();

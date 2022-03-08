@@ -36,7 +36,6 @@ use sodiumoxide::{
     crypto::{
         box_::curve25519xsalsa20poly1305,
         pwhash::argon2id13,
-        //sign::ed25519,
     },
 };
 use std::convert::{TryInto, TryFrom};
