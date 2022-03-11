@@ -160,12 +160,43 @@ pub(crate) mod timestamp {
     }
 }
 
+macro_rules! standard_impls {
+    ($struct:ident) => {
+        impl<T> std::ops::Deref for $struct<T> {
+            type Target = T;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl<T> std::clone::Clone for $struct<T>
+            where T: std::clone::Clone,
+        {
+            fn clone(&self) -> Self {
+                Self(self.0.clone())
+            }
+        }
+
+        impl<T> std::cmp::PartialEq for $struct<T>
+            where T: std::cmp::PartialEq,
+        {
+            fn eq(&self, other: &Self) -> bool {
+                self.0 == other.0
+            }
+        }
+    }
+}
+
 macro_rules! define_byte_serializer {
     ($as_trait:ident, $from_trait:ident, $wrapper:ident, $sermod:ident, $num_bytes:expr) => {
+        /// Assists in converting a type to a byte array
         pub trait $as_trait {
+            /// Return the byte array representation of this object
             fn as_bytes(&self) -> &[u8; $num_bytes];
         }
+        /// Assists in building a type from a byte array
         pub trait $from_trait {
+            /// Build this object from a byte array
             fn from_bytes(bytes: [u8; $num_bytes]) -> Self;
         }
 
@@ -205,28 +236,7 @@ macro_rules! define_byte_serializer {
         #[allow(dead_code)]
         pub struct $wrapper<T>(pub(crate) T);
 
-        impl<T> std::ops::Deref for $wrapper<T> {
-            type Target = T;
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
-
-        impl<T> std::clone::Clone for $wrapper<T>
-            where T: std::clone::Clone,
-        {
-            fn clone(&self) -> Self {
-                Self(self.0.clone())
-            }
-        }
-
-        impl<T> std::cmp::PartialEq for $wrapper<T>
-            where T: std::cmp::PartialEq,
-        {
-            fn eq(&self, other: &Self) -> bool {
-                self.0 == other.0
-            }
-        }
+        standard_impls! { $wrapper }
 
         impl<T> serde::Serialize for $wrapper<T>
             where T: $as_trait,
