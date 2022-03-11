@@ -418,9 +418,9 @@ impl CryptoKeypair {
                 let ephemeral_secret = crypto_box::SecretKey::generate(&mut rng);
                 let ephemeral_public = ephemeral_secret.public_key();
                 let cardboard_box = crypto_box::ChaChaBox::new(pubkey, &ephemeral_secret);
-                let hmac_key = HmacKey::HmacSha512(Vec::from(ephemeral_public.as_ref()));
+                let hmac_key = HmacKey::Sha512(Vec::from(ephemeral_public.as_ref()));
                 let nonce_vec = match Hmac::new_sha512(&hmac_key, pubkey.as_ref())? {
-                    Hmac::HmacSha512(vec) => vec,
+                    Hmac::Sha512(vec) => vec,
                 };
                 let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into()
                     .map_err(|_| Error::CryptoSealFailed)?;
@@ -447,9 +447,9 @@ impl CryptoKeypair {
                 let ephemeral_pubkey = crypto_box::PublicKey::from(ephemeral_pubkey_arr);
                 let ciphertext = &data[32..];
                 let cardboard_box = crypto_box::ChaChaBox::new(&ephemeral_pubkey, &seckey);
-                let hmac_key = HmacKey::HmacSha512(Vec::from(ephemeral_pubkey.as_ref()));
+                let hmac_key = HmacKey::Sha512(Vec::from(ephemeral_pubkey.as_ref()));
                 let nonce_vec = match Hmac::new_sha512(&hmac_key, pubkey.as_ref())? {
-                    Hmac::HmacSha512(vec) => vec,
+                    Hmac::Sha512(vec) => vec,
                 };
                 let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into()
                     .map_err(|_| Error::CryptoSealFailed)?;
@@ -555,7 +555,7 @@ impl From<CryptoKeypair> for CryptoKeypairPublic {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HmacKey {
     #[serde(with = "crate::util::ser::human_bytes")]
-    HmacSha512(Vec<u8>),
+    Sha512(Vec<u8>),
 }
 
 impl Deref for HmacKey {
@@ -563,7 +563,7 @@ impl Deref for HmacKey {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            HmacKey::HmacSha512(bytes) => &bytes[..],
+            HmacKey::Sha512(bytes) => &bytes[..],
         }
     }
 }
@@ -573,19 +573,19 @@ impl HmacKey {
     pub fn new_sha512() -> Result<Self> {
         let mut randbuf = [0u8; 32];
         OsRng.fill_bytes(&mut randbuf);
-        Ok(Self::HmacSha512(Vec::from(randbuf)))
+        Ok(Self::Sha512(Vec::from(randbuf)))
     }
 
     /// Create a new sha512 HMAC key from a byte array
     pub fn new_sha512_from_bytes(keybytes: &[u8; 32]) -> Self {
-        Self::HmacSha512(Vec::from(&keybytes[..]))
+        Self::Sha512(Vec::from(&keybytes[..]))
     }
 }
 
 /// An HMAC hash
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Hmac {
-    HmacSha512(#[serde(with = "crate::util::ser::human_bytes")] Vec<u8>),
+    Sha512(#[serde(with = "crate::util::ser::human_bytes")] Vec<u8>),
 }
 
 impl Deref for Hmac {
@@ -593,7 +593,7 @@ impl Deref for Hmac {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Hmac::HmacSha512(bytes) => &bytes[..],
+            Hmac::Sha512(bytes) => &bytes[..],
         }
     }
 }
@@ -602,12 +602,12 @@ impl Hmac {
     /// Create a new HMACSHA512 from a key and a set of data.
     pub fn new_sha512(hmac_key: &HmacKey, data: &[u8]) -> Result<Self> {
         match hmac_key {
-            HmacKey::HmacSha512(hmac_key) => {
+            HmacKey::Sha512(hmac_key) => {
                 let mut mac = hmac::SimpleHmac::<sha2::Sha512>::new_from_slice(hmac_key.deref())
                     .map_err(|_| Error::CryptoBadKey)?;
                 mac.update(data);
                 let output = Vec::from(mac.finalize_fixed().as_slice());
-                Ok(Hmac::HmacSha512(output))
+                Ok(Hmac::Sha512(output))
             }
         }
     }
@@ -615,7 +615,7 @@ impl Hmac {
     /// Verify an HMAC against a set of data.
     pub fn verify(&self, hmac_key: &HmacKey, data: &[u8]) -> Result<()> {
         match (self, hmac_key) {
-            (Self::HmacSha512(hmac), HmacKey::HmacSha512(hmac_key)) => {
+            (Self::Sha512(hmac), HmacKey::Sha512(hmac_key)) => {
                 let mut mac_ver = hmac::SimpleHmac::<sha2::Sha512>::new_from_slice(hmac_key.deref())
                     .map_err(|_| Error::CryptoBadKey)?;
                 mac_ver.update(data);
@@ -855,7 +855,7 @@ pub(crate) mod tests {
             3, 4, 5, 6, 7, 8, 9, 9,
         ]);
         let hmac = Hmac::new_sha512(&hmac_key, data.as_bytes()).unwrap();
-        assert_eq!(hmac, Hmac::HmacSha512(vec![156, 55, 129, 245, 223, 131, 164, 169, 16, 253, 155, 213, 86, 246, 186, 151, 64, 222, 116, 203, 60, 141, 238, 58, 243, 10, 108, 239, 195, 253, 44, 24, 162, 111, 160, 243, 22, 144, 143, 251, 26, 48, 68, 19, 157, 53, 120, 83, 58, 193, 183, 100, 30, 220, 65, 80, 32, 47, 141, 1, 48, 195, 198, 0]));
+        assert_eq!(hmac, Hmac::Sha512(vec![156, 55, 129, 245, 223, 131, 164, 169, 16, 253, 155, 213, 86, 246, 186, 151, 64, 222, 116, 203, 60, 141, 238, 58, 243, 10, 108, 239, 195, 253, 44, 24, 162, 111, 160, 243, 22, 144, 143, 251, 26, 48, 68, 19, 157, 53, 120, 83, 58, 193, 183, 100, 30, 220, 65, 80, 32, 47, 141, 1, 48, 195, 198, 0]));
     }
 
     #[test]
