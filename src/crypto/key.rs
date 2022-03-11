@@ -10,6 +10,7 @@
 //! cryptographic primitives used without needing to build new interfaces around
 //! them.
 
+use blake2::Digest;
 use chacha20poly1305::aead::{self, Aead, NewAead};
 use crate::{
     error::{Error, Result},
@@ -416,18 +417,18 @@ impl CryptoKeypair {
             Self::Curve25519XChaCha20Poly1305(ref pubkey, _) => {
                 let mut rng = OsRng {};
                 let ephemeral_secret = crypto_box::SecretKey::generate(&mut rng);
-                let ephemeral_public = ephemeral_secret.public_key();
+                let ephemeral_pubkey = ephemeral_secret.public_key();
                 let cardboard_box = crypto_box::ChaChaBox::new(pubkey, &ephemeral_secret);
-                let hmac_key = HmacKey::Sha512(Vec::from(ephemeral_public.as_ref()));
-                let nonce_vec = match Hmac::new_sha512(&hmac_key, pubkey.as_ref())? {
-                    Hmac::Sha512(vec) => vec,
-                };
+                let mut blake = blake2::Blake2b512::new();
+                blake.update(ephemeral_pubkey.as_ref());
+                blake.update(pubkey.as_ref());
+                let nonce_vec = Vec::from(blake.finalize().as_slice());
                 let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into()
                     .map_err(|_| Error::CryptoSealFailed)?;
                 let nonce = nonce_arr.into();
                 let mut enc = cardboard_box.encrypt(&nonce, aead::Payload::from(data))
                     .map_err(|_| Error::CryptoSealFailed)?;
-                let mut pubvec = Vec::from(ephemeral_public.as_ref());
+                let mut pubvec = Vec::from(ephemeral_pubkey.as_ref());
                 pubvec.append(&mut enc);
                 Ok(pubvec)
             }
@@ -447,10 +448,10 @@ impl CryptoKeypair {
                 let ephemeral_pubkey = crypto_box::PublicKey::from(ephemeral_pubkey_arr);
                 let ciphertext = &data[32..];
                 let cardboard_box = crypto_box::ChaChaBox::new(&ephemeral_pubkey, &seckey);
-                let hmac_key = HmacKey::Sha512(Vec::from(ephemeral_pubkey.as_ref()));
-                let nonce_vec = match Hmac::new_sha512(&hmac_key, pubkey.as_ref())? {
-                    Hmac::Sha512(vec) => vec,
-                };
+                let mut blake = blake2::Blake2b512::new();
+                blake.update(ephemeral_pubkey.as_ref());
+                blake.update(pubkey.as_ref());
+                let nonce_vec = Vec::from(blake.finalize().as_slice());
                 let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into()
                     .map_err(|_| Error::CryptoSealFailed)?;
                 let nonce = nonce_arr.into();
