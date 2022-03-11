@@ -35,11 +35,6 @@ pub(crate) fn deserialize_human<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> 
     Ok(serde_yaml::from_slice(bytes)?)
 }
 
-pub trait TryFromSlice {
-    type Item;
-    fn try_from_slice(slice: &[u8]) -> std::result::Result<Self::Item, ()>;
-}
-
 /// Convert bytes to base64
 pub fn base64_encode<T: AsRef<[u8]>>(bytes: T) -> String {
     base64::encode_config(bytes.as_ref(), base64::URL_SAFE_NO_PAD)
@@ -61,6 +56,11 @@ pub trait SerdeBinary: Serialize + DeserializeOwned {
     fn deserialize_binary(slice: &[u8]) -> Result<Self> {
         deserialize(slice)
     }
+}
+
+pub trait TryFromSlice {
+    type Item;
+    fn try_from_slice(slice: &[u8]) -> std::result::Result<Self::Item, ()>;
 }
 
 macro_rules! impl_try_from_slice {
@@ -159,6 +159,99 @@ pub(crate) mod timestamp {
         }
     }
 }
+
+macro_rules! define_byte_serializer {
+    ($as_trait:ident, $from_trait:ident, $wrapper:ident, $sermod:ident, $num_bytes:expr) => {
+        pub trait $as_trait {
+            fn as_bytes(&self) -> &[u8; $num_bytes];
+        }
+        pub trait $from_trait {
+            fn from_bytes(bytes: [u8; $num_bytes]) -> Self;
+        }
+
+        pub(crate) mod $sermod {
+            use super::{$as_trait, $from_trait, base64_encode, base64_decode};
+            use serde::{Serialize, Serializer, de, Deserialize, Deserializer};
+            use std::convert::TryInto;
+
+            pub fn serialize<S, T>(val: &T, serializer: S) -> Result<S::Ok, S::Error>
+                where S: Serializer,
+                      T: $as_trait,
+            {
+                if serializer.is_human_readable() {
+                    serializer.serialize_str(&base64_encode(&val.as_bytes()[..]))
+                } else {
+                    (*val.as_bytes()).serialize(serializer)
+                }
+            }
+
+            pub fn deserialize<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+                where D: Deserializer<'de>,
+                      T: $from_trait,
+            {
+                if deserializer.is_human_readable() {
+                    let s = <String>::deserialize(deserializer)?;
+                    let vec = base64_decode(s).map_err(de::Error::custom)?;
+                    let arr: [u8; $num_bytes] = vec.try_into().map_err(|_| de::Error::custom(String::from("bad slice length")))?;
+                    Ok(T::from_bytes(arr))
+                } else {
+                    let bytes = <[u8; $num_bytes]>::deserialize(deserializer)?;
+                    Ok(T::from_bytes(bytes))
+                }
+            }
+        }
+
+        #[derive(Debug)]
+        #[allow(dead_code)]
+        pub struct $wrapper<T>(pub(crate) T);
+
+        impl<T> std::ops::Deref for $wrapper<T> {
+            type Target = T;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl<T> std::clone::Clone for $wrapper<T>
+            where T: std::clone::Clone,
+        {
+            fn clone(&self) -> Self {
+                Self(self.0.clone())
+            }
+        }
+
+        impl<T> std::cmp::PartialEq for $wrapper<T>
+            where T: std::cmp::PartialEq,
+        {
+            fn eq(&self, other: &Self) -> bool {
+                self.0 == other.0
+            }
+        }
+
+        impl<T> serde::Serialize for $wrapper<T>
+            where T: $as_trait,
+        {
+            fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+                where S: serde::Serializer,
+            {
+                self.0.as_bytes().serialize(serializer)
+            }
+        }
+
+        impl<'de, T> serde::Deserialize<'de> for $wrapper<T>
+            where T: $from_trait
+        {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<$wrapper<T>, D::Error>
+                where D: serde::Deserializer<'de>,
+            {
+                let bytes = <[u8; $num_bytes]>::deserialize(deserializer)?;
+                Ok($wrapper(T::from_bytes(bytes)))
+            }
+        }
+    }
+}
+
+define_byte_serializer! { AsBytes32, FromBytes32, Bytes32, human_bytes32, 32 }
 
 #[cfg(test)]
 #[allow(dead_code)]

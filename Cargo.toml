@@ -5,13 +5,16 @@ authors = ["Andrew Danger Lyon <andrew@killtheradio.net>"]
 edition = "2018"
 
 [dependencies]
+argon2 = "0.3"
 base64 = "0.13"
+blake2 = "0.10"
 chacha20poly1305 = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
+crypto_box = "0.7"
 ed25519-dalek = { version = "1.0", features = ["serde"] }
 getset = "0.1"
 hmac = "0.12"
-rand = { version = "0.7", features = ["getrandom"] }
+rand = { version = "0.8", features = ["getrandom"] }
 rand_chacha = "0.2"
 rmp-serde = "0.15"
 serde = "1.0"
@@ -19,10 +22,8 @@ serde_bytes = "0.11"
 serde_derive = "1.0"
 serde_yaml = "0.8"
 sha2 = "0.10"
-sodiumoxide = "0.2.6"
 thiserror = "1.0"
 url = { version = "2.2", features = ["serde"] }
-xsalsa20poly1305 = "0.8"
 
 [dev-dependencies]
 rmpv = { version = "0.4", features = ["serde"] }

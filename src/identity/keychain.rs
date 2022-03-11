@@ -651,13 +651,13 @@ mod tests {
 
     #[test]
     fn key_as_type() {
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
-        let secret_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
+        let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
         let key1 = Key::Policy(policy_keypair.clone());
         let key2 = Key::Publish(publish_keypair.clone());
         let key3 = Key::Root(root_keypair.clone());
@@ -680,13 +680,13 @@ mod tests {
 
     #[test]
     fn key_reencrypt() {
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
-        let secret_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
+        let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
         let key1 = Key::Policy(policy_keypair.clone());
         let key2 = Key::Publish(publish_keypair.clone());
         let key3 = Key::Root(root_keypair.clone());
@@ -703,7 +703,7 @@ mod tests {
         let val6_nonce = val6_key.gen_nonce().unwrap();
         let val6 = val6_key.seal(b"and your nose like a delicious slope of cream", &val6_nonce).unwrap();
 
-        let master_key2 = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key2 = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(master_key != master_key2);
         let key1_2 = key1.reencrypt(&master_key, &master_key2).unwrap();
         let key2_2 = key2.reencrypt(&master_key, &master_key2).unwrap();
@@ -744,13 +744,13 @@ mod tests {
 
     #[test]
     fn key_strip_private_has_private() {
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
-        let secret_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
+        let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
         let key1 = Key::Policy(policy_keypair.clone());
         let key2 = Key::Publish(publish_keypair.clone());
         let key3 = Key::Root(root_keypair.clone());
@@ -789,7 +789,7 @@ mod tests {
     }
 
     fn keychain_new() -> (SecretKey, Keychain) {
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -839,8 +839,8 @@ mod tests {
     fn keychain_subkeys_sign_verify_position() {
         let (master_key, keychain) = keychain_new();
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
-        let secret_key = Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305().unwrap()).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
+        let secret_key = Private::seal(&master_key, &SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
         let sign = Key::new_sign(sign_keypair);
         let crypto = Key::new_crypto(crypto_keypair);
         let secret = Key::new_secret(secret_key);
@@ -899,7 +899,7 @@ mod tests {
     #[test]
     fn keychain_delete() {
         let (master_key, keychain) = keychain_new();
-        let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap());
+        let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap());
         let keychain = keychain.add_subkey(crypto, "crypto", None).unwrap();
         // delete a key LOL
         let cryptokey = keychain.subkey_by_name("crypto").unwrap().clone();
@@ -913,8 +913,8 @@ mod tests {
     fn keychain_strip_private() {
         let (master_key, keychain) = keychain_new();
         let sign = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
-        let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap());
-        let secret = Key::new_secret(Private::seal(&master_key, &SecretKey::new_xsalsa20poly1305().unwrap()).unwrap());
+        let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap());
+        let secret = Key::new_secret(Private::seal(&master_key, &SecretKey::new_xchacha20poly1305().unwrap()).unwrap());
         let keychain = keychain
             .add_subkey(sign, "sign", None).unwrap()
             .add_subkey(crypto, "crypto", None).unwrap()

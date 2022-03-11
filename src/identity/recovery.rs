@@ -314,7 +314,7 @@ mod tests {
         let res = conditions.test(&vec![], &|_, _| Ok(()));
         assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
 
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
 
         let gus = SignKeypair::new_ed25519(&master_key).unwrap();
         let marty = SignKeypair::new_ed25519(&master_key).unwrap();
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn policy_sign_request_validate_request() {
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let gus = SignKeypair::new_ed25519(&master_key).unwrap();
         let marty = SignKeypair::new_ed25519(&master_key).unwrap();
         let jackie = SignKeypair::new_ed25519(&master_key).unwrap();
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn policy_request_new_verify() {
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn policy_request_reencrypt() {
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
@@ -582,7 +582,7 @@ mod tests {
             }
         };
 
-        let new_master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let new_master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let req2 = req.reencrypt(&master_key, &new_master_key).unwrap();
 
         match req2.entry().action() {
@@ -597,7 +597,7 @@ mod tests {
 
     #[test]
     fn policy_request_strip_private_has_private() {
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();

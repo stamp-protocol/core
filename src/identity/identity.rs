@@ -21,7 +21,7 @@ use crate::{
     },
 };
 use getset;
-#[cfg(test)] use rand::RngCore;
+use rand::{RngCore, rngs::OsRng};
 use serde_derive::{Serialize, Deserialize};
 use std::convert::TryInto;
 use std::ops::Deref;
@@ -451,7 +451,9 @@ impl Identity {
 
     /// Test if a master key is correct.
     pub fn test_master_key(&self, master_key: &SecretKey) -> Result<()> {
-        let test_bytes = sodiumoxide::randombytes::randombytes(32);
+        let mut randbuf = [0u8; 32];
+        OsRng.fill_bytes(&mut randbuf);
+        let test_bytes = Vec::from(&randbuf[..]);
         if self.keychain().alpha().has_private() {
             self.keychain().alpha().sign(master_key, test_bytes.as_slice())?;
         } else if self.keychain().policy().has_private() {
@@ -496,7 +498,7 @@ mod tests {
     use std::str::FromStr;
 
     fn gen_master_key() -> SecretKey {
-        SecretKey::new_xsalsa20poly1305().unwrap()
+        SecretKey::new_xchacha20poly1305().unwrap()
     }
 
     fn create_identity() -> (SecretKey, Identity) {
@@ -844,7 +846,7 @@ mod tests {
 
     #[test]
     fn identity_serialize() {
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let now = Timestamp::from_str("1977-06-07T04:32:06Z").unwrap();
         let seeds = [
             &[33, 90, 159, 88, 22, 24, 84, 4, 237, 121, 198, 195, 71, 238, 107, 91, 235, 93, 9, 129, 252, 221, 2, 149, 250, 142, 49, 36, 161, 184, 44, 156],

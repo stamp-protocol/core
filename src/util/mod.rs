@@ -1,11 +1,9 @@
 //! Utilities. OBVIOUSLY.
 
+use blake2::Digest;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc, Local};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use serde_derive::{Serialize, Deserialize};
-use sodiumoxide::{
-    crypto::generichash,
-};
 use std::ops::Deref;
 use std::str::FromStr;
 
@@ -16,7 +14,6 @@ pub(crate) mod sign;
 pub(crate) mod test;
 
 pub use ser::{base64_encode, base64_decode, SerdeBinary};
-pub use sodiumoxide::utils::{mlock, munlock};
 
 macro_rules! object_id {
     (
@@ -95,35 +92,12 @@ macro_rules! object_id {
     }
 }
 
-pub trait Lockable {
-    fn mem_lock(&mut self) -> Result<()>;
-    fn mem_unlock(&mut self) -> Result<()>;
-}
-
-impl Lockable for String {
-    fn mem_lock(&mut self) -> Result<()> {
-        unsafe {
-            sodiumoxide::utils::mlock(self.as_bytes_mut())
-                .map_err(|_| Error::CryptoMemLockFailed)
-        }
-    }
-
-    fn mem_unlock(&mut self) -> Result<()> {
-        unsafe {
-            sodiumoxide::utils::munlock(self.as_bytes_mut())
-                .map_err(|_| Error::CryptoMemUnlockFailed)
-        }
-    }
-}
-
 /// Hash arbitrary data using blake2b
-pub fn hash(data: &[u8]) -> Result<generichash::Digest> {
-    let mut state = generichash::State::new(generichash::DIGEST_MAX, None)
-        .map_err(|_| Error::CryptoHashStateInitError)?;
-    state.update(data)
-        .map_err(|_| Error::CryptoHashStateUpdateError)?;
-    state.finalize()
-        .map_err(|_| Error::CryptoHashStateDigestError)
+pub fn hash(data: &[u8]) -> Result<Vec<u8>> {
+    let mut hasher = blake2::Blake2b512::new();
+    hasher.update(data);
+    let genarr = hasher.finalize();
+    Ok(Vec::from(genarr.as_slice()))
 }
 
 /// A library-local representation of a time. I can hear you groaning already:

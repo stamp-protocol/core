@@ -299,11 +299,11 @@ mod tests {
 
     #[test]
     fn private_seal_open() {
-        let key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let key = SecretKey::new_xchacha20poly1305().unwrap();
         let sealed: Private<String> = Private::seal(&key, &String::from("get a job")).unwrap();
         let opened: String = sealed.open(&key).unwrap();
         assert_eq!(&opened, "get a job");
-        let key2 = SecretKey::new_xsalsa20poly1305().unwrap();
+        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(key != key2);
         let res: Result<String> = sealed.open(&key2);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
@@ -311,8 +311,8 @@ mod tests {
 
     #[test]
     fn private_reencrypt() {
-        let key1 = SecretKey::new_xsalsa20poly1305().unwrap();
-        let key2 = SecretKey::new_xsalsa20poly1305().unwrap();
+        let key1 = SecretKey::new_xchacha20poly1305().unwrap();
+        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
         let sealed: Private<String> = Private::seal(&key1, &String::from("get a job")).unwrap();
         let sealed2 = sealed.reencrypt(&key1, &key2).unwrap();
         let opened: String = sealed2.open(&key2).unwrap();
@@ -323,11 +323,11 @@ mod tests {
 
     #[test]
     fn private_verifiable_seal_open() {
-        let key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let key = SecretKey::new_xchacha20poly1305().unwrap();
         let (hmac, sealed) = PrivateVerifiable::<String>::seal(&key, &String::from("get a job")).unwrap();
         let opened: String = sealed.open_and_verify(&key, &hmac).unwrap();
         assert_eq!(&opened, "get a job");
-        let key2 = SecretKey::new_xsalsa20poly1305().unwrap();
+        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(key != key2);
         let res: Result<String> = sealed.open_and_verify(&key2, &hmac);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
@@ -339,8 +339,8 @@ mod tests {
 
     #[test]
     fn private_verifiable_reencrypt() {
-        let key1 = SecretKey::new_xsalsa20poly1305().unwrap();
-        let key2 = SecretKey::new_xsalsa20poly1305().unwrap();
+        let key1 = SecretKey::new_xchacha20poly1305().unwrap();
+        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
         let (hmac, sealed) = PrivateVerifiable::<String>::seal(&key1, &String::from("get a job")).unwrap();
         let sealed2 = sealed.reencrypt(&key1, &key2).unwrap();
         let opened: String = sealed2.open_and_verify(&key2, &hmac).unwrap();
@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn maybe_private_has_private() {
-        let seal_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = maybe2.strip_private();
@@ -363,10 +363,10 @@ mod tests {
 
     #[test]
     fn maybe_private_seal_open_verify_has_data() {
-        let seal_key = SecretKey::new_xsalsa20poly1305().unwrap();
-        let mut fake_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
-        while seal_key == fake_key { fake_key = SecretKey::new_xsalsa20poly1305().unwrap(); }
+        while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305().unwrap(); }
         let fake_hmac_key = HmacKey::new_sha512().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
@@ -395,10 +395,10 @@ mod tests {
 
     #[test]
     fn maybe_private_open_public() {
-        let seal_key = SecretKey::new_xsalsa20poly1305().unwrap();
-        let mut fake_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
-        while seal_key == fake_key { fake_key = SecretKey::new_xsalsa20poly1305().unwrap(); }
+        while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305().unwrap(); }
         let fake_hmac_key = HmacKey::new_sha512().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
@@ -412,8 +412,8 @@ mod tests {
 
     #[test]
     fn maybe_private_into_public() {
-        let seal_key = SecretKey::new_xsalsa20poly1305().unwrap();
-        let fake_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(seal_key != fake_key);
         let fake_hmac_key = HmacKey::new_sha512().unwrap();
 
@@ -433,8 +433,8 @@ mod tests {
 
     #[test]
     fn maybe_private_reencrypt_hmac() {
-        let seal_key = SecretKey::new_xsalsa20poly1305().unwrap();
-        let seal_key2 = SecretKey::new_xsalsa20poly1305().unwrap();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let seal_key2 = SecretKey::new_xchacha20poly1305().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn maybe_private_strip() {
-        let seal_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
         let maybe: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
         assert!(maybe.has_data());
         let maybe2 = maybe.strip_private();

@@ -12,8 +12,8 @@ pub enum Error {
     #[error("incorrect data length")]
     BadLength,
 
-    /// Trying to use an xsalsa20poly1305 (or other) nonce with a
-    /// NON-xsalsa20poly1305 algo, or vice versa, etc.
+    /// Trying to use an xchacha20poly1305 (or other) nonce with a
+    /// NON-xchacha20poly1305 algo, or vice versa, etc.
     #[error("cryptographic algorithm mismatch")]
     CryptoAlgoMismatch,
 

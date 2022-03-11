@@ -125,7 +125,7 @@ mod tests {
 
     fn get_transactions() -> (SecretKey, Transactions) {
         let now = Timestamp::now();
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -188,7 +188,7 @@ mod tests {
             mod_trans!( published, trans, inner, {
                 let body = match inner.entry().body().clone() {
                     TransactionBody::CreateIdentityV1(alpha, policy, publish, root) => {
-                        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+                        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
                         let new_alpha = AlphaKeypair::new_ed25519(&master_key).unwrap();
                         assert!(new_alpha != alpha);
                         TransactionBody::CreateIdentityV1(new_alpha, policy, publish, root)
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn published_serde() {
-        let master_key = SecretKey::new_xsalsa20poly1305().unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let now = Timestamp::from_str("1977-06-07T04:32:06Z").unwrap();
         let seeds = [
             &[33, 90, 159, 88, 22, 24, 84, 4, 237, 121, 198, 195, 71, 238, 107, 91, 235, 93, 9, 129, 252, 221, 2, 149, 250, 142, 49, 36, 161, 184, 44, 156],
