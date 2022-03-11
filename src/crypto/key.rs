@@ -575,6 +575,11 @@ impl HmacKey {
         OsRng.fill_bytes(&mut randbuf);
         Ok(Self::HmacSha512(Vec::from(randbuf)))
     }
+
+    /// Create a new sha512 HMAC key from a byte array
+    pub fn new_sha512_from_bytes(keybytes: &[u8; 32]) -> Self {
+        Self::HmacSha512(Vec::from(&keybytes[..]))
+    }
 }
 
 /// An HMAC hash
@@ -838,6 +843,19 @@ pub(crate) mod tests {
         let salt = util::hash(id.as_ref()).unwrap();
         let master_key = derive_master_key("ZONING IS COMMUNISM".as_bytes(), &salt.as_ref(), KDF_OPS_INTERACTIVE, KDF_MEM_INTERACTIVE).unwrap();
         assert_eq!(master_key.as_ref(), &[148, 34, 57, 50, 168, 111, 176, 114, 120, 168, 159, 158, 96, 119, 14, 194, 52, 224, 58, 194, 77, 44, 168, 25, 54, 138, 172, 91, 164, 86, 190, 89]);
+    }
+
+    #[test]
+    fn hmac_result() {
+        let data = String::from("PARDON ME GOOD SIR DO YOU HAVE ANY goats FOR SALE!!!!!!?");
+        let hmac_key = HmacKey::new_sha512_from_bytes(&[
+            0, 1, 2, 3, 4, 5, 6, 7,
+            1, 2, 3, 4, 5, 6, 7, 8,
+            2, 3, 4, 5, 6, 7, 8, 9,
+            3, 4, 5, 6, 7, 8, 9, 9,
+        ]);
+        let hmac = Hmac::new_sha512(&hmac_key, data.as_bytes()).unwrap();
+        assert_eq!(hmac, Hmac::HmacSha512(vec![156, 55, 129, 245, 223, 131, 164, 169, 16, 253, 155, 213, 86, 246, 186, 151, 64, 222, 116, 203, 60, 141, 238, 58, 243, 10, 108, 239, 195, 253, 44, 24, 162, 111, 160, 243, 22, 144, 143, 251, 26, 48, 68, 19, 157, 53, 120, 83, 58, 193, 183, 100, 30, 220, 65, 80, 32, 47, 141, 1, 48, 195, 198, 0]));
     }
 
     #[test]
