@@ -83,7 +83,7 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> Private<T> {
 ///
 /// This is a somewhat ephemeral container, mainly used for encryption and
 /// decryption and then thrown away.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct PrivateVerifiableInner<T> {
     /// The value we're storing.
     value: T,

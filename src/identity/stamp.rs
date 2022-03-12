@@ -242,7 +242,7 @@ impl Public for Stamp {
 ///
 /// In the case of public claims, a simple "hey, can you stamp claim X" would
 /// suffice because the data is public.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct StampRequest {
     /// The claim we wish to have stamped

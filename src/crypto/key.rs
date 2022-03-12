@@ -1,4 +1,4 @@
-//! The key model wraps a set of algorithms for encryption and decryption (both
+//! The key model wraps a set of algorithms for encryption and decryption (both.expose_secret()
 //! symmetric and asymmetric) as well as cryptographic signing of data.
 //!
 //! The idea here is that specific algorithms are wrapped in descriptive
@@ -21,7 +21,8 @@ use crate::{
         ser::{
             self,
             TryFromSlice,
-            AsBytes32, FromBytes32, Bytes32,
+            AsByteSlice, FromByteSlice,
+            AsByteArray32, FromByteArray32,
         },
         sign::Signable,
     },
@@ -36,6 +37,7 @@ use hmac::{
 };
 use rand::{RngCore, rngs::OsRng};
 use rand_chacha::rand_core::SeedableRng;
+use secrecy::{DebugSecret, ExposeSecret, Secret, SerializableSecret, Zeroize};
 use serde_derive::{Serialize, Deserialize};
 use std::convert::{TryInto, TryFrom};
 use std::ops::Deref;
@@ -55,21 +57,54 @@ pub const KDF_OPS_SENSITIVE: u32 = 4;
 /// A constant that provides a default for mem difficulty for sensitive key derivation
 pub const KDF_MEM_SENSITIVE: u32 = 1048576;
 
-impl_try_from_slice!(ed25519_dalek::PublicKey, slice, Self::from_bytes(slice).map_err(|_| ()));
-impl_try_from_slice!(ed25519_dalek::Signature, slice, Self::try_from(slice).map_err(|_| ()));
+macro_rules! standard_secret_impl {
+    ($ty:ident, $name:expr, $ser_trait:ident) => {
+        impl<T> Zeroize for $ty<T>
+            where T: Zeroize,
+        {
+            fn zeroize(&mut self) {
+                self.0.zeroize();
+            }
+        }
+        impl<T> SerializableSecret for $ty<T> where T: $ser_trait + serde::Serialize {}
+        impl<T> ExposeSecret<T> for $ty<T> {
+            fn expose_secret(&self) -> &T {
+                &self.0
+            }
+        }
+        impl<T> DebugSecret for $ty<T> {
+            fn debug_secret(f: &mut core::fmt::Formatter) -> core::result::Result<(), core::fmt::Error> {
+                f.write_str($name)
+            }
+        }
+    }
+}
 
-impl AsBytes32 for crypto_box::PublicKey {
-    fn as_bytes(&self) -> &[u8; 32] { self.as_bytes() }
+define_base64_type! { SecretKeyWrapper, Vec<u8>, AsByteSlice, FromByteSlice }
+define_base64_type! { SignKeyPrivateWrapper, [u8; 32], AsByteArray32, FromByteArray32 }
+define_base64_type! { CryptoKeyPrivateWrapper, [u8; 32], AsByteArray32, FromByteArray32 }
+define_base64_type! { HmacKeyWrapper, Vec<u8>, AsByteSlice, FromByteSlice }
+
+standard_secret_impl! { SecretKeyWrapper, "<SecretKey>", AsByteSlice }
+standard_secret_impl! { SignKeyPrivateWrapper, "<SignKeypairPrivate>", AsByteArray32 }
+standard_secret_impl! { CryptoKeyPrivateWrapper, "<CryptoKeypairPrivate>", AsByteArray32 }
+standard_secret_impl! { HmacKeyWrapper, "<HmacKey>", AsByteSlice }
+
+impl_try_from_slice! { ed25519_dalek::PublicKey, slice, Self::from_bytes(slice).map_err(|_| ()) }
+impl_try_from_slice! { ed25519_dalek::Signature, slice, Self::try_from(slice).map_err(|_| ()) }
+
+impl AsByteArray32 for crypto_box::PublicKey {
+    fn to_ser(&self) -> &[u8; 32] { self.as_bytes() }
 }
-impl FromBytes32 for crypto_box::PublicKey {
-    fn from_bytes(bytes: [u8; 32]) -> Self { Self::from(bytes) }
+impl FromByteArray32 for crypto_box::PublicKey {
+    fn from_des(bytes: [u8; 32]) -> Self { Self::from(bytes) }
 }
 
-impl AsBytes32 for crypto_box::SecretKey {
-    fn as_bytes(&self) -> &[u8; 32] { self.as_bytes() }
+impl AsByteArray32 for crypto_box::SecretKey {
+    fn to_ser(&self) -> &[u8; 32] { self.as_bytes() }
 }
-impl FromBytes32 for crypto_box::SecretKey {
-    fn from_bytes(bytes: [u8; 32]) -> Self { Self::from(bytes) }
+impl FromByteArray32 for crypto_box::SecretKey {
+    fn from_des(bytes: [u8; 32]) -> Self { Self::from(bytes) }
 }
 
 /// A value that lets us reference asymmetric keypairs by their public key.
@@ -121,10 +156,9 @@ pub enum SecretKeyNonce {
 }
 
 /// A symmetric encryption key
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum SecretKey {
-    #[serde(with = "crate::util::ser::human_bytes")]
-    XChaCha20Poly1305(Vec<u8>),
+    XChaCha20Poly1305(Secret<SecretKeyWrapper<Vec<u8>>>),
 }
 
 impl SecretKey {
@@ -132,12 +166,12 @@ impl SecretKey {
     pub fn new_xchacha20poly1305() -> Result<Self> {
         let mut randbuf = [0u8; 32];
         OsRng.fill_bytes(&mut randbuf);
-        Ok(Self::XChaCha20Poly1305(Vec::from(&randbuf[..])))
+        Ok(Self::XChaCha20Poly1305(Secret::new(SecretKeyWrapper(Vec::from(&randbuf[..])))))
     }
 
     /// Try to create a SecretKey from a byte slice
     pub fn new_xchacha20poly1305_from_slice(bytes: &[u8]) -> Result<Self> {
-        Ok(Self::XChaCha20Poly1305(Vec::from(bytes)))
+        Ok(Self::XChaCha20Poly1305(Secret::new(SecretKeyWrapper(Vec::from(bytes)))))
     }
 
     /// Create a nonce for use with this secret key
@@ -155,7 +189,7 @@ impl SecretKey {
     pub fn seal(&self, data: &[u8], nonce: &SecretKeyNonce) -> Result<Vec<u8>> {
         match (self, nonce) {
             (SecretKey::XChaCha20Poly1305(ref key), SecretKeyNonce::XChaCha20Poly1305(ref nonce)) => {
-                let cipher = chacha20poly1305::XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(key.as_slice().clone()));
+                let cipher = chacha20poly1305::XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(key.expose_secret().as_slice().clone()));
                 let enc = cipher.encrypt(chacha20poly1305::XNonce::from_slice(nonce.as_slice()), data).map_err(|_| Error::CryptoSealFailed)?;
                 Ok(enc)
             }
@@ -166,7 +200,7 @@ impl SecretKey {
     pub fn open(&self, data: &[u8], nonce: &SecretKeyNonce) -> Result<Vec<u8>> {
         match (self, nonce) {
             (SecretKey::XChaCha20Poly1305(ref key), SecretKeyNonce::XChaCha20Poly1305(ref nonce)) => {
-                let cipher = chacha20poly1305::XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(key.as_slice().clone()));
+                let cipher = chacha20poly1305::XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(key.expose_secret().as_slice().clone()));
                 let dec = cipher.decrypt(chacha20poly1305::XNonce::from_slice(nonce.as_slice()), data).map_err(|_| Error::CryptoOpenFailed)?;
                 Ok(dec)
             }
@@ -176,7 +210,18 @@ impl SecretKey {
     /// Get the raw bytes for this key
     pub fn as_ref(&self) -> &[u8] {
         match self {
-            SecretKey::XChaCha20Poly1305(ref key) => key.as_ref(),
+            SecretKey::XChaCha20Poly1305(ref key) => key.expose_secret().as_ref(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl PartialEq for SecretKey {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (SecretKey::XChaCha20Poly1305(inner1), SecretKey::XChaCha20Poly1305(inner2)) => {
+                inner1.expose_secret() == inner2.expose_secret()
+            }
         }
     }
 }
@@ -216,8 +261,9 @@ impl AsRef<[u8]> for SignKeypairSignature {
 pub enum SignKeypair {
     /// Ed25519 signing keypair
     Ed25519(
-        #[serde(with = "crate::util::ser::human_binary_from_slice")] ed25519_dalek::PublicKey,
-        Option<Private<ed25519_dalek::SecretKey>>,
+        #[serde(with = "crate::util::ser::human_binary_from_slice")]
+        ed25519_dalek::PublicKey,
+        Option<Private<Secret<SignKeyPrivateWrapper<[u8; 32]>>>>,
     ),
 }
 
@@ -239,14 +285,14 @@ impl SignKeypair {
         let secret = ed25519_dalek::SecretKey::from_bytes(&randbuf[..])
             .map_err(|_| Error::KeygenFailed)?;
         let public: ed25519_dalek::PublicKey = (&secret).into();
-        Ok(Self::Ed25519(public, Some(Private::seal(master_key, &secret)?)))
+        Ok(Self::Ed25519(public, Some(Private::seal(master_key, &Secret::new(SignKeyPrivateWrapper(secret.to_bytes())))?)))
     }
 
     /// Create a new ed25519 keypair
     pub fn new_ed25519_from_seed(master_key: &SecretKey, seed_bytes: &[u8; 32]) -> Result<Self> {
         let mut rng = rand_chacha::ChaCha20Rng::from_seed(*seed_bytes);
         let pair = ed25519_dalek::Keypair::generate(&mut rng);
-        Ok(Self::Ed25519(pair.public, Some(Private::seal(master_key, &pair.secret)?)))
+        Ok(Self::Ed25519(pair.public, Some(Private::seal(master_key, &Secret::new(SignKeyPrivateWrapper(pair.secret.to_bytes())))?)))
     }
 
     /// Sign a value with our secret signing key.
@@ -256,7 +302,8 @@ impl SignKeypair {
         match self {
             Self::Ed25519(_, ref sec_locked_opt) => {
                 let sec_locked = sec_locked_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let seckey = sec_locked.open(master_key)?;
+                let seckey = ed25519_dalek::SecretKey::from_bytes(sec_locked.open(master_key)?.expose_secret().as_ref())
+                    .map_err(|_| Error::CryptoSignatureFailed)?;
                 let pubkey: ed25519_dalek::PublicKey = (&seckey).into();
                 let keypair = ed25519_dalek::Keypair { public: pubkey, secret: seckey };
                 Ok(SignKeypairSignature::Ed25519(keypair.sign(data)))
@@ -388,7 +435,7 @@ pub enum CryptoKeypair {
     Curve25519XChaCha20Poly1305(
         #[serde(with = "crate::util::ser::human_bytes32")]
         crypto_box::PublicKey,
-        Option<Private<Bytes32<crypto_box::SecretKey>>>
+        Option<Private<Secret<CryptoKeyPrivateWrapper<[u8; 32]>>>>,
     ),
 }
 
@@ -408,7 +455,7 @@ impl CryptoKeypair {
         let mut rng = OsRng {};
         let secret = crypto_box::SecretKey::generate(&mut rng);
         let public = secret.public_key();
-        Ok(Self::Curve25519XChaCha20Poly1305(public, Some(Private::seal(master_key, &Bytes32(secret))?)))
+        Ok(Self::Curve25519XChaCha20Poly1305(public, Some(Private::seal(master_key, &Secret::new(CryptoKeyPrivateWrapper(secret.as_bytes().clone())))?)))
     }
 
     /// Anonymously encrypt a message using the recipient's public key.
@@ -441,7 +488,7 @@ impl CryptoKeypair {
         match self {
             Self::Curve25519XChaCha20Poly1305(ref pubkey, ref seckey_opt) => {
                 let seckey_sealed = seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let seckey = seckey_sealed.open(master_key)?;
+                let seckey = crypto_box::SecretKey::from(seckey_sealed.open(master_key)?.expose_secret().deref().clone());
                 let ephemeral_pubkey_slice = &data[0..32];
                 let ephemeral_pubkey_arr: [u8; 32] = ephemeral_pubkey_slice.try_into()
                     .map_err(|_| Error::CryptoOpenFailed)?;
@@ -467,7 +514,7 @@ impl CryptoKeypair {
         match (sender_keypair, self) {
             (Self::Curve25519XChaCha20Poly1305(_, ref sender_seckey_opt), Self::Curve25519XChaCha20Poly1305(ref recipient_pubkey, _)) => {
                 let sender_seckey_sealed = sender_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let sender_seckey = sender_seckey_sealed.open(sender_master_key)?;
+                let sender_seckey = crypto_box::SecretKey::from(sender_seckey_sealed.open(sender_master_key)?.expose_secret().deref().clone());
                 let cardboard_box = crypto_box::ChaChaBox::new(recipient_pubkey, &sender_seckey);
                 let mut rng = OsRng {};
                 let nonce = crypto_box::generate_nonce(&mut rng);
@@ -486,7 +533,7 @@ impl CryptoKeypair {
         match (self, sender_keypair) {
             (Self::Curve25519XChaCha20Poly1305(_, ref recipient_seckey_opt), CryptoKeypair::Curve25519XChaCha20Poly1305(ref sender_pubkey, _)) => {
                 let recipient_seckey_sealed = recipient_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let recipient_seckey = recipient_seckey_sealed.open(recipient_master_key)?;
+                let recipient_seckey = crypto_box::SecretKey::from(recipient_seckey_sealed.open(recipient_master_key)?.expose_secret().deref().clone());
                 let nonce = match message.nonce() {
                     CryptoKeypairNonce::Curve25519XChaCha20Poly1305(vec) => {
                         GenericArray::from_slice(vec.as_slice())
@@ -534,7 +581,10 @@ impl Public for CryptoKeypair {
 /// An asymmetric signing public key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CryptoKeypairPublic {
-    Curve25519XChaCha20Poly1305(#[serde(with = "crate::util::ser::human_bytes32")] crypto_box::PublicKey),
+    Curve25519XChaCha20Poly1305(
+        #[serde(with = "crate::util::ser::human_bytes32")]
+        crypto_box::PublicKey
+    ),
 }
 
 impl CryptoKeypairPublic {
@@ -553,20 +603,9 @@ impl From<CryptoKeypair> for CryptoKeypairPublic {
 }
 
 /// A key for deriving an HMAC
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum HmacKey {
-    #[serde(with = "crate::util::ser::human_bytes")]
-    Sha512(Vec<u8>),
-}
-
-impl Deref for HmacKey {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            HmacKey::Sha512(bytes) => &bytes[..],
-        }
-    }
+    Sha512(Secret<HmacKeyWrapper<Vec<u8>>>),
 }
 
 impl HmacKey {
@@ -574,12 +613,12 @@ impl HmacKey {
     pub fn new_sha512() -> Result<Self> {
         let mut randbuf = [0u8; 32];
         OsRng.fill_bytes(&mut randbuf);
-        Ok(Self::Sha512(Vec::from(randbuf)))
+        Ok(Self::Sha512(Secret::new(HmacKeyWrapper(Vec::from(randbuf)))))
     }
 
     /// Create a new sha512 HMAC key from a byte array
     pub fn new_sha512_from_bytes(keybytes: &[u8; 32]) -> Self {
-        Self::Sha512(Vec::from(&keybytes[..]))
+        Self::Sha512(Secret::new(HmacKeyWrapper(Vec::from(&keybytes[..]))))
     }
 }
 
@@ -604,7 +643,7 @@ impl Hmac {
     pub fn new_sha512(hmac_key: &HmacKey, data: &[u8]) -> Result<Self> {
         match hmac_key {
             HmacKey::Sha512(hmac_key) => {
-                let mut mac = hmac::SimpleHmac::<sha2::Sha512>::new_from_slice(hmac_key.deref())
+                let mut mac = hmac::SimpleHmac::<sha2::Sha512>::new_from_slice(hmac_key.expose_secret().deref())
                     .map_err(|_| Error::CryptoBadKey)?;
                 mac.update(data);
                 let output = Vec::from(mac.finalize_fixed().as_slice());
@@ -617,7 +656,7 @@ impl Hmac {
     pub fn verify(&self, hmac_key: &HmacKey, data: &[u8]) -> Result<()> {
         match (self, hmac_key) {
             (Self::Sha512(hmac), HmacKey::Sha512(hmac_key)) => {
-                let mut mac_ver = hmac::SimpleHmac::<sha2::Sha512>::new_from_slice(hmac_key.deref())
+                let mut mac_ver = hmac::SimpleHmac::<sha2::Sha512>::new_from_slice(hmac_key.expose_secret().deref())
                     .map_err(|_| Error::CryptoBadKey)?;
                 mac_ver.update(data);
                 let ct_out = hmac::digest::CtOutput::new(GenericArray::from_slice(hmac.deref()).clone());
@@ -644,7 +683,7 @@ pub fn derive_master_key(passphrase: &[u8], salt_bytes: &[u8], ops: u32, mem: u3
     );
     argon2_ctx.hash_password_into(passphrase, salt, &mut key)
         .map_err(|_| Error::CryptoKDFFailed)?;
-    Ok(SecretKey::XChaCha20Poly1305(key))
+    Ok(SecretKey::XChaCha20Poly1305(Secret::new(SecretKeyWrapper(key))))
 }
 
 #[cfg(test)]
@@ -653,7 +692,7 @@ pub(crate) mod tests {
     use crate::util;
 
     pub(crate) fn secret_from_vec(bytes: Vec<u8>) -> SecretKey {
-        SecretKey::XChaCha20Poly1305(bytes)
+        SecretKey::XChaCha20Poly1305(Secret::new(SecretKeyWrapper(bytes)))
     }
 
     #[test]
