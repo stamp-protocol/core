@@ -15,7 +15,10 @@ use serde::{Serialize, de::DeserializeOwned};
 
 pub(crate) fn serialize<T: Serialize>(obj: &T) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
-    obj.serialize(&mut rmp_serde::Serializer::new(&mut buf).with_binary())?;
+    let mut ser = rmp_serde::Serializer::new(&mut buf)
+        .with_binary()
+        .with_struct_tuple();
+    obj.serialize(&mut ser)?;
     Ok(buf)
 }
 
