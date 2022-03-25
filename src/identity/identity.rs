@@ -17,11 +17,14 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser,
+        ser::{self, BinaryVec},
     },
 };
 use getset;
+use rand::{RngCore, rngs::OsRng};
+use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
+use std::convert::TryInto;
 use std::ops::Deref;
 
 object_id! {
@@ -36,19 +39,35 @@ object_id! {
 }
 
 /// A set of forward types.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum ForwardType {
     /// An email address
+    #[rasn(tag(explicit(0)))]
     Email(String),
     /// A social identity. This is two strings to represent type and handle/url.
-    Social(String, String),
+    #[rasn(tag(explicit(1)))]
+    Social {
+        #[rasn(tag(explicit(0)))]
+        ty: String,
+        #[rasn(tag(explicit(1)))]
+        handle: String,
+    },
     /// A PGP keypair ID or URL to a published public key
+    #[rasn(tag(explicit(2)))]
     PGP(String),
     /// A raw url.
+    #[rasn(tag(explicit(3)))]
     Url(String),
     /// An extension type, can be used to implement any kind of forward you can
     /// think of.
-    Extension(String, Vec<u8>),
+    #[rasn(tag(explicit(4)))]
+    Extension {
+        #[rasn(tag(explicit(0)))]
+        ty: String,
+        #[rasn(tag(explicit(1)))]
+        data: BinaryVec,
+    },
 }
 
 /// A pointer to somewhere else.
@@ -64,19 +83,22 @@ pub enum ForwardType {
 /// assertions you can make that don't require external verification. If people
 /// trust that this is *your* identity via the signed claims, then they can
 /// trust the forwards you assert and sign.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Forward {
     /// The identity-unique name of this forward. This lets us reference this
     /// object by name.
+    #[rasn(tag(explicit(0)))]
     name: String,
     /// The forward type we're creating.
+    #[rasn(tag(explicit(1)))]
     val: ForwardType,
     /// Whether or not this forward is a default. For instance, you could have
     /// ten emails listed, but only one used as the default. If multiple
     /// defaults are given for a particular forward type, then the one with the
     /// most recent `Signature::date_signed` date in the `SignedForward::sig`
     /// field should be used.
+    #[rasn(tag(explicit(2)))]
     is_default: bool,
 }
 
@@ -95,7 +117,7 @@ impl Forward {
 ///
 /// Each entry in this struct is signed by our root signing key. In the case
 /// that our identity is re-keyed, the entries in this struct must be re-signed.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct IdentityExtraData {
     /// An always-public nickname that can be used to look up this identity
@@ -123,8 +145,10 @@ pub struct IdentityExtraData {
     /// break. It's really meant as a quick way to allow people to find your
     /// identity, as opposed to a piece of static information used by other
     /// systems.
+    #[rasn(tag(explicit(0)))]
     nickname: Option<String>,
     /// A canonical list of places this identity forwards to.
+    #[rasn(tag(explicit(1)))]
     forwards: Vec<Forward>,
 }
 
@@ -139,22 +163,28 @@ impl IdentityExtraData {
 }
 
 /// An identity.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Identity {
     /// The unique identifier for this identity.
+    #[rasn(tag(explicit(0)))]
     id: IdentityID,
     /// When this identity came into being.
+    #[rasn(tag(explicit(1)))]
     created: Timestamp,
     /// Our identity recovery mechanism. This allows us to replace various
     /// keypairs in the event they're lost or compromised and we don't have or
     /// don't want to use our alpha key.
+    #[rasn(tag(explicit(2)))]
     recovery_policy: Option<RecoveryPolicy>,
     /// Holds the keys for our identity.
+    #[rasn(tag(explicit(3)))]
     keychain: Keychain,
     /// The claims this identity makes.
+    #[rasn(tag(explicit(4)))]
     claims: Vec<ClaimContainer>,
     /// Extra data that can be attached to our identity.
+    #[rasn(tag(explicit(5)))]
     extra_data: IdentityExtraData,
 }
 
@@ -193,7 +223,7 @@ impl Identity {
         let policy = self.recovery_policy().as_ref().ok_or(Error::IdentityMissingRecoveryPolicy)?;
         policy.validate_request(self.id(), &request)?;
         match request.entry().action() {
-            PolicyRequestAction::ReplaceKeys(policy, publish, root) => {
+            PolicyRequestAction::ReplaceKeys { policy, publish, root } => {
                 self.set_policy_key(policy.clone(), RevocationReason::Recovery)?
                     .set_publish_key(publish.clone(), RevocationReason::Recovery)?
                     .set_root_key(root.clone(), RevocationReason::Recovery)
@@ -449,7 +479,9 @@ impl Identity {
 
     /// Test if a master key is correct.
     pub fn test_master_key(&self, master_key: &SecretKey) -> Result<()> {
-        let test_bytes = sodiumoxide::randombytes::randombytes(32);
+        let mut randbuf = [0u8; 32];
+        OsRng.fill_bytes(&mut randbuf);
+        let test_bytes = Vec::from(&randbuf[..]);
         if self.keychain().alpha().has_private() {
             self.keychain().alpha().sign(master_key, test_bytes.as_slice())?;
         } else if self.keychain().policy().has_private() {
@@ -494,7 +526,7 @@ mod tests {
     use std::str::FromStr;
 
     fn gen_master_key() -> SecretKey {
-        SecretKey::new_xsalsa20poly1305()
+        SecretKey::new_xchacha20poly1305().unwrap()
     }
 
     fn create_identity() -> (SecretKey, Identity) {
@@ -546,7 +578,11 @@ mod tests {
         let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
-        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+        let action = PolicyRequestAction::ReplaceKeys {
+            policy: new_policy_keypair.clone(),
+            publish: new_publish_keypair.clone(),
+            root: new_root_keypair.clone(),
+        };
 
         let res = identity.create_recovery_request(&master_key, &new_policy_keypair, action.clone());
         // you can't triple-stamp a double-stamp
@@ -740,7 +776,10 @@ mod tests {
     fn identity_forward_add_delete() {
         let (_master_key, identity) = util::test::setup_identity_with_subkeys();
         assert_eq!(identity.extra_data().forwards().len(), 0);
-        let forward = ForwardType::Social("matrix".into(), "@jayjay-the-stinky-hippie:matrix.oorg".into());
+        let forward = ForwardType::Social {
+            ty: "matrix".into(),
+            handle: "@jayjay-the-stinky-hippie:matrix.oorg".into(),
+        };
 
         let identity = identity.add_forward("matrix", forward.clone(), true).unwrap();
         assert_eq!(identity.extra_data().forwards().len(), 1);
@@ -768,7 +807,10 @@ mod tests {
         assert_eq!(identity.emails(), vec!["poopy@butt.com".to_string()]);
         assert_eq!(identity.email_maybe(), Some("poopy@butt.com".to_string()));
 
-        let forward1 = ForwardType::Social("matrix".into(), "@jayjay-the-stinky-hippie:matrix.oorg".into());
+        let forward1 = ForwardType::Social {
+            ty: "matrix".into(),
+            handle: "@jayjay-the-stinky-hippie:matrix.oorg".into(),
+        };
         let forward2 = ForwardType::Email("dirk@delta.com".into());
         let forward3 = ForwardType::Email("jabjabjabjab@jabjabjabberjaw.com".into());
 
@@ -842,7 +884,7 @@ mod tests {
 
     #[test]
     fn identity_serialize() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let now = Timestamp::from_str("1977-06-07T04:32:06Z").unwrap();
         let seeds = [
             &[33, 90, 159, 88, 22, 24, 84, 4, 237, 121, 198, 195, 71, 238, 107, 91, 235, 93, 9, 129, 252, 221, 2, 149, 250, 142, 49, 36, 161, 184, 44, 156],
@@ -862,26 +904,26 @@ mod tests {
         let ser = identity.serialize().unwrap();
         assert_eq!(ser, r#"---
 id:
-  Ed25519: ed2mesdW8i5YsIfoGjsJnP0sleJAi9zEkIsE6CnnvFlGSIHm9huG33MozicdqfKAzTI9rz8fpwu3MZbS4hCWCw
+  Ed25519: fCIX7Z3EiXIanC2819hWhF3oNW9gg6ujZKW8D_Y1lfZJJODmkkjVJlOZKCtM6YMa_fSS4i6Witse0k2UlZ-GAQ
 created: "1977-06-07T04:32:06Z"
 recovery_policy: ~
 keychain:
   alpha:
     Ed25519:
-      - rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
-      - ~
+      public: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
+      secret: ~
   policy:
     Ed25519:
-      - _iO_wIyxzlWS0OvOKJYR67L80nQoNTCE_JYDcxs1lRk
-      - ~
+      public: s5YuvOaxr4y1qQBzZyJJ0SduYXf8toYfLa2izUgcT2I
+      secret: ~
   publish:
     Ed25519:
-      - PRtrFNJJpYsNNYIZEgspwxVtgLqrMx1-3nXuLnTtWlc
-      - ~
+      public: B1NXKqP26jGll8tT12CCLbGxo09Do2M-A6VvRJoW87M
+      secret: ~
   root:
     Ed25519:
-      - Yl7xQtHuYPpQQwBfppPROI0jYqetVxvChC2EofFrNhU
-      - ~
+      public: 75w-F9acRAKDCDdeAiOYTAz9BUoky98lO5rHNSeodQg
+      secret: ~
   subkeys: []
 claims: []
 extra_data:

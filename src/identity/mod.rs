@@ -125,7 +125,7 @@ mod tests {
 
     fn get_transactions() -> (SecretKey, Transactions) {
         let now = Timestamp::now();
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
@@ -187,14 +187,16 @@ mod tests {
 
             mod_trans!( published, trans, inner, {
                 let body = match inner.entry().body().clone() {
-                    TransactionBody::CreateIdentityV1(alpha, policy, publish, root) => {
-                        let master_key = SecretKey::new_xsalsa20poly1305();
+                    TransactionBody::CreateIdentityV1 { alpha, policy, publish, root } => {
+                        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
                         let new_alpha = AlphaKeypair::new_ed25519(&master_key).unwrap();
                         assert!(new_alpha != alpha);
-                        TransactionBody::CreateIdentityV1(new_alpha, policy, publish, root)
+                        TransactionBody::CreateIdentityV1 { alpha: new_alpha, policy, publish, root }
                     }
                     TransactionBody::Private => {
-                        TransactionBody::MakeClaimV1(ClaimSpec::Name(MaybePrivate::new_public(String::from("BAT MAN"))))
+                        TransactionBody::MakeClaimV1 {
+                            spec: ClaimSpec::Name(MaybePrivate::new_public(String::from("BAT MAN"))),
+                        }
                     }
                     _ => TransactionBody::Private,
                 };
@@ -206,7 +208,7 @@ mod tests {
 
     #[test]
     fn published_serde() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let now = Timestamp::from_str("1977-06-07T04:32:06Z").unwrap();
         let seeds = [
             &[33, 90, 159, 88, 22, 24, 84, 4, 237, 121, 198, 195, 71, 238, 107, 91, 235, 93, 9, 129, 252, 221, 2, 149, 250, 142, 49, 36, 161, 184, 44, 156],
@@ -230,57 +232,63 @@ mod tests {
         let ser = published.serialize().unwrap();
         assert_eq!(ser, r#"---
 publish_signature:
-  Ed25519: sa63FcjCTJvb9m04xuUJrzo63Jn7oNAkfcw1V-SIpoiufFNQzBp65oI9QWDdq7aKym97JFw7cQ9-pyOY1wyUAw
+  Ed25519: aV6hwrK42EaRJe9uV705q0wk4H79Bsw9X0i4mGEgDEL1tCYsO5xCR56baanG4PS8-Im-g0_Wx8XSOTBmuGM8AQ
 publish_date: "1977-06-07T04:32:06Z"
 identity:
   transactions:
     - V1:
         id:
           Alpha:
-            Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+            Ed25519: eQ5eek-FGJrTdUh_ceurqfGA9C6zth8hKOICmj1Jnsd5hrtKz8_NirwDMDh2bWkcxqaeT0e2CiAb8zqoEDkjBg
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions: []
           body:
             CreateIdentityV1:
-              - Ed25519:
-                  - rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
-                  - ~
-              - Ed25519:
-                  - _iO_wIyxzlWS0OvOKJYR67L80nQoNTCE_JYDcxs1lRk
-                  - ~
-              - Ed25519:
-                  - PRtrFNJJpYsNNYIZEgspwxVtgLqrMx1-3nXuLnTtWlc
-                  - ~
-              - Ed25519:
-                  - Yl7xQtHuYPpQQwBfppPROI0jYqetVxvChC2EofFrNhU
-                  - ~
+              alpha:
+                Ed25519:
+                  public: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
+                  secret: ~
+              policy:
+                Ed25519:
+                  public: s5YuvOaxr4y1qQBzZyJJ0SduYXf8toYfLa2izUgcT2I
+                  secret: ~
+              publish:
+                Ed25519:
+                  public: B1NXKqP26jGll8tT12CCLbGxo09Do2M-A6VvRJoW87M
+                  secret: ~
+              root:
+                Ed25519:
+                  public: 75w-F9acRAKDCDdeAiOYTAz9BUoky98lO5rHNSeodQg
+                  secret: ~
     - V1:
         id:
           Root:
-            Ed25519: 6MrVBIEVXNRxnLAQZIuY41I9g5ximL0FkyNqh7AI5uRHgRtabThEyuQA9N5A4_6jKg9ClDr9Yb1YWbfzz_K1Dg
+            Ed25519: OZ33QK8puJeHsMKP1Ag_4ai3s01_v6Z7FADVqCs5UnoeBAWWT4E9ZuuY7Oma2ZnKhw3QM2qLcr8PYXVTsOEPBA
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions:
             - Alpha:
-                Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+                Ed25519: eQ5eek-FGJrTdUh_ceurqfGA9C6zth8hKOICmj1Jnsd5hrtKz8_NirwDMDh2bWkcxqaeT0e2CiAb8zqoEDkjBg
           body:
             MakeClaimV1:
-              Identity:
-                Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+              spec:
+                Identity:
+                  Ed25519: eQ5eek-FGJrTdUh_ceurqfGA9C6zth8hKOICmj1Jnsd5hrtKz8_NirwDMDh2bWkcxqaeT0e2CiAb8zqoEDkjBg
     - V1:
         id:
           Root:
-            Ed25519: k1pFH_SBskA4aj-AFgDB1oKZFsyHch2W3Lrqw5nO-A4gV7XOVp4_uyYztMpkF-P1NzuhJyNotAgCkfei8FflAA
+            Ed25519: sgBVjMhJK89W4e8ZxUvVU9XIy0O9dsPOv9TdHv2nuy0Mds0AoFnJMxB2ASZ0EY30wy3DOFHL55BdPaFhOrJPAA
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions:
             - Root:
-                Ed25519: 6MrVBIEVXNRxnLAQZIuY41I9g5ximL0FkyNqh7AI5uRHgRtabThEyuQA9N5A4_6jKg9ClDr9Yb1YWbfzz_K1Dg
+                Ed25519: OZ33QK8puJeHsMKP1Ag_4ai3s01_v6Z7FADVqCs5UnoeBAWWT4E9ZuuY7Oma2ZnKhw3QM2qLcr8PYXVTsOEPBA
           body:
             MakeClaimV1:
-              Name:
-                Public: Von Jonie Himself"#);
+              spec:
+                Name:
+                  Public: Von Jonie Himself"#);
         let published_des = PublishedIdentity::deserialize(ser.as_bytes()).unwrap();
         let identity_des = published_des.identity().build_identity().unwrap();
         assert_eq!(identity.claims().len(), 2);
@@ -296,57 +304,63 @@ identity:
         // we can even access the publish key to check the publish sig.
         let modified_claim = r#"---
 publish_signature:
-  Ed25519: sa63FcjCTJvb9m04xuUJrzo63Jn7oNAkfcw1V-SIpoiufFNQzBp65oI9QWDdq7aKym97JFw7cQ9-pyOY1wyUAw
+  Ed25519: aV6hwrK42EaRJe9uV705q0wk4H79Bsw9X0i4mGEgDEL1tCYsO5xCR56baanG4PS8-Im-g0_Wx8XSOTBmuGM8AQ
 publish_date: "1977-06-07T04:32:06Z"
 identity:
   transactions:
     - V1:
         id:
           Alpha:
-            Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+            Ed25519: eQ5eek-FGJrTdUh_ceurqfGA9C6zth8hKOICmj1Jnsd5hrtKz8_NirwDMDh2bWkcxqaeT0e2CiAb8zqoEDkjBg
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions: []
           body:
             CreateIdentityV1:
-              - Ed25519:
-                  - rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
-                  - ~
-              - Ed25519:
-                  - _iO_wIyxzlWS0OvOKJYR67L80nQoNTCE_JYDcxs1lRk
-                  - ~
-              - Ed25519:
-                  - PRtrFNJJpYsNNYIZEgspwxVtgLqrMx1-3nXuLnTtWlc
-                  - ~
-              - Ed25519:
-                  - Yl7xQtHuYPpQQwBfppPROI0jYqetVxvChC2EofFrNhU
-                  - ~
+              alpha:
+                Ed25519:
+                  public: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
+                  secret: ~
+              policy:
+                Ed25519:
+                  public: s5YuvOaxr4y1qQBzZyJJ0SduYXf8toYfLa2izUgcT2I
+                  secret: ~
+              publish:
+                Ed25519:
+                  public: B1NXKqP26jGll8tT12CCLbGxo09Do2M-A6VvRJoW87M
+                  secret: ~
+              root:
+                Ed25519:
+                  public: 75w-F9acRAKDCDdeAiOYTAz9BUoky98lO5rHNSeodQg
+                  secret: ~
     - V1:
         id:
           Root:
-            Ed25519: 6MrVBIEVXNRxnLAQZIuY41I9g5ximL0FkyNqh7AI5uRHgRtabThEyuQA9N5A4_6jKg9ClDr9Yb1YWbfzz_K1Dg
+            Ed25519: OZ33QK8puJeHsMKP1Ag_4ai3s01_v6Z7FADVqCs5UnoeBAWWT4E9ZuuY7Oma2ZnKhw3QM2qLcr8PYXVTsOEPBA
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions:
             - Alpha:
-                Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+                Ed25519: eQ5eek-FGJrTdUh_ceurqfGA9C6zth8hKOICmj1Jnsd5hrtKz8_NirwDMDh2bWkcxqaeT0e2CiAb8zqoEDkjBg
           body:
             MakeClaimV1:
-              Identity:
-                Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+              spec:
+                Identity:
+                  Ed25519: eQ5eek-FGJrTdUh_ceurqfGA9C6zth8hKOICmj1Jnsd5hrtKz8_NirwDMDh2bWkcxqaeT0e2CiAb8zqoEDkjBg
     - V1:
         id:
           Root:
-            Ed25519: k1pFH_SBskA4aj-AFgDB1oKZFsyHch2W3Lrqw5nO-A4gV7XOVp4_uyYztMpkF-P1NzuhJyNotAgCkfei8FflAA
+            Ed25519: sgBVjMhJK89W4e8ZxUvVU9XIy0O9dsPOv9TdHv2nuy0Mds0AoFnJMxB2ASZ0EY30wy3DOFHL55BdPaFhOrJPAA
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions:
             - Root:
-                Ed25519: 6MrVBIEVXNRxnLAQZIuY41I9g5ximL0FkyNqh7AI5uRHgRtabThEyuQA9N5A4_6jKg9ClDr9Yb1YWbfzz_K1Dg
+                Ed25519: OZ33QK8puJeHsMKP1Ag_4ai3s01_v6Z7FADVqCs5UnoeBAWWT4E9ZuuY7Oma2ZnKhw3QM2qLcr8PYXVTsOEPBA
           body:
             MakeClaimV1:
-              Name:
-                Public: Mr. Bovine Jonie"#;
+              spec:
+                Name:
+                  Public: Mr. Bovine Jonie"#;
 
         let res = PublishedIdentity::deserialize(modified_claim.as_bytes());
         assert_eq!(res.err(), Some(Error::CryptoSignatureVerificationFailed));
@@ -355,44 +369,49 @@ identity:
         // validation, but fail the publish signature check
         let modified_chain = r#"---
 publish_signature:
-  Ed25519: sa63FcjCTJvb9m04xuUJrzo63Jn7oNAkfcw1V-SIpoiufFNQzBp65oI9QWDdq7aKym97JFw7cQ9-pyOY1wyUAw
+  Ed25519: aV6hwrK42EaRJe9uV705q0wk4H79Bsw9X0i4mGEgDEL1tCYsO5xCR56baanG4PS8-Im-g0_Wx8XSOTBmuGM8AQ
 publish_date: "1977-06-07T04:32:06Z"
 identity:
   transactions:
     - V1:
         id:
           Alpha:
-            Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+            Ed25519: eQ5eek-FGJrTdUh_ceurqfGA9C6zth8hKOICmj1Jnsd5hrtKz8_NirwDMDh2bWkcxqaeT0e2CiAb8zqoEDkjBg
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions: []
           body:
             CreateIdentityV1:
-              - Ed25519:
-                  - rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
-                  - ~
-              - Ed25519:
-                  - _iO_wIyxzlWS0OvOKJYR67L80nQoNTCE_JYDcxs1lRk
-                  - ~
-              - Ed25519:
-                  - PRtrFNJJpYsNNYIZEgspwxVtgLqrMx1-3nXuLnTtWlc
-                  - ~
-              - Ed25519:
-                  - Yl7xQtHuYPpQQwBfppPROI0jYqetVxvChC2EofFrNhU
-                  - ~
+              alpha:
+                Ed25519:
+                  public: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
+                  secret: ~
+              policy:
+                Ed25519:
+                  public: s5YuvOaxr4y1qQBzZyJJ0SduYXf8toYfLa2izUgcT2I
+                  secret: ~
+              publish:
+                Ed25519:
+                  public: B1NXKqP26jGll8tT12CCLbGxo09Do2M-A6VvRJoW87M
+                  secret: ~
+              root:
+                Ed25519:
+                  public: 75w-F9acRAKDCDdeAiOYTAz9BUoky98lO5rHNSeodQg
+                  secret: ~
     - V1:
         id:
           Root:
-            Ed25519: 6MrVBIEVXNRxnLAQZIuY41I9g5ximL0FkyNqh7AI5uRHgRtabThEyuQA9N5A4_6jKg9ClDr9Yb1YWbfzz_K1Dg
+            Ed25519: OZ33QK8puJeHsMKP1Ag_4ai3s01_v6Z7FADVqCs5UnoeBAWWT4E9ZuuY7Oma2ZnKhw3QM2qLcr8PYXVTsOEPBA
         entry:
           created: "1977-06-07T04:32:06Z"
           previous_transactions:
             - Alpha:
-                Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw
+                Ed25519: eQ5eek-FGJrTdUh_ceurqfGA9C6zth8hKOICmj1Jnsd5hrtKz8_NirwDMDh2bWkcxqaeT0e2CiAb8zqoEDkjBg
           body:
             MakeClaimV1:
-              Identity:
-                Ed25519: gtFQEM2do4bIW0gkre1qahPsQZgny9rM1j9nWHuSWc0Ay492K8ydRljKCrCB-_G7aCsxMAMiBhuz9lyWwok5Aw"#;
+              spec:
+                Identity:
+                  Ed25519: eQ5eek-FGJrTdUh_ceurqfGA9C6zth8hKOICmj1Jnsd5hrtKz8_NirwDMDh2bWkcxqaeT0e2CiAb8zqoEDkjBg"#;
         let res = PublishedIdentity::deserialize(modified_chain.as_bytes());
         assert_eq!(res.err(), Some(Error::CryptoSignatureVerificationFailed));
     }

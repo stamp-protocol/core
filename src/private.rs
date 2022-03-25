@@ -13,13 +13,14 @@
 use crate::{
     error::{Error, Result},
     crypto::key::{SecretKey, SecretKeyNonce, Hmac, HmacKey},
-    util::{Public, ser},
+    util::{Public, ser::{self, BinaryVec}},
 };
+use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag, types::Class};
 use serde_derive::{Serialize, Deserialize};
 use std::marker::PhantomData;
 
 /// Holds private data, which can only be opened if you have the special key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, AsnType, Serialize, Deserialize)]
 pub struct Private<T> {
     /// Allows us to cast this container to T without this container ever
     /// actually storing any T value (because it's encrypted).
@@ -27,22 +28,51 @@ pub struct Private<T> {
     _phantom: PhantomData<T>,
     /// The encrypted data stored in this container, created using a
     /// `PrivateVerifiableInner` struct (the actual data alongside an HMAC key).
-    #[serde(with = "crate::util::ser::human_bytes")]
-    sealed: Vec<u8>,
+    sealed: BinaryVec,
     /// A nonce used to decrypt our heroic data (given the correct secret key).
     nonce: SecretKeyNonce,
 }
 
-impl<T: serde::Serialize + serde::de::DeserializeOwned> Private<T> {
+impl<T> Encode for Private<T> {
+    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, tag: Tag) -> std::result::Result<(), E::Error> {
+        encoder.encode_sequence(tag, |encoder| {
+            self.sealed.encode_with_tag(encoder, Tag::new(Class::Context, 0))?;
+            self.nonce.encode_with_tag(encoder, Tag::new(Class::Context, 1))?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+}
+
+impl<T> Decode for Private<T> {
+    fn decode_with_tag<D: Decoder>(decoder: &mut D, tag: Tag) -> std::result::Result<Self, D::Error> {
+        decoder.decode_sequence(tag, |decoder| {
+            let sealed = BinaryVec::decode_with_tag(decoder, Tag::new(Class::Context, 0))?;
+            let nonce = SecretKeyNonce::decode_with_tag(decoder, Tag::new(Class::Context, 1))?;
+            Ok(Self { _phantom: PhantomData, sealed, nonce })
+        })
+    }
+}
+impl<T> Clone for Private<T> {
+    fn clone(&self) -> Self {
+        Self {
+            _phantom: PhantomData,
+            sealed: self.sealed.clone(),
+            nonce: self.nonce.clone(),
+        }
+    }
+}
+
+impl<T: Encode + Decode> Private<T> {
     /// Create a new Private container from a given serializable data object and
     /// an encrypting key.
     pub fn seal(seal_key: &SecretKey, data: &T) -> Result<Self> {
         let serialized = ser::serialize(data)?;
-        let nonce = seal_key.gen_nonce();
+        let nonce = seal_key.gen_nonce()?;
         let sealed = seal_key.seal(&serialized, &nonce)?;
         Ok(Self {
             _phantom: PhantomData,
-            sealed,
+            sealed: sealed.into(),
             nonce,
         })
     }
@@ -59,11 +89,11 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> Private<T> {
     pub fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let serialized = previous_seal_key.open(&self.sealed, &self.nonce)
             .map_err(|_| Error::CryptoOpenFailed)?;
-        let nonce = new_seal_key.gen_nonce();
+        let nonce = new_seal_key.gen_nonce()?;
         let sealed = new_seal_key.seal(&serialized, &nonce)?;
         Ok(Self {
             _phantom: PhantomData,
-            sealed,
+            sealed: sealed.into(),
             nonce,
         })
     }
@@ -73,11 +103,13 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> Private<T> {
 ///
 /// This is a somewhat ephemeral container, mainly used for encryption and
 /// decryption and then thrown away.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize)]
 struct PrivateVerifiableInner<T> {
     /// The value we're storing.
+    #[rasn(tag(explicit(0)))]
     value: T,
     /// The HMAC key we use to hash the data.
+    #[rasn(tag(explicit(1)))]
     hmac_key: HmacKey,
 }
 
@@ -101,7 +133,7 @@ struct PrivateVerifiableInner<T> {
 ///
 /// This also allows the key that protects the private data to be rotated
 /// without the HMAC (and therefor the stamps) on that data being deprecated.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, AsnType, Serialize, Deserialize)]
 pub struct PrivateVerifiable<T> {
     /// Allows us to cast this container to T without this container ever
     /// actually storing any T value (because it's encrypted).
@@ -109,13 +141,33 @@ pub struct PrivateVerifiable<T> {
     _phantom: PhantomData<T>,
     /// The encrypted data stored in this container, created using a
     /// `PrivateVerifiableInner` struct (the actual data alongside an HMAC key).
-    #[serde(with = "crate::util::ser::human_bytes")]
-    sealed: Vec<u8>,
+    sealed: BinaryVec,
     /// A nonce used to decrypt our heroic data (given the correct secret key).
     nonce: SecretKeyNonce,
 }
 
-impl<T: serde::Serialize + serde::de::DeserializeOwned> PrivateVerifiable<T> {
+impl<T> Encode for PrivateVerifiable<T> {
+    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, tag: Tag) -> std::result::Result<(), E::Error> {
+        encoder.encode_sequence(tag, |encoder| {
+            self.sealed.encode_with_tag(encoder, Tag::new(Class::Context, 0))?;
+            self.nonce.encode_with_tag(encoder, Tag::new(Class::Context, 1))?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+}
+
+impl<T> Decode for PrivateVerifiable<T> {
+    fn decode_with_tag<D: Decoder>(decoder: &mut D, tag: Tag) -> std::result::Result<Self, D::Error> {
+        decoder.decode_sequence(tag, |decoder| {
+            let sealed = BinaryVec::decode_with_tag(decoder, Tag::new(Class::Context, 0))?;
+            let nonce = SecretKeyNonce::decode_with_tag(decoder, Tag::new(Class::Context, 1))?;
+            Ok(Self { _phantom: PhantomData, sealed, nonce })
+        })
+    }
+}
+
+impl<T: Encode + Decode> PrivateVerifiable<T> {
     /// Create a new verifiable private container from a given serializable data
     /// object and an encrypting key.
     ///
@@ -133,18 +185,18 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> PrivateVerifiable<T> {
     /// obscures the data behind an encrypted key.
     pub fn seal(seal_key: &SecretKey, data: &T) -> Result<(Hmac, Self)> {
         // create a new random key and use it to HMAC our data
-        let hmac_key = HmacKey::new_sha512();
+        let hmac_key = HmacKey::new_sha512()?;
         let hmac = Hmac::new_sha512(&hmac_key, &ser::serialize(data)?)?;
         // store our data alongside our HMAC key, allowing anybody with access
         // to this container to regenerate the HMAC.
         let inner = PrivateVerifiableInner { value: data, hmac_key: hmac_key };
         let serialized_inner = ser::serialize(&inner)?;
-        let nonce = seal_key.gen_nonce();
+        let nonce = seal_key.gen_nonce()?;
         // encrypt the data+hmac_key combo
         let sealed = seal_key.seal(&serialized_inner, &nonce)?;
         Ok((hmac, Self {
             _phantom: PhantomData,
-            sealed,
+            sealed: BinaryVec::from(sealed),
             nonce,
         }))
     }
@@ -172,11 +224,11 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> PrivateVerifiable<T> {
     pub fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let serialized = previous_seal_key.open(&self.sealed, &self.nonce)
             .map_err(|_| Error::CryptoOpenFailed)?;
-        let nonce = new_seal_key.gen_nonce();
+        let nonce = new_seal_key.gen_nonce()?;
         let sealed = new_seal_key.seal(&serialized, &nonce)?;
         Ok(Self {
             _phantom: PhantomData,
-            sealed,
+            sealed: BinaryVec::from(sealed),
             nonce,
         })
     }
@@ -193,10 +245,15 @@ pub enum MaybePrivate<T> {
     ///
     /// Make sure to check if this object has data via <MaybePrivate::has_data()>
     /// before trying to use it.
-    Private(Hmac, Option<PrivateVerifiable<T>>),
+    Private {
+        /// The HMAC for this private data
+        hmac: Hmac,
+        /// The data itself
+        data: Option<PrivateVerifiable<T>>,
+    },
 }
 
-impl<T: serde::Serialize + serde::de::DeserializeOwned + Clone> MaybePrivate<T> {
+impl<T: Encode + Decode + Clone + std::fmt::Debug> MaybePrivate<T> {
     /// Create a new public MaybePrivate value.
     pub fn new_public(val: T) -> Self {
         Self::Public(val)
@@ -205,13 +262,13 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned + Clone> MaybePrivate<T> 
     /// Create a new private MaybePrivate value.
     pub fn new_private(seal_key: &SecretKey, val: T) -> Result<Self> {
         let (hmac, private_verifiable) = PrivateVerifiable::seal(seal_key, &val)?;
-        Ok(Self::Private(hmac, Some(private_verifiable)))
+        Ok(Self::Private { hmac, data: Some(private_verifiable) })
     }
 
     /// Get the HMAC for this MaybePrivate, if it has one.
     pub fn hmac(&self) -> Option<&Hmac> {
         match self {
-            Self::Private(hmac, _) => Some(hmac),
+            Self::Private { hmac, .. } => Some(hmac),
             _ => None,
         }
     }
@@ -225,7 +282,7 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned + Clone> MaybePrivate<T> 
     pub fn has_data(&self) -> bool {
         match self {
             Self::Public(_) => true,
-            Self::Private(_, prv) => prv.is_some(),
+            Self::Private { data, .. } => data.is_some(),
         }
     }
 
@@ -234,8 +291,8 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned + Clone> MaybePrivate<T> 
     pub fn open(&self, seal_key: &SecretKey) -> Result<T> {
         match self {
             Self::Public(x) => Ok(x.clone()),
-            Self::Private(hmac, Some(prv)) => prv.open_and_verify(seal_key, hmac),
-            Self::Private(_, None) => Err(Error::PrivateDataMissing)?,
+            Self::Private { hmac, data: Some(prv) } => prv.open_and_verify(seal_key, hmac),
+            Self::Private { data: None, .. } => Err(Error::PrivateDataMissing)?,
         }
     }
 
@@ -251,8 +308,8 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned + Clone> MaybePrivate<T> 
     pub fn into_public(self, seal_key: &SecretKey) -> Result<Self> {
         match self {
             Self::Public(x) => Ok(Self::Public(x)),
-            Self::Private(hmac, Some(prv)) => Ok(Self::Public(prv.open_and_verify(seal_key, &hmac)?)),
-            Self::Private(_, None) => Err(Error::PrivateDataMissing),
+            Self::Private { hmac, data: Some(prv) } => Ok(Self::Public(prv.open_and_verify(seal_key, &hmac)?)),
+            Self::Private { data: None, .. } => Err(Error::PrivateDataMissing),
         }
     }
 
@@ -260,10 +317,63 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned + Clone> MaybePrivate<T> 
     pub(crate) fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let maybe = match self {
             Self::Public(x) => Self::Public(x.clone()),
-            Self::Private(hmac, Some(prv)) => Self::Private(hmac.clone(), Some(prv.reencrypt(previous_seal_key, new_seal_key)?)),
-            Self::Private(hmac, None) => Self::Private(hmac.clone(), None),
+            Self::Private { hmac, data: Some(prv) } => Self::Private {
+                hmac: hmac.clone(),
+                data: Some(prv.reencrypt(previous_seal_key, new_seal_key)?),
+            },
+            Self::Private { hmac, data: None } => Self::Private { hmac: hmac.clone(), data: None },
         };
         Ok(maybe)
+    }
+}
+
+impl<T> AsnType for MaybePrivate<T> {
+    const TAG: Tag = Tag::EOC;
+}
+
+#[derive(AsnType, Encode, Decode)]
+struct PrivateInner<T> {
+    #[rasn(tag(explicit(0)))]
+    hmac: Hmac,
+    #[rasn(tag(explicit(1)))]
+    data: Option<PrivateVerifiable<T>>,
+}
+
+impl<T> Encode for MaybePrivate<T>
+    where T: Encode + Clone,
+{
+    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, _tag: Tag) -> std::result::Result<(), E::Error> {
+        match self {
+            Self::Public(data) => {
+                encoder.encode_explicit_prefix(Tag::new(Class::Context, 0), data)?;
+            }
+            Self::Private { ref hmac, ref data } => {
+                let inner = PrivateInner {
+                    hmac: hmac.clone(),
+                    data: data.clone(),
+                };
+                encoder.encode_explicit_prefix(Tag::new(Class::Context, 1), &inner)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<T> Decode for MaybePrivate<T>
+    where T: Decode + Clone,
+{
+    fn decode_with_tag<D: Decoder>(decoder: &mut D, _tag: Tag) -> std::result::Result<Self, D::Error> {
+        decoder.decode_explicit_prefix(Tag::new(Class::Context, 0))
+            .map(|val: T| Self::Public(val))
+            .or_else(|_| {
+                decoder.decode_explicit_prefix(Tag::new(Class::Context, 1))
+                    .map(|inner: PrivateInner<T>| {
+                        Self::Private {
+                            hmac: inner.hmac.clone(),
+                            data: inner.data.clone(),
+                        }
+                    })
+            })
     }
 }
 
@@ -271,13 +381,13 @@ impl<T: Clone> Public for MaybePrivate<T> {
     fn strip_private(&self) -> Self {
         match self {
             Self::Public(x) => Self::Public(x.clone()),
-            Self::Private(sig, _) => Self::Private(sig.clone(), None),
+            Self::Private { hmac, .. } => Self::Private { hmac: hmac.clone(), data: None },
         }
     }
 
     fn has_private(&self) -> bool {
         match self {
-            Self::Private(_, Some(_)) => true,
+            Self::Private { data: Some(_), .. } => true,
             _ => false,
         }
     }
@@ -289,11 +399,11 @@ mod tests {
 
     #[test]
     fn private_seal_open() {
-        let key = SecretKey::new_xsalsa20poly1305();
+        let key = SecretKey::new_xchacha20poly1305().unwrap();
         let sealed: Private<String> = Private::seal(&key, &String::from("get a job")).unwrap();
         let opened: String = sealed.open(&key).unwrap();
         assert_eq!(&opened, "get a job");
-        let key2 = SecretKey::new_xsalsa20poly1305();
+        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(key != key2);
         let res: Result<String> = sealed.open(&key2);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
@@ -301,8 +411,8 @@ mod tests {
 
     #[test]
     fn private_reencrypt() {
-        let key1 = SecretKey::new_xsalsa20poly1305();
-        let key2 = SecretKey::new_xsalsa20poly1305();
+        let key1 = SecretKey::new_xchacha20poly1305().unwrap();
+        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
         let sealed: Private<String> = Private::seal(&key1, &String::from("get a job")).unwrap();
         let sealed2 = sealed.reencrypt(&key1, &key2).unwrap();
         let opened: String = sealed2.open(&key2).unwrap();
@@ -313,15 +423,15 @@ mod tests {
 
     #[test]
     fn private_verifiable_seal_open() {
-        let key = SecretKey::new_xsalsa20poly1305();
+        let key = SecretKey::new_xchacha20poly1305().unwrap();
         let (hmac, sealed) = PrivateVerifiable::<String>::seal(&key, &String::from("get a job")).unwrap();
         let opened: String = sealed.open_and_verify(&key, &hmac).unwrap();
         assert_eq!(&opened, "get a job");
-        let key2 = SecretKey::new_xsalsa20poly1305();
+        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(key != key2);
         let res: Result<String> = sealed.open_and_verify(&key2, &hmac);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
-        let hmac2 = Hmac::new_sha512(&HmacKey::new_sha512(), b"hello there").unwrap();
+        let hmac2 = Hmac::new_sha512(&HmacKey::new_sha512().unwrap(), b"hello there").unwrap();
         assert!(hmac != hmac2);
         let res: Result<String> = sealed.open_and_verify(&key, &hmac2);
         assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
@@ -329,8 +439,8 @@ mod tests {
 
     #[test]
     fn private_verifiable_reencrypt() {
-        let key1 = SecretKey::new_xsalsa20poly1305();
-        let key2 = SecretKey::new_xsalsa20poly1305();
+        let key1 = SecretKey::new_xchacha20poly1305().unwrap();
+        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
         let (hmac, sealed) = PrivateVerifiable::<String>::seal(&key1, &String::from("get a job")).unwrap();
         let sealed2 = sealed.reencrypt(&key1, &key2).unwrap();
         let opened: String = sealed2.open_and_verify(&key2, &hmac).unwrap();
@@ -341,7 +451,7 @@ mod tests {
 
     #[test]
     fn maybe_private_has_private() {
-        let seal_key = SecretKey::new_xsalsa20poly1305();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = maybe2.strip_private();
@@ -353,17 +463,23 @@ mod tests {
 
     #[test]
     fn maybe_private_seal_open_verify_has_data() {
-        let seal_key = SecretKey::new_xsalsa20poly1305();
-        let mut fake_key = SecretKey::new_xsalsa20poly1305();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
-        while seal_key == fake_key { fake_key = SecretKey::new_xsalsa20poly1305(); }
-        let fake_hmac_key = HmacKey::new_sha512();
+        while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305().unwrap(); }
+        let fake_hmac_key = HmacKey::new_sha512().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = MaybePrivate::Private(Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(), None);
+        let maybe3: MaybePrivate<String> = MaybePrivate::Private {
+            hmac: Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(),
+            data: None,
+        };
         let maybe2_tampered = match maybe2.clone() {
-            MaybePrivate::Private(_, data) => MaybePrivate::Private(Hmac::new_sha512(&fake_hmac_key, String::from("loool").as_bytes()).unwrap(), data),
+            MaybePrivate::Private { data, .. } => MaybePrivate::Private {
+                hmac: Hmac::new_sha512(&fake_hmac_key, String::from("loool").as_bytes()).unwrap(),
+                data,
+            },
             _ => panic!("bad maybeprivate given"),
         };
 
@@ -385,15 +501,18 @@ mod tests {
 
     #[test]
     fn maybe_private_open_public() {
-        let seal_key = SecretKey::new_xsalsa20poly1305();
-        let mut fake_key = SecretKey::new_xsalsa20poly1305();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
-        while seal_key == fake_key { fake_key = SecretKey::new_xsalsa20poly1305(); }
-        let fake_hmac_key = HmacKey::new_sha512();
+        while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305().unwrap(); }
+        let fake_hmac_key = HmacKey::new_sha512().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = MaybePrivate::Private(Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(), None);
+        let maybe3: MaybePrivate<String> = MaybePrivate::Private {
+            hmac: Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(),
+            data: None,
+        };
 
         assert_eq!(maybe1.open_public().unwrap(), "hello");
         assert_eq!(maybe2.open_public(), None);
@@ -402,14 +521,17 @@ mod tests {
 
     #[test]
     fn maybe_private_into_public() {
-        let seal_key = SecretKey::new_xsalsa20poly1305();
-        let fake_key = SecretKey::new_xsalsa20poly1305();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(seal_key != fake_key);
-        let fake_hmac_key = HmacKey::new_sha512();
+        let fake_hmac_key = HmacKey::new_sha512().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = MaybePrivate::Private(Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(), None);
+        let maybe3: MaybePrivate<String> = MaybePrivate::Private {
+            hmac: Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(),
+            data: None,
+        };
 
         assert_eq!(maybe1.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("hello")));
         // fake key works too because who gives a crap if it's public. grind me
@@ -423,8 +545,8 @@ mod tests {
 
     #[test]
     fn maybe_private_reencrypt_hmac() {
-        let seal_key = SecretKey::new_xsalsa20poly1305();
-        let seal_key2 = SecretKey::new_xsalsa20poly1305();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let seal_key2 = SecretKey::new_xchacha20poly1305().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
@@ -453,15 +575,15 @@ mod tests {
 
     #[test]
     fn maybe_private_strip() {
-        let seal_key = SecretKey::new_xsalsa20poly1305();
+        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
         let maybe: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
         assert!(maybe.has_data());
         let maybe2 = maybe.strip_private();
         let hmac = match &maybe {
-            MaybePrivate::Private(hmac, _) => hmac.clone(),
+            MaybePrivate::Private { hmac, .. } => hmac.clone(),
             _ => panic!("weird"),
         };
-        assert_eq!(maybe2, MaybePrivate::Private(hmac, None));
+        assert_eq!(maybe2, MaybePrivate::Private { hmac, data: None });
         assert!(!maybe2.has_data());
     }
 }

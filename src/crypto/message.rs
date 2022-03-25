@@ -13,16 +13,20 @@ use crate::{
     },
     util::ser,
 };
+use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 
 /// A wrapper around some encrypted message data, allowing us to provide easy
 /// serialization/deserialization methods.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum Message {
     /// An anonymouse message without any signature information.
+    #[rasn(tag(explicit(0)))]
     Anonymous(Vec<u8>),
     /// A message signed by the sender that the recipient can use to verify the
     /// message came from where they think it came from.
+    #[rasn(tag(explicit(1)))]
     Signed(SignedObject<CryptoKeypairMessage>),
 }
 
@@ -113,9 +117,9 @@ mod tests {
 
     #[test]
     fn message_anonymous_signed_maybe() {
-        let master_key = SecretKey::new_xsalsa20poly1305();
-        let sender_key = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
-        let recipient_key = CryptoKeypair::new_curve25519xsalsa20poly1305(&master_key).unwrap();
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let sender_key = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
+        let recipient_key = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
 
         let sealed = recipient_key.seal(&master_key, &sender_key, b"'I KNOW!' SAID THE BOY, AS HE LEAPT TO HIS FEET").unwrap();
         let msg1 = Message::Signed(SignedObject::new(IdentityID::blank(), KeyID::random_crypto(), sealed));
@@ -168,7 +172,7 @@ mod tests {
 
         // now generate a NEW crypto key and try to open the message with it.
         let sender_identity2 = sender_identity
-            .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xsalsa20poly1305(&sender_master_key).unwrap()), "fake-ass-key", None).unwrap();
+            .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&sender_master_key).unwrap()), "fake-ass-key", None).unwrap();
         let sender_fake_subkey = sender_identity2.keychain().subkey_by_name("fake-ass-key").unwrap();
         let res = open(&recipient_master_key, &recipient_subkey, &sender_fake_subkey, &sealed);
         assert_eq!(res, Err(Error::CryptoOpenFailed));

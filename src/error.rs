@@ -7,8 +7,13 @@ use thiserror::Error;
 /// which an expectation is not met or a problem occurs.
 #[derive(Error, Debug)]
 pub enum Error {
-    /// Trying to use an xsalsa20poly1305 (or other) nonce with a
-    /// NON-xsalsa20poly1305 algo, or vice versa, etc.
+    /// Trying to deserialize a value with the wrong length of data (ie, we
+    /// usually see this when trying to populate a [u8; 64]
+    #[error("incorrect data length")]
+    BadLength,
+
+    /// Trying to use an xchacha20poly1305 (or other) nonce with a
+    /// NON-xchacha20poly1305 algo, or vice versa, etc.
     #[error("cryptographic algorithm mismatch")]
     CryptoAlgoMismatch,
 
@@ -36,6 +41,10 @@ pub enum Error {
     #[error("could not update hash state")]
     CryptoHashStateUpdateError,
 
+    /// HMAC failed to build properly
+    #[error("HMAC failed to build properly")]
+    CryptoHmacBuildFailure,
+
     /// An HMAC failed to verify.
     #[error("the given HMAC combo does not verify")]
     CryptoHmacVerificationFailed,
@@ -59,6 +68,10 @@ pub enum Error {
     /// Failed to open a sealed message. This is a bummer, man.
     #[error("failed to open a sealed object")]
     CryptoOpenFailed,
+
+    /// Failed to seal a message.
+    #[error("failed to seal a message")]
+    CryptoSealFailed,
 
     /// Failed to produce a signature
     #[error("failed to create a signature")]
@@ -113,8 +126,8 @@ pub enum Error {
     DagOrderingError,
 
     /// An error while engaging in deserialization.
-    #[error("deserialization error")]
-    Deserialize(#[from] rmp_serde::decode::Error),
+    #[error("ASN.1 deserialization error")]
+    DeserializeASN,
 
     /// An error while engaging in deserialization.
     #[error("deserialization error")]
@@ -194,6 +207,10 @@ pub enum Error {
     #[error("attempt to open private object which has no data")]
     PrivateDataMissing,
 
+    /// Error generating random numbers
+    #[error("error generating random")]
+    Random,
+
     /// The recovery policy request's identity does not match the identity we're
     /// recovering.
     #[error("this recovery request is for another identity")]
@@ -205,8 +222,8 @@ pub enum Error {
     RecoveryPolicyRequestPolicyMismatch,
 
     /// An error while engaging in msgpack serialization.
-    #[error("msgpack serialization error")]
-    SerializeMsgPack(#[from] rmp_serde::encode::Error),
+    #[error("ASN.1 serialization error")]
+    SerializeASN,
 
     /// An error while engaging in yaml serialization.
     #[error("yaml serialization error")]
@@ -215,6 +232,10 @@ pub enum Error {
     /// We're trying to verify a signature on a value, but it's missing.
     #[error("signature missing on a value")]
     SignatureMissing,
+
+    /// Error parsing a URL
+    #[error("URL parse error")]
+    Url(#[from] url::ParseError)
 }
 
 impl PartialEq for Error {
