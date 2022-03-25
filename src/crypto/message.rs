@@ -13,16 +13,20 @@ use crate::{
     },
     util::ser,
 };
+use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 
 /// A wrapper around some encrypted message data, allowing us to provide easy
 /// serialization/deserialization methods.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum Message {
     /// An anonymouse message without any signature information.
+    #[rasn(tag(explicit(0)))]
     Anonymous(Vec<u8>),
     /// A message signed by the sender that the recipient can use to verify the
     /// message came from where they think it came from.
+    #[rasn(tag(explicit(1)))]
     Signed(SignedObject<CryptoKeypairMessage>),
 }
 

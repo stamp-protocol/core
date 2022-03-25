@@ -12,18 +12,22 @@ use crate::{
         IdentityID,
     },
 };
+use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 
 /// A signature or object containing a signatur that lists the identity and key
 /// that created the signature.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct SignedObject<T> {
     /// The ID of the signing identity
+    #[rasn(tag(explicit(0)))]
     signed_by_identity: IdentityID,
     /// The ID of the key that signed the message
+    #[rasn(tag(explicit(1)))]
     signed_by_key: KeyID,
     /// The signature or message
+    #[rasn(tag(explicit(2)))]
     body: T,
 }
 

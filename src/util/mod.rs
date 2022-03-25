@@ -1,8 +1,11 @@
 //! Utilities. OBVIOUSLY.
 
 use blake2::Digest;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc, Local};
-use crate::error::Result;
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc, Local, TimeZone};
+use crate::{
+    error::Result,
+};
+use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 use std::str::FromStr;
@@ -13,7 +16,7 @@ pub(crate) mod sign;
 #[cfg(test)]
 pub(crate) mod test;
 
-pub use ser::{base64_encode, base64_decode, SerdeBinary};
+pub use ser::{base64_encode, base64_decode, SerdeBinary, Binary};
 
 macro_rules! object_id {
     (
@@ -23,6 +26,8 @@ macro_rules! object_id {
         #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
         $(#[$meta])*
         pub struct $name(pub(crate) crate::crypto::key::SignKeypairSignature);
+
+        asn_encdec_newtype! { $name, crate::crypto::key::SignKeypairSignature }
 
         impl $name {
             /// Take a full string id and return the shortened ID
@@ -36,7 +41,7 @@ macro_rules! object_id {
         impl $name {
             pub(crate) fn blank() -> Self {
                 let sigbytes = [0u8; ed25519_dalek::SIGNATURE_LENGTH];
-                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(ed25519_dalek::Signature::from(sigbytes));
+                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(crate::util::ser::Binary::new(sigbytes));
                 $name(sig)
             }
 
@@ -44,7 +49,7 @@ macro_rules! object_id {
                 let mut sigbytes = [0u8; ed25519_dalek::SIGNATURE_LENGTH];
                 rand::rngs::OsRng.fill_bytes(&mut sigbytes);
                 sigbytes[ed25519_dalek::SIGNATURE_LENGTH - 1] = 0;
-                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(ed25519_dalek::Signature::from(sigbytes));
+                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(crate::util::ser::Binary::new(sigbytes));
                 $name(sig)
             }
         }
@@ -83,7 +88,7 @@ macro_rules! object_id {
                         let bytes_arr: [u8; ed25519_dalek::SIGNATURE_LENGTH] = bytes.try_into()
                             .map_err(|_| crate::error::Error::BadLength)?;
                         let sig = ed25519_dalek::Signature::from(bytes_arr);
-                        crate::crypto::key::SignKeypairSignature::Ed25519(sig)
+                        crate::crypto::key::SignKeypairSignature::Ed25519(crate::util::ser::Binary::new(sig.to_bytes()))
                     }
                 };
                 Ok(Self(id_sig))
@@ -130,11 +135,32 @@ impl Timestamp {
     }
 }
 
+impl AsnType for Timestamp {
+    const TAG: Tag = Tag::INTEGER;
+}
+
+impl Encode for Timestamp {
+    fn encode_with_tag<E: rasn::Encoder>(&self, encoder: &mut E, _tag: rasn::Tag) -> std::result::Result<(), E::Error> {
+        let ts = self.timestamp_millis();
+        ts.encode(encoder)?;
+        Ok(())
+    }
+}
+
+impl Decode for Timestamp {
+    fn decode_with_tag<D: rasn::Decoder>(decoder: &mut D, _tag: rasn::Tag) -> std::result::Result<Self, D::Error> {
+        let ts = <i64>::decode(decoder)?;
+        let dt = match chrono::Utc.timestamp_millis_opt(ts) {
+            chrono::offset::LocalResult::Single(dt) => dt,
+            _ => Err(rasn::de::Error::custom("could not deserialize Url"))?,
+        };
+        Ok(dt.into())
+    }
+}
+
 impl Deref for Timestamp {
     type Target = DateTime<Utc>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+    fn deref(&self) -> &Self::Target { &self.0 }
 }
 
 impl From<NaiveDateTime> for Timestamp {
@@ -160,11 +186,40 @@ impl FromStr for Timestamp {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Date(NaiveDate);
 
+impl From<Timestamp> for Date {
+    fn from(ts: Timestamp) -> Self {
+        Self(ts.deref().date().naive_utc())
+    }
+}
+
+impl From<Date> for Timestamp {
+    fn from(date: Date) -> Self {
+        Self(DateTime::<Utc>::from_utc(date.and_hms(0, 0, 0), Utc))
+    }
+}
+
+impl AsnType for Date {
+    const TAG: Tag = Timestamp::TAG;
+}
+
+impl Encode for Date {
+    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, _tag: Tag) -> std::result::Result<(), E::Error> {
+        let ts: Timestamp = self.clone().into();
+        ts.encode(encoder)?;
+        Ok(())
+    }
+}
+
+impl Decode for Date {
+    fn decode_with_tag<D: Decoder>(decoder: &mut D, _tag: Tag) -> std::result::Result<Self, D::Error> {
+        let ts = Timestamp::decode(decoder)?;
+        Ok(ts.into())
+    }
+}
+
 impl Deref for Date {
     type Target = NaiveDate;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+    fn deref(&self) -> &Self::Target { &self.0 }
 }
 
 impl From<NaiveDate> for Date {
@@ -195,10 +250,55 @@ pub trait PublicMaybe: Clone {
     fn strip_private_maybe(&self) -> Option<Self>;
 }
 
+
+/// A wrapper around URLs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Url(url::Url);
+
+impl Url {
+    pub fn parse(urlstr: &str) -> Result<Self> {
+        Ok(url::Url::parse(urlstr).map(|x| x.into())?)
+    }
+}
+
+impl Deref for Url {
+    type Target = url::Url;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+impl From<url::Url> for Url {
+    fn from(url: url::Url) -> Self {
+        Self(url)
+    }
+}
+
+impl AsnType for Url {
+    const TAG: Tag = Tag::UTF8_STRING;
+}
+
+impl Encode for Url {
+    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, _tag: Tag) -> std::result::Result<(), E::Error> {
+        let url_str: &str = self.deref().as_ref();
+        url_str.encode(encoder)?;
+        Ok(())
+    }
+}
+
+impl Decode for Url {
+    fn decode_with_tag<D: Decoder>(decoder: &mut D, tag: Tag) -> std::result::Result<Self, D::Error> {
+        let url_str: &str = &decoder.decode_utf8_string(tag)?;
+        let url = url::Url::parse(url_str)
+            .map_err(|_| rasn::de::Error::custom("could not deserialize Url"))?;
+        Ok(Self(url))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         crypto::key::{SignKeypairSignature},
+        util::ser::{self, Binary},
     };
     use rand::prelude::*;
     use std::convert::{TryFrom, TryInto};
@@ -212,7 +312,7 @@ mod tests {
 
         let sigbytes = vec![61, 47, 37, 255, 130, 49, 42, 60, 55, 247, 221, 146, 149, 13, 27, 227, 23, 228, 6, 170, 103, 177, 184, 3, 124, 102, 180, 148, 228, 67, 30, 140, 172, 59, 90, 94, 220, 123, 143, 239, 97, 164, 186, 213, 141, 217, 174, 43, 186, 16, 184, 236, 166, 130, 38, 5, 176, 33, 22, 5, 111, 171, 57, 2];
         let sigarr: [u8; 64] = sigbytes.try_into().unwrap();
-        let sig = SignKeypairSignature::Ed25519(ed25519_dalek::Signature::from(sigarr));
+        let sig = SignKeypairSignature::Ed25519(Binary::new(sigarr));
 
         let id = TestID(sig);
 
@@ -227,6 +327,42 @@ mod tests {
                 assert_eq!(sig, id.deref());
             }
         }
+    }
+
+    #[test]
+    fn timestamp_encdec() {
+        let date1 = Timestamp::from_str("1987-04-20T16:44:59.033Z").unwrap();
+        let ser1 = ser::serialize(&date1).unwrap();
+        let date1_2: Timestamp = ser::deserialize(ser1.as_slice()).unwrap();
+        assert_eq!(date1, date1_2);
+
+        let date2 = Timestamp::from_str("1957-12-03T00:10:19.998Z").unwrap();
+        let ser2 = ser::serialize(&date2).unwrap();
+        let date2_2: Timestamp = ser::deserialize(ser2.as_slice()).unwrap();
+        assert_eq!(date2, date2_2);
+
+        let date3 = Timestamp::from_str("890-08-14T14:56:01.003Z").unwrap();
+        let ser3 = ser::serialize(&date3).unwrap();
+        let date3_2: Timestamp = ser::deserialize(ser3.as_slice()).unwrap();
+        assert_eq!(date3, date3_2);
+    }
+
+    #[test]
+    fn date_encdec() {
+        let date1 = Date::from_str("1987-04-20").unwrap();
+        let ser1 = ser::serialize(&date1).unwrap();
+        let date1_2: Date = ser::deserialize(ser1.as_slice()).unwrap();
+        assert_eq!(date1, date1_2);
+
+        let date2 = Date::from_str("1957-12-03").unwrap();
+        let ser2 = ser::serialize(&date2).unwrap();
+        let date2_2: Date = ser::deserialize(ser2.as_slice()).unwrap();
+        assert_eq!(date2, date2_2);
+
+        let date3 = Date::from_str("890-08-14").unwrap();
+        let ser3 = ser::serialize(&date3).unwrap();
+        let date3_2: Date = ser::deserialize(ser3.as_slice()).unwrap();
+        assert_eq!(date3, date3_2);
     }
 }
 

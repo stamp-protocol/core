@@ -15,14 +15,14 @@ use crate::{
     },
     crypto::key::SecretKey,
     private::MaybePrivate,
-    util::{Timestamp, Date},
+    util::{Timestamp, Date, Url, ser::BinaryVec},
 };
 use getset;
 #[cfg(test)] use rand::RngCore;
+use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::convert::TryInto;
 use std::ops::Deref;
-use url::Url;
 
 object_id! {
     /// A unique identifier for claims.
@@ -30,7 +30,8 @@ object_id! {
 }
 
 /// Various types of codified relationships, used in relationship claims.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum RelationshipType {
     /// An organizational or group membership.
     ///
@@ -38,18 +39,22 @@ pub enum RelationshipType {
     /// an organization, but can really mean "a member of any group" including
     /// but not limited to a book club, a state citizenship, a murder of crows,
     /// and anything in-between or beyond.
+    #[rasn(tag(explicit(0)))]
     OrganizationMember,
     /// Any custom relationship.
-    Extension(Vec<u8>),
+    #[rasn(tag(explicit(1)))]
+    Extension(BinaryVec),
 }
 
 /// Defines a relationship.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Relationship<T> {
     /// The type of relationship we have.
+    #[rasn(tag(explicit(0)))]
     ty: RelationshipType,
     /// Who the relationship is with.
+    #[rasn(tag(explicit(1)))]
     subject: T,
 }
 
@@ -63,31 +68,6 @@ impl<T> Relationship<T> {
     }
 }
 
-/// A thin wrapper around binary data in claims. Obnoxious, but useful for
-/// (de)serialization.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClaimBin(#[serde(with = "crate::util::ser::human_bytes")] pub Vec<u8>);
-
-impl From<ClaimBin> for Vec<u8> {
-    fn from(val: ClaimBin) -> Self {
-        let ClaimBin(vec) = val;
-        vec
-    }
-}
-
-impl From<Vec<u8>> for ClaimBin {
-    fn from(val: Vec<u8>) -> Self {
-        Self(val)
-    }
-}
-
-impl Deref for ClaimBin {
-    type Target = Vec<u8>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 /// A collection of known claims one can make about their identity.
 ///
 /// Note that the claim type itself will always be public, but the data attached
@@ -95,7 +75,8 @@ impl Deref for ClaimBin {
 /// our `secret` key in our keyset). This allows others to see that I have made
 /// a particular claim (and that others have stamped it) without revealing the
 /// private data in that claim.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum ClaimSpec {
     /// A claim that this identity is mine (always public).
     ///
@@ -103,16 +84,21 @@ pub enum ClaimSpec {
     ///
     /// This can also be used to claim ownership of another identity, hopefully
     /// stamped by that identity.
+    #[rasn(tag(explicit(0)))]
     Identity(IdentityID),
     /// A claim that the name attached to this identity is mine.
+    #[rasn(tag(explicit(1)))]
     Name(MaybePrivate<String>),
     /// A claim I was born on a certain day.
+    #[rasn(tag(explicit(2)))]
     Birthday(MaybePrivate<Date>),
     /// A claim that I own an email address.
+    #[rasn(tag(explicit(3)))]
     Email(MaybePrivate<String>),
     /// A claim that the attached photo is a photo of me (ie, not an anime
     /// avatar).
-    Photo(MaybePrivate<ClaimBin>),
+    #[rasn(tag(explicit(4)))]
+    Photo(MaybePrivate<BinaryVec>),
     /// A claim that I own a PGP keypair (using the key's ID as the value).
     ///
     /// In general, you would create this claim, sign the claim's ID with your
@@ -122,6 +108,7 @@ pub enum ClaimSpec {
     /// NOTE: we *could* reimplement *all* of PGP and allow people to verify
     /// this themselves via cross-signing, but seems more appropriate to keep
     /// the spec lean and instead require third-parties to verify the claim.
+    #[rasn(tag(explicit(5)))]
     Pgp(MaybePrivate<String>),
     /// A claim that I own or have write access to an internet domain.
     ///
@@ -149,6 +136,7 @@ pub enum ClaimSpec {
     /// you can use the short form URL:
     ///
     ///   stamp://o8AL10aawwthQIUR/claim/cZVhuW0Of5aqaFa1
+    #[rasn(tag(explicit(6)))]
     Domain(MaybePrivate<String>),
     /// A claim that I own or have write access to a specific URL.
     ///
@@ -188,21 +176,25 @@ pub enum ClaimSpec {
     /// with editable text you can update, and doesn't provide a predictable URL
     /// format for new posts, and doesn't have editable posts, you will need a
     /// third-party to stamp this claim.
+    #[rasn(tag(explicit(7)))]
     Url(MaybePrivate<Url>),
     /// A claim that I reside at a physical address.
     ///
     /// Must be stamped in-person. At the DMV. The one that's further away.
     /// Sorry, that's the protocol.
+    #[rasn(tag(explicit(8)))]
     HomeAddress(MaybePrivate<String>),
     /// A claim that I am in a relationship with another identity, hopefully
     /// stamped by that identity ='[
+    #[rasn(tag(explicit(9)))]
     Relation(MaybePrivate<Relationship<IdentityID>>),
     /// A claim that I am in a relationship with another entity with some form
     /// of serializable identification (such as a signed certificate, a name,
     /// etc). Can be used to assert relationships to entities outside of the
     /// Stamp protocol (although stamps on these relationships must be provided
     /// by Stamp protocol identities).
-    RelationExtension(MaybePrivate<Relationship<ClaimBin>>),
+    #[rasn(tag(explicit(10)))]
+    RelationExtension(MaybePrivate<Relationship<BinaryVec>>),
     /// Any kind of claim of identity ownership or possession outside the
     /// defined types. This includes a public field (which could be used as a
     /// key) and a maybe-private field which would be a value (or a key and
@@ -217,7 +209,13 @@ pub enum ClaimSpec {
     ///
     /// Anything you can dream up that you wish to claim in any format can exist
     /// here.
-    Extension(String, MaybePrivate<ClaimBin>),
+    #[rasn(tag(explicit(11)))]
+    Extension {
+        #[rasn(tag(explicit(0)))]
+        key: String,
+        #[rasn(tag(explicit(1)))]
+        value: MaybePrivate<BinaryVec>,
+    },
 }
 
 impl ClaimSpec {
@@ -235,7 +233,7 @@ impl ClaimSpec {
             Self::HomeAddress(maybe) => Self::HomeAddress(maybe.reencrypt(current_key, new_key)?),
             Self::Relation(maybe) => Self::Relation(maybe.reencrypt(current_key, new_key)?),
             Self::RelationExtension(maybe) => Self::RelationExtension(maybe.reencrypt(current_key, new_key)?),
-            Self::Extension(key, maybe) => Self::Extension(key, maybe.reencrypt(current_key, new_key)?),
+            Self::Extension { key, value } => Self::Extension { key, value: value.reencrypt(current_key, new_key)? },
         };
         Ok(spec)
     }
@@ -255,7 +253,7 @@ impl ClaimSpec {
             Self::HomeAddress(maybe) => Self::HomeAddress(maybe.into_public(open_key)?),
             Self::Relation(maybe) => Self::Relation(maybe.into_public(open_key)?),
             Self::RelationExtension(maybe) => Self::RelationExtension(maybe.into_public(open_key)?),
-            Self::Extension(key, maybe) => Self::Extension(key, maybe.into_public(open_key)?),
+            Self::Extension { key, value } => Self::Extension { key, value: value.into_public(open_key)? },
         };
         Ok(spec)
     }
@@ -275,7 +273,7 @@ impl Public for ClaimSpec {
             Self::HomeAddress(val) => Self::HomeAddress(val.strip_private()),
             Self::Relation(val) => Self::Relation(val.strip_private()),
             Self::RelationExtension(val) => Self::RelationExtension(val.strip_private()),
-            Self::Extension(key, val) => Self::Extension(key.clone(), val.strip_private()),
+            Self::Extension { key, value } => Self::Extension { key: key.clone(), value: value.strip_private() },
         }
     }
 
@@ -292,21 +290,24 @@ impl Public for ClaimSpec {
             Self::HomeAddress(val) => val.has_private(),
             Self::Relation(val) => val.has_private(),
             Self::RelationExtension(val) => val.has_private(),
-            Self::Extension(_, val) => val.has_private(),
+            Self::Extension { value, .. } => value.has_private(),
         }
     }
 }
 
 /// A type used when signing a claim. Contains all data about the claim except
 /// the stamps.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Claim {
     /// The unique ID of this claim.
+    #[rasn(tag(explicit(0)))]
     id: ClaimID,
     /// The data we're claiming.
+    #[rasn(tag(explicit(1)))]
     spec: ClaimSpec,
     /// The date we created this claim.
+    #[rasn(tag(explicit(2)))]
     created: Timestamp,
 }
 
@@ -383,12 +384,14 @@ impl Public for Claim {
 }
 
 /// A wrapper around a `Claim` that stores its stamps.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct ClaimContainer {
     /// The actual claim data
+    #[rasn(tag(explicit(0)))]
     claim: Claim,
     /// Stamps that have been made on our claim.
+    #[rasn(tag(explicit(1)))]
     stamps: Vec<Stamp>,
 }
 
@@ -482,18 +485,18 @@ pub(crate) mod tests {
         claim_reenc!{ Name, String::from("Marty Malt") }
         claim_reenc!{ Birthday, Date::from_str("2010-01-03").unwrap() }
         claim_reenc!{ Email, String::from("marty@sids.com") }
-        claim_reenc!{ Photo, ClaimBin(vec![1, 2, 3]) }
+        claim_reenc!{ Photo, BinaryVec::from(vec![1, 2, 3]) }
         claim_reenc!{ Pgp, String::from("12345") }
         claim_reenc!{ Domain, String::from("slappy.com") }
         claim_reenc!{ Url, Url::parse("https://killtheradio.net/").unwrap() }
         claim_reenc!{ HomeAddress, String::from("111 blumps ln") }
         claim_reenc!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        claim_reenc!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![1, 2, 3, 4, 5])) }
+        claim_reenc!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
         claim_reenc!{
             raw,
-            |maybe, _| ClaimSpec::Extension(String::from("id:state:ca"), maybe),
-            ClaimBin(vec![7, 3, 2, 90]),
-            |spec: ClaimSpec| if let ClaimSpec::Extension(_, maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+            |maybe, _| ClaimSpec::Extension { key: "id:state:ca".into(), value: maybe },
+            BinaryVec::from(vec![7, 3, 2, 90]),
+            |spec: ClaimSpec| if let ClaimSpec::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }
     }
 
@@ -504,7 +507,7 @@ pub(crate) mod tests {
                 let (_master_key, spec, spec2) = make_specs!($claimmaker, $val);
                 assert_eq!(spec.has_private(), true);
                 match $getmaybe(spec.clone()) {
-                    MaybePrivate::Private(_, Some(_)) => {},
+                    MaybePrivate::Private { data: Some(_), .. } => {},
                     _ => panic!("bad maybe val: {}", stringify!($claimtype)),
                 }
                 let claim = ClaimContainer::new(ClaimID::random(), spec, Timestamp::now());
@@ -531,20 +534,20 @@ pub(crate) mod tests {
         claim_pub_priv!{ Name, String::from("I LIKE FOOTBALL") }
         claim_pub_priv!{ Birthday, Date::from_str("1990-03-04").unwrap() }
         claim_pub_priv!{ Email, String::from("IT@IS.FUN") }
-        claim_pub_priv!{ Photo, ClaimBin(vec![1, 2, 3]) }
+        claim_pub_priv!{ Photo, BinaryVec::from(vec![1, 2, 3]) }
         claim_pub_priv!{ Pgp, String::from("I LIKE FOOTBALL") }
         claim_pub_priv!{ Domain, String::from("I-LIKE.TO.RUN") }
         claim_pub_priv!{ Url, Url::parse("https://www.imdb.com/title/tt0101660/").unwrap() }
         claim_pub_priv!{ HomeAddress, String::from("22334 FOOTBALL LANE, FOOTBALLSVILLE, CA 00001") }
         claim_pub_priv!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        claim_pub_priv!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
+        claim_pub_priv!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
         claim_pub_priv!{
             raw,
-            |maybe, _| ClaimSpec::Extension(String::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THIS POEM IS GREAT"), maybe),
-            ClaimBin(vec![42, 22]),
+            |maybe, _| ClaimSpec::Extension { key: "I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THIS POEM IS GREAT".into(), value: maybe },
+            BinaryVec::from(vec![42, 22]),
             |spec| {
                 match spec {
-                    ClaimSpec::Extension(_, maybe) => maybe,
+                    ClaimSpec::Extension { value: maybe, .. } => maybe,
                     _ => panic!("bad claim type: Extension"),
                 }
             }
@@ -575,17 +578,17 @@ pub(crate) mod tests {
         thtrip!{ Name, String::from("I LIKE FOOTBALL") }
         thtrip!{ Birthday, Date::from_str("1967-12-03").unwrap() }
         thtrip!{ Email, String::from("IT.MAKES@ME.GLAD") }
-        thtrip!{ Photo, ClaimBin(vec![1, 2, 3]) }
+        thtrip!{ Photo, BinaryVec::from(vec![1, 2, 3]) }
         thtrip!{ Pgp, String::from("I PLAY FOOTBALL") }
         thtrip!{ Domain, String::from("WITH.MY.DAD") }
         thtrip!{ Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap() }
         thtrip!{ HomeAddress, String::from("445 Elite Football Sports Street, Football, KY 44666") }
         thtrip!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        thtrip!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
+        thtrip!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
         thtrip!{
             next,
-            ClaimBin(vec![42, 17, 86]),
-            |maybe| { ClaimSpec::Extension(String::from("best poem ever"), maybe) }
+            BinaryVec::from(vec![42, 17, 86]),
+            |maybe| { ClaimSpec::Extension { key: "best poem ever".into(), value: maybe } }
         }
 
         // for Identity, nothing will fundamentally change.
@@ -646,7 +649,7 @@ pub(crate) mod tests {
         assert_instant!{ Name, String::from("I LIKE FOOTBALL"), vec![] }
         assert_instant!{ Birthday, Date::from_str("1967-12-03").unwrap(), vec![] }
         assert_instant!{ Email, String::from("IT.MAKES@ME.GLAD"), vec![] }
-        assert_instant!{ Photo, ClaimBin(vec![1, 2, 3]), vec![] }
+        assert_instant!{ Photo, BinaryVec::from(vec![1, 2, 3]), vec![] }
         assert_instant!{ Pgp, String::from("I PLAY FOOTBALL"), vec![] }
         assert_instant!{ Domain, String::from("WITH.MY.DAD"), vec![
             "stamp://{{identity_id}}/claim/{{claim_id}}".into(),
@@ -660,11 +663,11 @@ pub(crate) mod tests {
         ] }
         assert_instant!{ HomeAddress, String::from("445 Elite Football Sports Street, Football, KY 44666"), vec![] }
         assert_instant!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), vec![] }
-        assert_instant!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])), vec![] }
+        assert_instant!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])), vec![] }
         assert_instant!{
             raw,
-            |maybe, _| { ClaimSpec::Extension(String::from("shaka gnar gnar"), maybe) },
-            ClaimBin(vec![66, 6]),
+            |maybe, _| { ClaimSpec::Extension { key: "shaka gnar gnar".into(), value: maybe } },
+            BinaryVec::from(vec![66, 6]),
             vec![]
         }
     }
@@ -706,18 +709,18 @@ pub(crate) mod tests {
         as_pub!{ Name, String::from("Sassafrass Stevens") }
         as_pub!{ Birthday, Date::from_str("1990-03-04").unwrap() }
         as_pub!{ Email, String::from("MEGATRON@nojerrystopjerry.net") }
-        as_pub!{ Photo, ClaimBin(vec![1, 2, 3]) }
+        as_pub!{ Photo, BinaryVec::from(vec![1, 2, 3]) }
         as_pub!{ Pgp, String::from("0x00000000000") }
         as_pub!{ Domain, String::from("decolonizing-decolonization.decolonize.org") }
         as_pub!{ Url, Url::parse("https://i.gifer.com/RL4.gif").unwrap() }
         as_pub!{ HomeAddress, String::from("22334 MECHA SHIVA LANE, GAINESVILLE, FL 00001") }
         as_pub!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        as_pub!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
+        as_pub!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
         as_pub!{
             raw,
-            |maybe, _| ClaimSpec::Extension(String::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THAT I AM NOT A CAT YOUR HONOR"), maybe),
-            ClaimBin(vec![42, 22]),
-            |spec: ClaimSpec| if let ClaimSpec::Extension(_, maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+            |maybe, _| ClaimSpec::Extension { key: "I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THAT I AM NOT A CAT YOUR HONOR".into(), value: maybe },
+            BinaryVec::from(vec![42, 22]),
+            |spec: ClaimSpec| if let ClaimSpec::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }
     }
 
@@ -745,14 +748,14 @@ pub(crate) mod tests {
         has_priv! { Name, String::from("Goleen Jundersun"), true }
         has_priv! { Birthday, Date::from_str("1969-12-03").unwrap(), true }
         has_priv! { Email, String::from("jerry@karate.com"), true }
-        has_priv! { Photo, ClaimBin(vec![1, 2, 3]), true }
+        has_priv! { Photo, BinaryVec::from(vec![1, 2, 3]), true }
         has_priv! { Pgp, String::from("45de280a"), true }
         has_priv! { Domain, String::from("good-times.great-trucks.nsf"), true }
         has_priv! { Url, Url::parse("https://you-might.be/wrong").unwrap(), true }
         has_priv! { HomeAddress, String::from("Mojave Desert"), true }
         has_priv! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), true }
-        has_priv! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])), true }
-        has_priv! { raw, |maybe, _| ClaimSpec::Extension(String::from("tuna-melt-tuna-melt-TUNA-MELT-TUNA-MELT"), maybe), ClaimBin(vec![123, 122, 100]), true }
+        has_priv! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])), true }
+        has_priv! { raw, |maybe, _| ClaimSpec::Extension { key: "tuna-melt-tuna-melt-TUNA-MELT-TUNA-MELT".into(), value: maybe }, BinaryVec::from(vec![123, 122, 100]), true }
     }
 }
 

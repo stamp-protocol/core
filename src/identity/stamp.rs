@@ -23,6 +23,7 @@ use crate::{
 };
 use getset;
 #[cfg(test)] use rand::RngCore;
+use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::convert::TryInto;
 use std::ops::Deref;
@@ -39,17 +40,21 @@ object_id! {
 
 /// An object that contains a stamp revocation's inner data. Its signature is
 /// what gives the revocation its ID.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct StampRevocationEntry {
     /// The identity ID of the original stamper (which must match the identity
     /// ID of the revoker).
+    #[rasn(tag(explicit(0)))]
     stamper: IdentityID,
     /// The identity ID of the recipient of the original stamp.
+    #[rasn(tag(explicit(1)))]
     stampee: IdentityID,
     /// The ID of the stamp we're revoking.
+    #[rasn(tag(explicit(2)))]
     stamp_id: StampID,
     /// Date revoked
+    #[rasn(tag(explicit(3)))]
     date_revoked: Timestamp,
 }
 
@@ -78,13 +83,15 @@ impl StampRevocationEntry {
 ///
 /// Effectively, if the same identity can verify both the original stamp and the
 /// revocation, then the revocation is valid.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct StampRevocation {
     /// The unique ID of this recovation, which also happens to be the signature
     /// of the revocation.
+    #[rasn(tag(explicit(0)))]
     id: StampRevocationID,
     /// Holds the revocations inner data.
+    #[rasn(tag(explicit(1)))]
     entry: StampRevocationEntry,
 }
 
@@ -101,37 +108,46 @@ impl StampRevocation {
 }
 
 /// The confidence of a stamp being made.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum Confidence {
     /// The stamp is being made with absolutely no verification whatsoever.
+    #[rasn(tag(explicit(0)))]
     None,
     /// Some verification of the claim happened, but it was quick and
     /// dirty.
+    #[rasn(tag(explicit(1)))]
     Low,
     /// We verified the claim using a decent amount of diligence. This could be
     /// like checking someone's state-issued ID.
+    #[rasn(tag(explicit(2)))]
     Medium,
     /// The claim was extensively investigated: birth certificates, background
     /// checks, photo verification.
+    #[rasn(tag(explicit(3)))]
     High,
     /// We climbed mountains, pulled teeth, interrogated family members, and are
     /// absolutely positive that this claim is true in every way.
     ///
     /// This should really only be used between people who have known each other
     /// for years (like family).
+    #[rasn(tag(explicit(4)))]
     Extreme,
 }
 
 /// A set of data that is signed when a stamp is created that is stored
 /// alongside the signature itself.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct StampEntry {
     /// The ID of the identity that is stamping.
+    #[rasn(tag(explicit(0)))]
     stamper: IdentityID,
     /// The ID of the identity being stamped.
+    #[rasn(tag(explicit(1)))]
     stampee: IdentityID,
     /// The ID of the claim we're stamping.
+    #[rasn(tag(explicit(2)))]
     claim_id: ClaimID,
     /// How much confidence the stamper has that the claim being stamped is
     /// valid. This is a value between 0 and 255, and is ultimately a ratio
@@ -139,12 +155,15 @@ pub struct StampEntry {
     /// confidence." Keep in mind that 0 here is not "absolutely zero
     /// confidence" as otherwise the stamp wouldn't be occurring in the first
     /// place.
+    #[rasn(tag(explicit(3)))]
     confidence: Confidence,
     /// Filled in by the stamper, the date the claim was stamped.
+    #[rasn(tag(explicit(4)))]
     date_signed: Timestamp,
     /// The date this stamp expires (if at all). The stamper can choose to set
     /// this expiration date if they feel their stamp is only good for a set
     /// period of time.
+    #[rasn(tag(explicit(5)))]
     expires: Option<Timestamp>,
 }
 
@@ -168,13 +187,15 @@ impl StampEntry {
 ///
 /// This is created by the stamper, and it is up to the claim owner to save the
 /// stamp to their identity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Stamp {
     /// This stamp's signature, and by remarkable coincidence, also its unique
     /// identifier.
+    #[rasn(tag(explicit(0)))]
     id: StampID,
     /// The stamp entry, containing all the actual stamp data.
+    #[rasn(tag(explicit(1)))]
     entry: StampEntry,
 }
 
@@ -242,12 +263,14 @@ impl Public for Stamp {
 ///
 /// In the case of public claims, a simple "hey, can you stamp claim X" would
 /// suffice because the data is public.
-#[derive(Debug, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct StampRequest {
     /// The claim we wish to have stamped
+    #[rasn(tag(explicit(0)))]
     claim: Claim,
     /// The one-time key that can be used to decrypt and verify this claim.
+    #[rasn(tag(explicit(1)))]
     decrypt_key: SecretKey,
 }
 
@@ -290,18 +313,17 @@ mod tests {
     use crate::{
         error::Error,
         identity::{
-            claim::{ClaimBin, Relationship, RelationshipType, ClaimSpec, ClaimContainer},
+            claim::{Relationship, RelationshipType, ClaimSpec, ClaimContainer},
             identity::IdentityID,
             keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, Key, Keychain},
             stamp::Confidence,
         },
         crypto::key::{self, SecretKey, SignKeypair, CryptoKeypair},
         private::MaybePrivate,
-        util::{Timestamp, Date},
+        util::{Timestamp, Date, Url, ser::BinaryVec},
     };
     use std::convert::TryFrom;
     use std::str::FromStr;
-    use url::Url;
 
     fn make_stamp(master_key: &SecretKey, sign_keypair: &RootKeypair, claim_id: ClaimID, stamper: &IdentityID, stampee: &IdentityID, ts: Option<Timestamp>) -> Stamp {
         assert!(stamper != stampee);
@@ -338,7 +360,7 @@ mod tests {
         let ser = stamp.serialize().unwrap();
         assert_eq!(ser, r#"---
 id:
-  Ed25519: 3cqOO1vDaIvAL8fx1EkfZb4b_9-3NvOsG1EieT4_aZfhHePrxEuaqXmuDkbOUwuzbYtomejye__677-0a8W0Bw
+  Ed25519: SCnRe6aqLMRo4uXLN4Pki0yeAFQTcQJs3ozNxuSULXTk6PNCv2jZ1A_XKbHQQXuctuMGGPMMuCbku0Wl0Xi5AQ
 entry:
   stamper:
     Ed25519: RUHyjlNbE7u7BCd9kp3_3jhKiC4w-8fpkox3HiTMD7gQDhGNS6dYCpJiU1C029gpqxjvLUmZmsokeQsjSC9gAA
@@ -455,19 +477,19 @@ entry:
 
         req_open!{ Name, String::from("Hippie Steve") }
         req_open!{ Birthday, Date::from_str("1957-12-03").unwrap() }
-        req_open!{ Email, String::from("decolonizing.decolonialist@decolonize.dclnze") }
-        req_open!{ Photo, ClaimBin(vec![5,6,7]) }
+        req_open!{ Email, String::from("decolonizing.decolonialism@decolonize.dclnze") }
+        req_open!{ Photo, BinaryVec::from(vec![5,6,7]) }
         req_open!{ Pgp, String::from("8989898989") }
         req_open!{ Domain, String::from("get.a.job") }
         req_open!{ Url, Url::parse("http://mrwgifs.com/wp-content/uploads/2014/05/Beavis-Typing-Random-Characters-On-The-Computer-On-Mike-Judges-Beavis-and-Butt-Head.gif").unwrap() }
         req_open!{ HomeAddress, String::from("123 DOINK ln., Bork, KY 44666") }
         req_open!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        req_open!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![69,69,69])) }
+        req_open!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
 
-        let val = ClaimBin(vec![89, 89, 89]);
-        let (opened_priv, opened_pub) = req_open!{ raw, |maybe, _| ClaimSpec::Extension(String::from("a-new-kind-of-claimspec"), maybe), val.clone() };
+        let val = BinaryVec::from(vec![89, 89, 89]);
+        let (opened_priv, opened_pub) = req_open!{ raw, |maybe, _| ClaimSpec::Extension { key: "a-new-kind-of-claimspec".into(), value: maybe }, val.clone() };
         match (opened_priv.spec().clone(), opened_pub.spec().clone()) {
-            (ClaimSpec::Extension(key1, MaybePrivate::Public(val1)), ClaimSpec::Extension(key2, MaybePrivate::Public(val2))) => {
+            (ClaimSpec::Extension { key: key1, value: MaybePrivate::Public(val1) }, ClaimSpec::Extension{ key: key2, value: MaybePrivate::Public(val2) }) => {
                 // the doctor said it was
                 assert_eq!(key1, String::from("a-new-kind-of-claimspec"));
                 assert_eq!(key2, String::from("a-new-kind-of-claimspec"));

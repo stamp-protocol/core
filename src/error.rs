@@ -126,8 +126,8 @@ pub enum Error {
     DagOrderingError,
 
     /// An error while engaging in deserialization.
-    #[error("deserialization error")]
-    Deserialize(#[from] rmp_serde::decode::Error),
+    #[error("ASN.1 deserialization error")]
+    DeserializeASN,
 
     /// An error while engaging in deserialization.
     #[error("deserialization error")]
@@ -222,8 +222,8 @@ pub enum Error {
     RecoveryPolicyRequestPolicyMismatch,
 
     /// An error while engaging in msgpack serialization.
-    #[error("msgpack serialization error")]
-    SerializeMsgPack(#[from] rmp_serde::encode::Error),
+    #[error("ASN.1 serialization error")]
+    SerializeASN,
 
     /// An error while engaging in yaml serialization.
     #[error("yaml serialization error")]
@@ -232,6 +232,10 @@ pub enum Error {
     /// We're trying to verify a signature on a value, but it's missing.
     #[error("signature missing on a value")]
     SignatureMissing,
+
+    /// Error parsing a URL
+    #[error("URL parse error")]
+    Url(#[from] url::ParseError)
 }
 
 impl PartialEq for Error {

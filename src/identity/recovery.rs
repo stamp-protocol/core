@@ -48,6 +48,7 @@ use crate::{
 };
 use getset;
 #[cfg(test)] use rand::RngCore;
+use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::convert::TryInto;
 use std::ops::Deref;
@@ -63,22 +64,29 @@ object_id! {
 }
 
 /// A condition that goes into a recovery policy.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum PolicyCondition {
     /// All of the given conditions must be met.
+    #[rasn(tag(explicit(0)))]
     All(Vec<PolicyCondition>),
     /// Any of the given conditions can be met.
+    #[rasn(tag(explicit(1)))]
     Any(Vec<PolicyCondition>),
     /// Of the given public keys, N many must produce a valid signature in order
     /// for the policy to be ratified.
+    #[rasn(tag(explicit(2)))]
     OfN {
         /// Must have at least this many signatures.
+        #[rasn(tag(explicit(0)))]
         must_have: u16,
         /// The keys we're listing as identity recovery keys.
+        #[rasn(tag(explicit(1)))]
         pubkeys: Vec<SignKeypairPublic>,
     },
     /// A special condition that can never be satisfied. Useful for creating
     /// policies that cannot be fulfilled.
+    #[rasn(tag(explicit(3)))]
     Deny,
 }
 
@@ -122,10 +130,12 @@ impl PolicyCondition {
 }
 
 /// A recovery policy.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct RecoveryPolicy {
+    #[rasn(tag(explicit(0)))]
     id: PolicyID,
+    #[rasn(tag(explicit(1)))]
     conditions: PolicyCondition,
 }
 
@@ -141,7 +151,7 @@ impl RecoveryPolicy {
     pub(crate) fn validate_request(&self, identity_id: &IdentityID, request: &PolicyRequest) -> Result<()> {
         // make sure the request signature is valid
         match request.entry().action() {
-            PolicyRequestAction::ReplaceKeys(policy, ..) => request.verify(&policy)?,
+            PolicyRequestAction::ReplaceKeys { policy, .. } => request.verify(&policy)?,
         }
 
         // check the identity matches the request
@@ -166,20 +176,33 @@ impl RecoveryPolicy {
 }
 
 /// The actions we can take on a recovery request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum PolicyRequestAction {
     /// Replace the current policy-controlled keys.
-    ReplaceKeys(PolicyKeypair, PublishKeypair, RootKeypair),
+    #[rasn(tag(explicit(0)))]
+    ReplaceKeys {
+        #[rasn(tag(explicit(0)))]
+        policy: PolicyKeypair,
+        #[rasn(tag(explicit(1)))]
+        publish: PublishKeypair,
+        #[rasn(tag(explicit(2)))]
+        root: RootKeypair,
+    },
 }
 
 impl PolicyRequestAction {
     fn reencrypt(self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         match self {
-            Self::ReplaceKeys(policy, publish, root) => {
+            Self::ReplaceKeys { policy, publish, root } => {
                 let new_policy = policy.reencrypt(old_master_key, new_master_key)?;
                 let new_publish = publish.reencrypt(old_master_key, new_master_key)?;
                 let new_root = root.reencrypt(old_master_key, new_master_key)?;
-                Ok(Self::ReplaceKeys(new_policy, new_publish, new_root))
+                Ok(Self::ReplaceKeys {
+                    policy: new_policy,
+                    publish: new_publish,
+                    root: new_root,
+                })
             }
         }
     }
@@ -188,15 +211,19 @@ impl PolicyRequestAction {
 impl Public for PolicyRequestAction {
     fn strip_private(&self) -> Self {
         match self {
-            Self::ReplaceKeys(policy, publish, root) => {
-                Self::ReplaceKeys(policy.strip_private(), publish.strip_private(), root.strip_private())
+            Self::ReplaceKeys { policy, publish, root } => {
+                Self::ReplaceKeys {
+                    policy: policy.strip_private(),
+                    publish: publish.strip_private(),
+                    root: root.strip_private(),
+                }
             }
         }
     }
 
     fn has_private(&self) -> bool {
         match self {
-            Self::ReplaceKeys(policy, publish, root) => {
+            Self::ReplaceKeys { policy, publish, root } => {
                 policy.has_private() || publish.has_private() || root.has_private()
             }
         }
@@ -205,15 +232,18 @@ impl Public for PolicyRequestAction {
 
 /// The inner data of a recovery request. This object is what our recovery
 /// compadres sign when they help us execute a recovery request.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct PolicyRequestEntry {
     /// "The ID of the identity we're trying to recover," he said with a boyish
     /// grin.
+    #[rasn(tag(explicit(0)))]
     identity_id: IdentityID,
     /// The ID of the policy we're trying to satisfy.
+    #[rasn(tag(explicit(1)))]
     policy_id: PolicyID,
     /// What exactly is it we're trying to do.
+    #[rasn(tag(explicit(2)))]
     action: PolicyRequestAction,
 }
 
@@ -231,15 +261,17 @@ impl PolicyRequestEntry {
 /// A recovery request. Must be signed and validated according to the identity's
 /// current [recovery policy](RecoveryPolicy) to be
 /// considered valid.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct PolicyRequest {
     /// The ID of this request. This is a signature (using the new policy
     /// keypair) of our `PolicyRequestEntry`.
+    #[rasn(tag(explicit(0)))]
     id: RequestID,
     /// The actual policy request data: this contains the new policy and the new
     /// recovery key we'll use in the event the request satisfies the current
     /// policy.
+    #[rasn(tag(explicit(1)))]
     entry: PolicyRequestEntry,
     /// Here, we collect the signaturs needed to fulfill the policy. The request
     /// can only be executed if the signatures match the conditions of the
@@ -247,6 +279,7 @@ pub struct PolicyRequest {
     ///
     /// Each signature must sign the `entry` field (the [PolicyRequestEntry]
     /// object).
+    #[rasn(tag(explicit(2)))]
     signatures: Vec<SignKeypairSignature>,
 }
 
@@ -464,7 +497,11 @@ mod tests {
         let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
-        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+        let action = PolicyRequestAction::ReplaceKeys {
+            policy: new_policy_keypair.clone(),
+            publish: new_publish_keypair.clone(),
+            root: new_root_keypair.clone(),
+        };
         let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action.clone());
         let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
 
@@ -484,9 +521,13 @@ mod tests {
         sig_failed! { req_mod, req_mod.entry_mut().set_identity_id(IdentityID::random()) }
         sig_failed! { req_mod, req_mod.entry_mut().set_policy_id(PolicyID::random()) }
         match req.entry().action().clone() {
-            PolicyRequestAction::ReplaceKeys(_, publish, root) => {
+            PolicyRequestAction::ReplaceKeys { publish, root, .. } => {
                 let new_policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
-                let new_action = PolicyRequestAction::ReplaceKeys(new_policy, publish, root);
+                let new_action = PolicyRequestAction::ReplaceKeys {
+                    policy: new_policy,
+                    publish,
+                    root,
+                };
                 sig_failed! { req_mod, req_mod.entry_mut().set_action(new_action) }
             }
         }
@@ -532,14 +573,18 @@ mod tests {
         let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
         let identity_id = IdentityID::random();
         let policy_id = PolicyID::random();
-        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+        let action = PolicyRequestAction::ReplaceKeys {
+            policy: new_policy_keypair.clone(),
+            publish: new_publish_keypair.clone(),
+            root: new_root_keypair.clone(),
+        };
         let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action);
         let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
 
         assert_eq!(req.entry().identity_id(), &identity_id);
         assert_eq!(req.entry().policy_id(), &policy_id);
         match req.entry().action() {
-            PolicyRequestAction::ReplaceKeys(policy, publish, root) => {
+            PolicyRequestAction::ReplaceKeys { policy, publish, root } => {
                 assert_eq!(policy, &new_policy_keypair);
                 assert_eq!(publish, &new_publish_keypair);
                 assert_eq!(root, &new_root_keypair);
@@ -569,7 +614,11 @@ mod tests {
         let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
         let identity_id = IdentityID::random();
         let policy_id = PolicyID::random();
-        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+        let action = PolicyRequestAction::ReplaceKeys {
+            policy: new_policy_keypair.clone(),
+            publish: new_publish_keypair.clone(),
+            root: new_root_keypair.clone(),
+        };
         let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action);
         let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
 
@@ -577,7 +626,7 @@ mod tests {
         let obj = "yeah sure you are.";
 
         let sig = match req.entry().action() {
-            PolicyRequestAction::ReplaceKeys(policy, ..) => {
+            PolicyRequestAction::ReplaceKeys { policy, .. } => {
                 policy.sign(&master_key, obj.as_bytes()).unwrap()
             }
         };
@@ -586,7 +635,7 @@ mod tests {
         let req2 = req.reencrypt(&master_key, &new_master_key).unwrap();
 
         match req2.entry().action() {
-            PolicyRequestAction::ReplaceKeys(policy, ..) => {
+            PolicyRequestAction::ReplaceKeys { policy, .. } => {
                 let sig2 = policy.sign(&new_master_key, obj.as_bytes()).unwrap();
                 assert_eq!(sig, sig2);
                 let res = policy.sign(&master_key, obj.as_bytes());
@@ -603,13 +652,17 @@ mod tests {
         let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
         let identity_id = IdentityID::random();
         let policy_id = PolicyID::random();
-        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+        let action = PolicyRequestAction::ReplaceKeys {
+            policy: new_policy_keypair.clone(),
+            publish: new_publish_keypair.clone(),
+            root: new_root_keypair.clone(),
+        };
         let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action);
         let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
 
         assert!(req.has_private());
         match req.entry().action() {
-            PolicyRequestAction::ReplaceKeys(policy, publish, root) => {
+            PolicyRequestAction::ReplaceKeys{ policy, publish, root } => {
                 assert!(policy.has_private());
                 assert!(publish.has_private());
                 assert!(root.has_private());
@@ -618,7 +671,7 @@ mod tests {
         let req2 = req.strip_private();
         assert!(!req2.has_private());
         match req2.entry().action() {
-            PolicyRequestAction::ReplaceKeys(policy, publish, root) => {
+            PolicyRequestAction::ReplaceKeys { policy, publish, root } => {
                 assert!(!policy.has_private());
                 assert!(!publish.has_private());
                 assert!(!root.has_private());

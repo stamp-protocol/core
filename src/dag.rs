@@ -50,6 +50,7 @@ use crate::{
     },
 };
 use getset;
+use rasn::{Encode, Decode, AsnType};
 use serde_derive::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -57,7 +58,8 @@ use std::ops::Deref;
 
 /// This is all of the possible transactions that can be performed on an
 /// identity, including the data they require.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum TransactionBody {
     /// Used when a transaction's entire body is private data and we wish to
     /// still include the transaction, but hide the body.
@@ -71,23 +73,119 @@ pub enum TransactionBody {
     /// container.
     Private,
 
-    CreateIdentityV1(AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair),
-    SetRecoveryPolicyV1(Option<PolicyCondition>),
-    ExecuteRecoveryPolicyV1(PolicyRequest),
-    MakeClaimV1(ClaimSpec),
-    DeleteClaimV1(ClaimID),
-    AcceptStampV1(Stamp),
-    DeleteStampV1(StampID),
-    SetPolicyKeyV1(PolicyKeypair, RevocationReason),
-    SetPublishKeyV1(PublishKeypair, RevocationReason),
-    SetRootKeyV1(RootKeypair, RevocationReason),
-    AddSubkeyV1(Key, String, Option<String>),
-    EditSubkeyV1(String, String, Option<String>),
-    RevokeSubkeyV1(String, RevocationReason, Option<String>),
-    DeleteSubkeyV1(String),
-    SetNicknameV1(Option<String>),
-    AddForwardV1(String, ForwardType, bool),
-    DeleteForwardV1(String),
+    #[rasn(tag(explicit(0)))]
+    CreateIdentityV1 {
+        #[rasn(tag(explicit(0)))]
+        alpha: AlphaKeypair,
+        #[rasn(tag(explicit(1)))]
+        policy: PolicyKeypair,
+        #[rasn(tag(explicit(2)))]
+        publish: PublishKeypair,
+        #[rasn(tag(explicit(3)))]
+        root: RootKeypair,
+    },
+    #[rasn(tag(explicit(1)))]
+    SetRecoveryPolicyV1 {
+        #[rasn(tag(explicit(0)))]
+        policy: Option<PolicyCondition>,
+    },
+    #[rasn(tag(explicit(2)))]
+    ExecuteRecoveryPolicyV1 {
+        #[rasn(tag(explicit(0)))]
+        request: PolicyRequest,
+    },
+    #[rasn(tag(explicit(3)))]
+    MakeClaimV1 {
+        #[rasn(tag(explicit(0)))]
+        spec: ClaimSpec,
+    },
+    #[rasn(tag(explicit(4)))]
+    DeleteClaimV1 {
+        #[rasn(tag(explicit(0)))]
+        claim_id: ClaimID,
+    },
+    #[rasn(tag(explicit(5)))]
+    AcceptStampV1 {
+        #[rasn(tag(explicit(0)))]
+        stamp: Stamp,
+    },
+    #[rasn(tag(explicit(6)))]
+    DeleteStampV1 {
+        #[rasn(tag(explicit(0)))]
+        stamp_id: StampID,
+    },
+    #[rasn(tag(explicit(7)))]
+    SetPolicyKeyV1 {
+        #[rasn(tag(explicit(0)))]
+        keypair: PolicyKeypair,
+        #[rasn(tag(explicit(1)))]
+        reason: RevocationReason,
+    },
+    #[rasn(tag(explicit(8)))]
+    SetPublishKeyV1 {
+        #[rasn(tag(explicit(0)))]
+        keypair: PublishKeypair,
+        #[rasn(tag(explicit(1)))]
+        reason: RevocationReason,
+    },
+    #[rasn(tag(explicit(9)))]
+    SetRootKeyV1 {
+        #[rasn(tag(explicit(0)))]
+        keypair: RootKeypair,
+        #[rasn(tag(explicit(1)))]
+        reason: RevocationReason,
+    },
+    #[rasn(tag(explicit(10)))]
+    AddSubkeyV1 { 
+        #[rasn(tag(explicit(0)))]
+        key: Key,
+        #[rasn(tag(explicit(1)))]
+        name: String,
+        #[rasn(tag(explicit(2)))]
+        desc: Option<String>,
+    },
+    #[rasn(tag(explicit(11)))]
+    EditSubkeyV1 {
+        #[rasn(tag(explicit(0)))]
+        name: String,
+        #[rasn(tag(explicit(1)))]
+        new_name: String,
+        #[rasn(tag(explicit(2)))]
+        desc: Option<String>,
+    },
+    #[rasn(tag(explicit(12)))]
+    RevokeSubkeyV1 {
+        #[rasn(tag(explicit(0)))]
+        name: String,
+        #[rasn(tag(explicit(1)))]
+        reason: RevocationReason,
+        #[rasn(tag(explicit(2)))]
+        new_name: Option<String>,
+    },
+    #[rasn(tag(explicit(13)))]
+    DeleteSubkeyV1 {
+        #[rasn(tag(explicit(0)))]
+        name: String,
+    },
+    #[rasn(tag(explicit(14)))]
+    SetNicknameV1 {
+        #[rasn(tag(explicit(0)))]
+        nickname: Option<String>,
+    },
+    #[rasn(tag(explicit(15)))]
+    AddForwardV1 {
+        #[rasn(tag(explicit(0)))]
+        name: String,
+        #[rasn(tag(explicit(1)))]
+        ty: ForwardType,
+        #[rasn(tag(explicit(2)))]
+        default: bool,
+    },
+    #[rasn(tag(explicit(16)))]
+    DeleteForwardV1 { 
+        #[rasn(tag(explicit(0)))]
+        name: String,
+    },
 }
 
 impl TransactionBody {
@@ -95,43 +193,50 @@ impl TransactionBody {
     fn reencrypt(self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let new_self = match self {
             Self::Private => Self::Private,
-            Self::CreateIdentityV1(alpha, policy, publish, root) => {
+            Self::CreateIdentityV1 { alpha, policy, publish, root } => {
                 let new_alpha = alpha.reencrypt(old_master_key, new_master_key)?;
                 let new_policy = policy.reencrypt(old_master_key, new_master_key)?;
                 let new_publish = publish.reencrypt(old_master_key, new_master_key)?;
                 let new_root = root.reencrypt(old_master_key, new_master_key)?;
-                Self::CreateIdentityV1(new_alpha, new_policy, new_publish, new_root)
+                Self::CreateIdentityV1 {
+                    alpha: new_alpha,
+                    policy: new_policy,
+                    publish: new_publish,
+                    root: new_root,
+                }
             }
-            Self::SetRecoveryPolicyV1(policy) => Self::SetRecoveryPolicyV1(policy),
-            Self::ExecuteRecoveryPolicyV1(req) => {
-                Self::ExecuteRecoveryPolicyV1(req.reencrypt(old_master_key, new_master_key)?)
-            }
-            Self::MakeClaimV1(spec) => Self::MakeClaimV1(spec.reencrypt(old_master_key, new_master_key)?),
-            Self::DeleteClaimV1(claim_id) => Self::DeleteClaimV1(claim_id),
-            Self::AcceptStampV1(stamp) => Self::AcceptStampV1(stamp),
-            Self::DeleteStampV1(stamp_id) => Self::DeleteStampV1(stamp_id),
-            Self::SetPolicyKeyV1(keypair, reason) => {
+            Self::SetRecoveryPolicyV1 { policy } => Self::SetRecoveryPolicyV1 { policy },
+            Self::ExecuteRecoveryPolicyV1 { request } => Self::ExecuteRecoveryPolicyV1 {
+                request: request.reencrypt(old_master_key, new_master_key)?,
+            },
+            Self::MakeClaimV1 { spec } => Self::MakeClaimV1 {
+                spec: spec.reencrypt(old_master_key, new_master_key)?,
+            },
+            Self::DeleteClaimV1 { claim_id } => Self::DeleteClaimV1 { claim_id },
+            Self::AcceptStampV1 { stamp } => Self::AcceptStampV1 { stamp },
+            Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
+            Self::SetPolicyKeyV1 { keypair, reason } => {
                 let new_keypair = keypair.reencrypt(old_master_key, new_master_key)?;
-                Self::SetPolicyKeyV1(new_keypair, reason)
+                Self::SetPolicyKeyV1 { keypair: new_keypair, reason }
             }
-            Self::SetPublishKeyV1(keypair, reason) => {
+            Self::SetPublishKeyV1 { keypair, reason } => {
                 let new_keypair = keypair.reencrypt(old_master_key, new_master_key)?;
-                Self::SetPublishKeyV1(new_keypair, reason)
+                Self::SetPublishKeyV1 { keypair: new_keypair, reason }
             }
-            Self::SetRootKeyV1(keypair, reason) => {
+            Self::SetRootKeyV1 { keypair, reason } => {
                 let new_keypair = keypair.reencrypt(old_master_key, new_master_key)?;
-                Self::SetRootKeyV1(new_keypair, reason)
+                Self::SetRootKeyV1 { keypair: new_keypair, reason }
             }
-            Self::AddSubkeyV1(key, name, desc) => {
+            Self::AddSubkeyV1 { key, name, desc } => {
                 let new_subkey = key.reencrypt(old_master_key, new_master_key)?;
-                Self::AddSubkeyV1(new_subkey, name, desc)
+                Self::AddSubkeyV1 { key: new_subkey, name, desc }
             }
-            Self::EditSubkeyV1(name, new_name, desc) => Self::EditSubkeyV1(name, new_name, desc),
-            Self::RevokeSubkeyV1(name, reason, new_name) => Self::RevokeSubkeyV1(name, reason, new_name),
-            Self::DeleteSubkeyV1(name) => Self::DeleteSubkeyV1(name),
-            Self::SetNicknameV1(nick) => Self::SetNicknameV1(nick),
-            Self::AddForwardV1(name, ty, def) => Self::AddForwardV1(name, ty, def),
-            Self::DeleteForwardV1(name) => Self::DeleteForwardV1(name),
+            Self::EditSubkeyV1 { name, new_name, desc } => Self::EditSubkeyV1 { name, new_name, desc },
+            Self::RevokeSubkeyV1 { name, reason, new_name } => Self::RevokeSubkeyV1 { name, reason, new_name },
+            Self::DeleteSubkeyV1 { name } => Self::DeleteSubkeyV1 { name },
+            Self::SetNicknameV1 { nickname } => Self::SetNicknameV1 { nickname },
+            Self::AddForwardV1 { name, ty, default } => Self::AddForwardV1 { name, ty, default },
+            Self::DeleteForwardV1 { name } => Self::DeleteForwardV1 { name },
         };
         Ok(new_self)
     }
@@ -141,73 +246,91 @@ impl Public for TransactionBody {
     fn strip_private(&self) -> Self {
         match self.clone() {
             Self::Private => Self::Private,
-            Self::CreateIdentityV1(alpha, policy, publish, root) => {
-                Self::CreateIdentityV1(alpha.strip_private(), policy.strip_private(), publish.strip_private(), root.strip_private())
+            Self::CreateIdentityV1 { alpha, policy, publish, root } => {
+                Self::CreateIdentityV1 {
+                    alpha: alpha.strip_private(),
+                    policy: policy.strip_private(),
+                    publish: publish.strip_private(),
+                    root: root.strip_private(),
+                }
             }
-            Self::SetRecoveryPolicyV1(policy) => Self::SetRecoveryPolicyV1(policy),
-            Self::ExecuteRecoveryPolicyV1(request) => Self::ExecuteRecoveryPolicyV1(request.strip_private()),
-            Self::MakeClaimV1(spec) => Self::MakeClaimV1(spec.strip_private()),
-            Self::DeleteClaimV1(claim_id) => Self::DeleteClaimV1(claim_id),
-            Self::AcceptStampV1(stamp) => Self::AcceptStampV1(stamp.strip_private()),
-            Self::DeleteStampV1(stamp_id) => Self::DeleteStampV1(stamp_id),
-            Self::SetPolicyKeyV1(keypair, revocation) => {
-                Self::SetPolicyKeyV1(keypair.strip_private(), revocation)
+            Self::SetRecoveryPolicyV1 { policy } => Self::SetRecoveryPolicyV1 { policy },
+            Self::ExecuteRecoveryPolicyV1 { request } => Self::ExecuteRecoveryPolicyV1 { request: request.strip_private() },
+            Self::MakeClaimV1 { spec } => Self::MakeClaimV1 { spec: spec.strip_private() },
+            Self::DeleteClaimV1 { claim_id } => Self::DeleteClaimV1 { claim_id },
+            Self::AcceptStampV1 { stamp } => Self::AcceptStampV1 { stamp: stamp.strip_private() },
+            Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
+            Self::SetPolicyKeyV1 { keypair, reason } => {
+                Self::SetPolicyKeyV1 {
+                    keypair: keypair.strip_private(),
+                    reason,
+                }
             }
-            Self::SetPublishKeyV1(keypair, revocation) => {
-                Self::SetPublishKeyV1(keypair.strip_private(), revocation)
+            Self::SetPublishKeyV1 { keypair, reason } => {
+                Self::SetPublishKeyV1 {
+                    keypair: keypair.strip_private(),
+                    reason,
+                }
             }
-            Self::SetRootKeyV1(keypair, revocation) => {
-                Self::SetRootKeyV1(keypair.strip_private(), revocation)
+            Self::SetRootKeyV1 { keypair, reason } => {
+                Self::SetRootKeyV1 {
+                    keypair: keypair.strip_private(),
+                    reason,
+                }
             }
-            Self::AddSubkeyV1(key, name, desc) => {
+            Self::AddSubkeyV1 { key, name, desc } => {
                 // here's a good place to use Self::Private -- if stripping the
                 // key removes ALL of its data, then we probably don't want to
                 // include the transaction body.
                 match key.strip_private_maybe() {
-                    Some(stripped) => Self::AddSubkeyV1(stripped, name, desc),
+                    Some(stripped) => Self::AddSubkeyV1 { key: stripped, name, desc },
                     None => Self::Private,
                 }
             }
-            Self::EditSubkeyV1(name, new_name, new_desc) => Self::EditSubkeyV1(name, new_name, new_desc),
-            Self::RevokeSubkeyV1(key_id, revocation, new_name) => Self::RevokeSubkeyV1(key_id, revocation, new_name),
-            Self::DeleteSubkeyV1(key_id) => Self::DeleteSubkeyV1(key_id),
-            Self::SetNicknameV1(nick) => Self::SetNicknameV1(nick),
-            Self::AddForwardV1(name, forward, default) => Self::AddForwardV1(name, forward, default),
-            Self::DeleteForwardV1(name) => Self::DeleteForwardV1(name),
+            Self::EditSubkeyV1 { name, new_name, desc: new_desc } => Self::EditSubkeyV1 { name, new_name, desc: new_desc },
+            Self::RevokeSubkeyV1 { name, reason, new_name } => Self::RevokeSubkeyV1 { name, reason, new_name },
+            Self::DeleteSubkeyV1 { name } => Self::DeleteSubkeyV1 { name },
+            Self::SetNicknameV1 { nickname } => Self::SetNicknameV1 { nickname },
+            Self::AddForwardV1 { name, ty, default } => Self::AddForwardV1 { name, ty, default },
+            Self::DeleteForwardV1 { name } => Self::DeleteForwardV1 { name },
         }
     }
 
     fn has_private(&self) -> bool {
         match self {
             Self::Private => false,
-            Self::CreateIdentityV1(alpha, policy, publish, root) => {
+            Self::CreateIdentityV1 { alpha, policy, publish, root } => {
                 alpha.has_private() || policy.has_private() || publish.has_private() || root.has_private()
             }
-            Self::SetRecoveryPolicyV1(..) => false,
-            Self::ExecuteRecoveryPolicyV1(request) => request.has_private(),
-            Self::MakeClaimV1(spec) => spec.has_private(),
-            Self::DeleteClaimV1(..) => false,
-            Self::AcceptStampV1(..) => false,
-            Self::DeleteStampV1(..) => false,
-            Self::SetPolicyKeyV1(keypair, ..) => keypair.has_private(),
-            Self::SetPublishKeyV1(keypair, ..) => keypair.has_private(),
-            Self::SetRootKeyV1(keypair, ..) => keypair.has_private(),
-            Self::AddSubkeyV1(key, ..) => key.has_private(),
-            Self::EditSubkeyV1(..) => false,
-            Self::RevokeSubkeyV1(..) => false,
-            Self::DeleteSubkeyV1(..) => false,
-            Self::SetNicknameV1(..) => false,
-            Self::AddForwardV1(..) => false,
-            Self::DeleteForwardV1(..) => false,
+            Self::SetRecoveryPolicyV1 { .. } => false,
+            Self::ExecuteRecoveryPolicyV1 { request } => request.has_private(),
+            Self::MakeClaimV1 { spec } => spec.has_private(),
+            Self::DeleteClaimV1 { .. } => false,
+            Self::AcceptStampV1 { .. } => false,
+            Self::DeleteStampV1 { .. } => false,
+            Self::SetPolicyKeyV1 { keypair, .. } => keypair.has_private(),
+            Self::SetPublishKeyV1 { keypair, .. } => keypair.has_private(),
+            Self::SetRootKeyV1 { keypair, .. } => keypair.has_private(),
+            Self::AddSubkeyV1 { key, .. } => key.has_private(),
+            Self::EditSubkeyV1 { .. } => false,
+            Self::RevokeSubkeyV1 { .. } => false,
+            Self::DeleteSubkeyV1 { .. } => false,
+            Self::SetNicknameV1 { .. } => false,
+            Self::AddForwardV1 { .. } => false,
+            Self::DeleteForwardV1 { .. } => false,
         }
     }
 }
 
 /// The TransactionID holds the signature of a transaction by a particular key.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum TransactionID {
+    #[rasn(tag(explicit(0)))]
     Alpha(AlphaKeypairSignature),
+    #[rasn(tag(explicit(1)))]
     Policy(PolicyKeypairSignature),
+    #[rasn(tag(explicit(2)))]
     Root(RootKeypairSignature),
 }
 
@@ -249,10 +372,11 @@ impl TransactionID {
 
 /// The body of an identity transaction. Holds the transaction's references to
 /// its previous transactions and the transaction type/data itself.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct TransactionEntry {
     /// When this transaction was created.
+    #[rasn(tag(explicit(0)))]
     created: Timestamp,
     /// This is a list of previous transactions that are not already listed by
     /// another transaction.
@@ -266,8 +390,10 @@ pub struct TransactionEntry {
     /// Note that when listing previous transactions, their `created` times must
     /// be *less than* this transaction's created time. Future transactions
     /// cannot be signed into a past one.
+    #[rasn(tag(explicit(1)))]
     previous_transactions: Vec<TransactionID>,
     /// This holds the actual transaction data.
+    #[rasn(tag(explicit(2)))]
     body: TransactionBody,
 }
 
@@ -296,13 +422,15 @@ impl Public for TransactionEntry {
 
 /// A transaction represents a single change on an identity object. In order to
 /// build an identity, all transactions are played in order from start to finish.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transaction {
     /// This is a signature of this transaction's `entry`.
+    #[rasn(tag(explicit(0)))]
     id: TransactionID,
     /// This holds our transaction body: any references to previous
     /// transactions as well as the transaction type/data.
+    #[rasn(tag(explicit(1)))]
     entry: TransactionEntry,
 }
 
@@ -323,10 +451,10 @@ impl Transaction {
                 // ...unless we're executing a recovery policy, in which case
                 // the signature must come from the POLICY key
                 match entry.body() {
-                    TransactionBody::CreateIdentityV1(..) => Err(Error::DagCreateIdentityOnExistingChain)?,
-                    TransactionBody::ExecuteRecoveryPolicyV1(request) => {
+                    TransactionBody::CreateIdentityV1 { .. } => Err(Error::DagCreateIdentityOnExistingChain)?,
+                    TransactionBody::ExecuteRecoveryPolicyV1 { request } => {
                         match request.entry().action() {
-                            PolicyRequestAction::ReplaceKeys(policy, ..) => {
+                            PolicyRequestAction::ReplaceKeys { policy, .. } => {
                                 match sign_with {
                                     SignWith::Policy => TransactionID::Policy(policy.sign(master_key, serialized.as_slice())?),
                                     // recovery transactions must be signed by
@@ -345,7 +473,7 @@ impl Transaction {
             // transaction itself.
             None => {
                 match entry.body() {
-                    TransactionBody::CreateIdentityV1(ref alpha, ..) => {
+                    TransactionBody::CreateIdentityV1 { ref alpha, .. } => {
                         match sign_with {
                             SignWith::Alpha => TransactionID::Alpha(alpha.sign(master_key, serialized.as_slice())?),
                             // you can only sign a blank identity with the alpha key
@@ -377,9 +505,9 @@ impl Transaction {
                     }
                 };
                 match self.entry().body() {
-                    TransactionBody::ExecuteRecoveryPolicyV1(request) => {
+                    TransactionBody::ExecuteRecoveryPolicyV1 { request } => {
                         match request.entry().action() {
-                            PolicyRequestAction::ReplaceKeys(policy, ..) => {
+                            PolicyRequestAction::ReplaceKeys { policy, .. } => {
                                 match self.id() {
                                     TransactionID::Policy(ref sig) => policy.verify(sig, &serialized),
                                     // recovery transactions must be signed by
@@ -396,7 +524,7 @@ impl Transaction {
             // transaction that creates it.
             None => {
                 match self.entry().body() {
-                    TransactionBody::CreateIdentityV1(ref alpha, ..) => {
+                    TransactionBody::CreateIdentityV1 { ref alpha, .. } => {
                         match self.id() {
                             TransactionID::Alpha(ref sig) => alpha.verify(sig, &serialized),
                             // genesis transaction must be signed by alpha
@@ -444,8 +572,10 @@ pub trait GraphInfo {
 
 /// This enum helps us version our transactions so that we can make dumb
 /// mistakes that don't haunt us until the end of time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum TransactionVersioned {
+    #[rasn(tag(explicit(0)))]
     V1(Transaction),
 }
 
@@ -514,10 +644,11 @@ pub(crate) enum SignWith {
 }
 
 /// A container that holds a set of transactions.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transactions {
     /// The actual transactions.
+    #[rasn(tag(explicit(0)))]
     transactions: Vec<TransactionVersioned>,
 }
 
@@ -537,87 +668,87 @@ impl Transactions {
                     TransactionBody::Private => {
                         identity.ok_or(Error::DagMissingIdentity)
                     }
-                    TransactionBody::CreateIdentityV1(alpha, policy, publish, root) => {
+                    TransactionBody::CreateIdentityV1 { alpha, policy, publish, root } => {
                         let identity_id = IdentityID(trans.id().deref().clone());
                         Ok(Identity::create(identity_id, alpha, policy, publish, root, trans.entry().created().clone()))
                     }
-                    TransactionBody::SetRecoveryPolicyV1(policy_condition) => {
+                    TransactionBody::SetRecoveryPolicyV1 { policy: policy_condition } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
                             .set_recovery(PolicyID(trans.id().deref().clone()), policy_condition);
                         Ok(identity_mod)
                     }
-                    TransactionBody::ExecuteRecoveryPolicyV1(request) => {
+                    TransactionBody::ExecuteRecoveryPolicyV1 { request } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
                             .execute_recovery(request)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::MakeClaimV1(spec) => {
+                    TransactionBody::MakeClaimV1 { spec } => {
                         let claim_id = ClaimID(trans.id().deref().clone());
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
                             .make_claim(claim_id, spec, trans.entry().created().clone());
                         Ok(identity_mod)
                     }
-                    TransactionBody::DeleteClaimV1(claim_id) => {
+                    TransactionBody::DeleteClaimV1 { claim_id } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
                             .delete_claim(&claim_id)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::AcceptStampV1(stamp) => {
+                    TransactionBody::AcceptStampV1 { stamp } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
                             .accept_stamp(stamp)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::DeleteStampV1(stamp_id) => {
+                    TransactionBody::DeleteStampV1 { stamp_id } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
                             .delete_stamp(&stamp_id)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::SetPolicyKeyV1(keypair, revocation_reason) => {
+                    TransactionBody::SetPolicyKeyV1 { keypair, reason } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                            .set_policy_key(keypair, revocation_reason)?;
+                            .set_policy_key(keypair, reason)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::SetPublishKeyV1(keypair, revocation_reason) => {
+                    TransactionBody::SetPublishKeyV1 { keypair, reason } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                            .set_publish_key(keypair, revocation_reason)?;
+                            .set_publish_key(keypair, reason)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::SetRootKeyV1(keypair, revocation_reason) => {
+                    TransactionBody::SetRootKeyV1 { keypair, reason } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                            .set_root_key(keypair, revocation_reason)?;
+                            .set_root_key(keypair, reason)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::AddSubkeyV1(key, name, desc) => {
+                    TransactionBody::AddSubkeyV1 { key, name, desc } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
                             .add_subkey(key, name, desc)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::EditSubkeyV1(name, new_name, new_desc) => {
+                    TransactionBody::EditSubkeyV1 { name, new_name, desc } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                            .edit_subkey(&name, new_name, new_desc)?;
+                            .edit_subkey(&name, new_name, desc)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::RevokeSubkeyV1(key_id, revocation_reason, new_name) => {
+                    TransactionBody::RevokeSubkeyV1 { name, reason, new_name } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                            .revoke_subkey(&key_id, revocation_reason, new_name)?;
+                            .revoke_subkey(&name, reason, new_name)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::DeleteSubkeyV1(key_id) => {
+                    TransactionBody::DeleteSubkeyV1 { name } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                            .delete_subkey(&key_id)?;
+                            .delete_subkey(&name)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::SetNicknameV1(nickname) => {
+                    TransactionBody::SetNicknameV1 { nickname } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
                             .set_nickname(nickname);
                         Ok(identity_mod)
                     }
-                    TransactionBody::AddForwardV1(name, ty, is_default) => {
+                    TransactionBody::AddForwardV1 { name, ty, default } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                            .add_forward(name, ty, is_default)?;
+                            .add_forward(name, ty, default)?;
                         Ok(identity_mod)
                     }
-                    TransactionBody::DeleteForwardV1(name) => {
+                    TransactionBody::DeleteForwardV1 { name } => {
                         let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
                             .delete_forward(&name)?;
                         Ok(identity_mod)
@@ -916,70 +1047,70 @@ impl Transactions {
         if self.transactions().len() > 0 {
             Err(Error::DagCreateIdentityOnExistingChain)?;
         }
-        let body = TransactionBody::CreateIdentityV1(alpha, policy, publish, root);
+        let body = TransactionBody::CreateIdentityV1 { alpha, policy, publish, root };
         self.push_transaction(master_key, SignWith::Alpha, now.clone(), body)?;
         Ok(self)
     }
 
     /// Set a recovery policy.
     pub fn set_recovery_policy<T: Into<Timestamp> + Clone>(mut self, master_key: &SecretKey, now: T, policy: Option<PolicyCondition>) -> Result<Self> {
-        let body = TransactionBody::SetRecoveryPolicyV1(policy);
+        let body = TransactionBody::SetRecoveryPolicyV1 { policy };
         self.push_transaction(master_key, SignWith::Policy, now, body)?;
         Ok(self)
     }
 
     /// Execute a recovery policy (replace your keys via a policy).
     pub fn execute_recovery_policy<T: Into<Timestamp> + Clone>(mut self, master_key: &SecretKey, now: T, request: PolicyRequest) -> Result<Self> {
-        let body = TransactionBody::ExecuteRecoveryPolicyV1(request);
+        let body = TransactionBody::ExecuteRecoveryPolicyV1 { request };
         self.push_transaction(master_key, SignWith::Policy, now, body)?;
         Ok(self)
     }
 
     /// Make a new claim.
     pub fn make_claim<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, spec: ClaimSpec) -> Result<Self> {
-        let body = TransactionBody::MakeClaimV1(spec);
+        let body = TransactionBody::MakeClaimV1 { spec };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
 
     /// Delete an existing claim.
     pub fn delete_claim<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, claim_id: ClaimID) -> Result<Self> {
-        let body = TransactionBody::DeleteClaimV1(claim_id);
+        let body = TransactionBody::DeleteClaimV1 { claim_id };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
 
     /// Accept a stamp someone, or some*thing*, has made on a claim of ours.
     pub fn accept_stamp<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, stamp: Stamp) -> Result<Self> {
-        let body = TransactionBody::AcceptStampV1(stamp);
+        let body = TransactionBody::AcceptStampV1 { stamp };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
 
     /// Delete an existing stamp.
     pub fn delete_stamp<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, stamp_id: StampID) -> Result<Self> {
-        let body = TransactionBody::DeleteStampV1(stamp_id);
+        let body = TransactionBody::DeleteStampV1 { stamp_id };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
 
     /// Assign a new policy key to this identity. Requires an alpha sig.
     pub fn set_policy_key<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, keypair: PolicyKeypair, revocation_reason: RevocationReason) -> Result<Self> {
-        let body = TransactionBody::SetPolicyKeyV1(keypair, revocation_reason);
+        let body = TransactionBody::SetPolicyKeyV1 { keypair, reason: revocation_reason };
         self.push_transaction(master_key, SignWith::Alpha, now, body)?;
         Ok(self)
     }
 
     /// Assign a new publish key to this identity. Requires an alpha sig.
     pub fn set_publish_key<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, keypair: PublishKeypair, revocation_reason: RevocationReason) -> Result<Self> {
-        let body = TransactionBody::SetPublishKeyV1(keypair, revocation_reason);
+        let body = TransactionBody::SetPublishKeyV1 { keypair, reason: revocation_reason };
         self.push_transaction(master_key, SignWith::Alpha, now, body)?;
         Ok(self)
     }
 
     /// Assign a new root key to this identity. Requires an alpha sig.
     pub fn set_root_key<T: Into<Timestamp>>(mut self, master_key: &SecretKey, now: T, keypair: RootKeypair, revocation_reason: RevocationReason) -> Result<Self> {
-        let body = TransactionBody::SetRootKeyV1(keypair, revocation_reason);
+        let body = TransactionBody::SetRootKeyV1 { keypair, reason: revocation_reason };
         self.push_transaction(master_key, SignWith::Alpha, now, body)?;
         Ok(self)
     }
@@ -989,7 +1120,11 @@ impl Transactions {
         where T: Into<Timestamp>,
               S: Into<String>,
     {
-        let body = TransactionBody::AddSubkeyV1(key, name.into(), description.map(|x| x.into()));
+        let body = TransactionBody::AddSubkeyV1 {
+            key,
+            name: name.into(),
+            desc: description.map(|x| x.into()),
+        };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
@@ -999,7 +1134,11 @@ impl Transactions {
         where T: Into<Timestamp>,
               S: Into<String>,
     {
-        let body = TransactionBody::EditSubkeyV1(name.into(), new_name.into(), description.map(|x| x.into()));
+        let body = TransactionBody::EditSubkeyV1 {
+            name: name.into(),
+            new_name: new_name.into(),
+            desc: description.map(|x| x.into()),
+        };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
@@ -1009,7 +1148,11 @@ impl Transactions {
         where T: Into<Timestamp>,
               S: Into<String>,
     {
-        let body = TransactionBody::RevokeSubkeyV1(name.into(), revocation_reason, new_name.map(|x| x.into()));
+        let body = TransactionBody::RevokeSubkeyV1 {
+            name: name.into(),
+            reason: revocation_reason,
+            new_name: new_name.map(|x| x.into()),
+        };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
@@ -1019,7 +1162,7 @@ impl Transactions {
         where T: Into<Timestamp>,
               S: Into<String>,
     {
-        let body = TransactionBody::DeleteSubkeyV1(name.into());
+        let body = TransactionBody::DeleteSubkeyV1 { name: name.into() };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
@@ -1029,7 +1172,7 @@ impl Transactions {
         where T: Into<Timestamp>,
               S: Into<String>,
     {
-        let body = TransactionBody::SetNicknameV1(nickname.map(|x| x.into()));
+        let body = TransactionBody::SetNicknameV1 { nickname: nickname.map(|x| x.into()) };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
@@ -1039,7 +1182,7 @@ impl Transactions {
         where T: Into<Timestamp>,
               S: Into<String>,
     {
-        let body = TransactionBody::AddForwardV1(name.into(), ty, is_default);
+        let body = TransactionBody::AddForwardV1 { name: name.into(), ty, default: is_default };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
@@ -1049,7 +1192,7 @@ impl Transactions {
         where T: Into<Timestamp>,
               S: Into<String>,
     {
-        let body = TransactionBody::DeleteForwardV1(name.into());
+        let body = TransactionBody::DeleteForwardV1 { name: name.into() };
         self.push_transaction(master_key, SignWith::Root, now, body)?;
         Ok(self)
     }
@@ -1070,10 +1213,10 @@ impl Transactions {
             has_private = match trans {
                 TransactionVersioned::V1(trans) => {
                     match trans.entry().body() {
-                        TransactionBody::CreateIdentityV1(..) => trans.entry().body().has_private(),
-                        TransactionBody::SetPolicyKeyV1(..) => trans.entry().body().has_private(),
-                        TransactionBody::SetPublishKeyV1(..) => trans.entry().body().has_private(),
-                        TransactionBody::SetRootKeyV1(..) => trans.entry().body().has_private(),
+                        TransactionBody::CreateIdentityV1 { .. } => trans.entry().body().has_private(),
+                        TransactionBody::SetPolicyKeyV1 { .. } => trans.entry().body().has_private(),
+                        TransactionBody::SetPublishKeyV1 { .. } => trans.entry().body().has_private(),
+                        TransactionBody::SetRootKeyV1 { .. } => trans.entry().body().has_private(),
                         _ => false,
                     }
                 }
@@ -1117,15 +1260,14 @@ mod tests {
     use crate::{
         crypto::key::{SignKeypair, CryptoKeypair},
         identity::{
-            claim::{ClaimBin, ClaimContainer, Relationship, RelationshipType},
+            claim::{ClaimContainer, Relationship, RelationshipType},
             recovery::PolicyRequestEntry,
             stamp::Confidence,
         },
         private::{Private, MaybePrivate},
-        util::{Date},
+        util::{Date, Url, ser::BinaryVec},
     };
     use std::str::FromStr;
-    use url::Url;
 
     macro_rules! assert_signkey {
         ($trans:expr, $keyty:ident) => {
@@ -1141,83 +1283,116 @@ mod tests {
         fn test_privates(body: &TransactionBody) {
             match body {
                 TransactionBody::Private => {}
-                TransactionBody::CreateIdentityV1(alpha, policy, publish, root) => {
+                TransactionBody::CreateIdentityV1 { alpha, policy, publish, root } => {
                     assert!(body.has_private());
-                    let body2 = TransactionBody::CreateIdentityV1(alpha.strip_private(), policy.clone(), publish.clone(), root.clone());
+                    let body2 = TransactionBody::CreateIdentityV1 {
+                        alpha: alpha.strip_private(),
+                        policy: policy.clone(),
+                        publish: publish.clone(),
+                        root: root.clone(),
+                    };
                     assert!(body2.has_private());
-                    let body3 = TransactionBody::CreateIdentityV1(alpha.strip_private(), policy.strip_private(), publish.clone(), root.clone());
+                    let body3 = TransactionBody::CreateIdentityV1 {
+                        alpha: alpha.strip_private(),
+                        policy: policy.strip_private(),
+                        publish: publish.clone(),
+                        root: root.clone(),
+                    };
                     assert!(body3.has_private());
-                    let body4 = TransactionBody::CreateIdentityV1(alpha.strip_private(), policy.strip_private(), publish.strip_private(), root.clone());
+                    let body4 = TransactionBody::CreateIdentityV1 {
+                        alpha: alpha.strip_private(),
+                        policy: policy.strip_private(),
+                        publish: publish.strip_private(),
+                        root: root.clone(),
+                    };
                     assert!(body4.has_private());
-                    let body5 = TransactionBody::CreateIdentityV1(alpha.strip_private(), policy.strip_private(), publish.strip_private(), root.strip_private());
+                    let body5 = TransactionBody::CreateIdentityV1 {
+                        alpha: alpha.strip_private(),
+                        policy: policy.strip_private(),
+                        publish: publish.strip_private(),
+                        root: root.strip_private(),
+                    };
                     assert!(!body5.has_private());
                     let body6 = body.strip_private();
                     assert!(!body6.has_private());
                     let body7 = body6.strip_private();
                     assert!(!body7.has_private());
                 }
-                TransactionBody::SetRecoveryPolicyV1(..) => {}
-                TransactionBody::ExecuteRecoveryPolicyV1(request) => {
+                TransactionBody::SetRecoveryPolicyV1 { .. } => {}
+                TransactionBody::ExecuteRecoveryPolicyV1 { request } => {
                     assert!(body.has_private());
-                    let body2 = TransactionBody::ExecuteRecoveryPolicyV1(request.strip_private());
+                    let body2 = TransactionBody::ExecuteRecoveryPolicyV1 { request: request.strip_private() };
                     assert!(!body2.has_private());
                     let body3 = body.strip_private();
                     assert!(!body3.has_private());
                     let body4 = body3.strip_private();
                     assert!(!body4.has_private());
                 }
-                TransactionBody::MakeClaimV1(spec) => {
+                TransactionBody::MakeClaimV1 { spec } => {
                     assert_eq!(body.has_private(), spec.has_private());
-                    let body2 = TransactionBody::MakeClaimV1(spec.strip_private());
+                    let body2 = TransactionBody::MakeClaimV1 { spec: spec.strip_private() };
                     assert!(!body2.has_private());
                     let body3 = body.strip_private();
                     assert!(!body3.has_private());
                     let body4 = body3.strip_private();
                     assert!(!body4.has_private());
                 }
-                TransactionBody::DeleteClaimV1(..) => {}
-                TransactionBody::AcceptStampV1(stamp) => {
+                TransactionBody::DeleteClaimV1 { .. } => {}
+                TransactionBody::AcceptStampV1 { stamp } => {
                     assert!(!body.has_private());
-                    let body2 = TransactionBody::AcceptStampV1(stamp.strip_private());
+                    let body2 = TransactionBody::AcceptStampV1 { stamp: stamp.strip_private() };
                     assert!(!body2.has_private());
                     let body3 = body.strip_private();
                     assert!(!body3.has_private());
                     let body4 = body3.strip_private();
                     assert!(!body4.has_private());
                 }
-                TransactionBody::DeleteStampV1(..) => {}
-                TransactionBody::SetPolicyKeyV1(keypair, revocation) => {
+                TransactionBody::DeleteStampV1 { .. } => {}
+                TransactionBody::SetPolicyKeyV1 { keypair, reason } => {
                     assert!(body.has_private());
-                    let body2 = TransactionBody::SetPolicyKeyV1(keypair.strip_private(), revocation.clone());
+                    let body2 = TransactionBody::SetPolicyKeyV1 {
+                        keypair: keypair.strip_private(),
+                        reason: reason.clone(),
+                    };
                     assert!(!body2.has_private());
                     let body3 = body.strip_private();
                     assert!(!body3.has_private());
                     let body4 = body3.strip_private();
                     assert!(!body4.has_private());
                 }
-                TransactionBody::SetPublishKeyV1(keypair, revocation) => {
+                TransactionBody::SetPublishKeyV1 { keypair, reason } => {
                     assert!(body.has_private());
-                    let body2 = TransactionBody::SetPublishKeyV1(keypair.strip_private(), revocation.clone());
+                    let body2 = TransactionBody::SetPublishKeyV1 {
+                        keypair: keypair.strip_private(),
+                        reason: reason.clone(),
+                    };
                     assert!(!body2.has_private());
                     let body3 = body.strip_private();
                     assert!(!body3.has_private());
                     let body4 = body3.strip_private();
                     assert!(!body4.has_private());
                 }
-                TransactionBody::SetRootKeyV1(keypair, revocation) => {
+                TransactionBody::SetRootKeyV1 { keypair, reason } => {
                     assert!(body.has_private());
-                    let body2 = TransactionBody::SetRootKeyV1(keypair.strip_private(), revocation.clone());
+                    let body2 = TransactionBody::SetRootKeyV1 {
+                        keypair: keypair.strip_private(),
+                        reason: reason.clone(),
+                    };
                     assert!(!body2.has_private());
                     let body3 = body.strip_private();
                     assert!(!body3.has_private());
                     let body4 = body3.strip_private();
                     assert!(!body4.has_private());
                 }
-                TransactionBody::AddSubkeyV1(key, name, desc) => {
+                TransactionBody::AddSubkeyV1 { key, name, desc } => {
                     assert!(body.has_private());
                     match key.strip_private_maybe() {
                         Some(stripped) => {
-                            let body2 = TransactionBody::AddSubkeyV1(stripped, name.clone(), desc.clone());
+                            let body2 = TransactionBody::AddSubkeyV1 {
+                                key: stripped,
+                                name: name.clone(),
+                                desc: desc.clone(),
+                            };
                             assert!(!body2.has_private());
                             let body3 = body.strip_private();
                             assert!(!body3.has_private());
@@ -1227,12 +1402,12 @@ mod tests {
                         None => {}
                     }
                 }
-                TransactionBody::EditSubkeyV1(..) => {}
-                TransactionBody::RevokeSubkeyV1(..) => {}
-                TransactionBody::DeleteSubkeyV1(..) => {}
-                TransactionBody::SetNicknameV1(..) => {}
-                TransactionBody::AddForwardV1(..) => {}
-                TransactionBody::DeleteForwardV1(..) => {}
+                TransactionBody::EditSubkeyV1 { .. } => {}
+                TransactionBody::RevokeSubkeyV1 { .. } => {}
+                TransactionBody::DeleteSubkeyV1 { .. } => {}
+                TransactionBody::SetNicknameV1 { .. } => {}
+                TransactionBody::AddForwardV1 { .. } => {}
+                TransactionBody::DeleteForwardV1 { .. } => {}
             }
         }
         let master_key = SecretKey::new_xchacha20poly1305().unwrap();
@@ -1240,42 +1415,78 @@ mod tests {
         let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
-        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let body = TransactionBody::CreateIdentityV1 {
+            alpha: alpha_keypair.clone(),
+            policy: policy_keypair.clone(),
+            publish: publish_keypair.clone(),
+            root: root_keypair.clone(),
+        };
         test_privates(&body);
 
-        test_privates(&TransactionBody::SetRecoveryPolicyV1(Some(PolicyCondition::Deny)));
+        test_privates(&TransactionBody::SetRecoveryPolicyV1 { policy: Some(PolicyCondition::Deny) });
 
-        let action = PolicyRequestAction::ReplaceKeys(policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let action = PolicyRequestAction::ReplaceKeys {
+            policy: policy_keypair.clone(),
+            publish: publish_keypair.clone(),
+            root: root_keypair.clone(),
+        };
         let entry = PolicyRequestEntry::new(IdentityID::random(), PolicyID::random(), action);
         let req = PolicyRequest::new(&master_key, &policy_keypair, entry).unwrap();
-        test_privates(&TransactionBody::ExecuteRecoveryPolicyV1(req));
+        test_privates(&TransactionBody::ExecuteRecoveryPolicyV1 { request: req });
 
-        test_privates(&TransactionBody::MakeClaimV1(ClaimSpec::Name(MaybePrivate::new_public(String::from("Negative Nancy")))));
-        test_privates(&TransactionBody::MakeClaimV1(ClaimSpec::Name(MaybePrivate::new_private(&master_key, String::from("Positive Pyotr")).unwrap())));
-        test_privates(&TransactionBody::DeleteClaimV1(ClaimID::random()));
+        test_privates(&TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_public(String::from("Negative Nancy"))) });
+        test_privates(&TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_private(&master_key, String::from("Positive Pyotr")).unwrap()) });
+        test_privates(&TransactionBody::DeleteClaimV1 { claim_id: ClaimID::random() });
 
         let claim_con = ClaimContainer::new(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, String::from("Hangry Hank")).unwrap()), Timestamp::now());
         let stamp = Stamp::stamp(&master_key, &root_keypair, &IdentityID::random(), &IdentityID::random(), Confidence::Low, Timestamp::now(), claim_con.claim(), Some(Timestamp::now())).unwrap();
-        test_privates(&TransactionBody::AcceptStampV1(stamp));
-        test_privates(&TransactionBody::DeleteStampV1(StampID::random()));
-        test_privates(&TransactionBody::SetPolicyKeyV1(policy_keypair.clone(), RevocationReason::Unspecified));
-        test_privates(&TransactionBody::SetPublishKeyV1(publish_keypair.clone(), RevocationReason::Compromised));
-        test_privates(&TransactionBody::SetRootKeyV1(root_keypair.clone(), RevocationReason::Recovery));
+        test_privates(&TransactionBody::AcceptStampV1 { stamp });
+        test_privates(&TransactionBody::DeleteStampV1 { stamp_id: StampID::random() });
+        test_privates(&TransactionBody::SetPolicyKeyV1 {
+            keypair: policy_keypair.clone(),
+            reason: RevocationReason::Unspecified,
+        });
+        test_privates(&TransactionBody::SetPublishKeyV1 {
+            keypair: publish_keypair.clone(),
+            reason: RevocationReason::Compromised,
+        });
+        test_privates(&TransactionBody::SetRootKeyV1 {
+            keypair:root_keypair.clone(),
+            reason: RevocationReason::Recovery,
+        });
 
         let key = Key::new_sign(root_keypair.deref().clone());
-        test_privates(&TransactionBody::AddSubkeyV1(key, "MY DOGECOIN KEY".into(), Some("plz send doge".into())));
-        test_privates(&TransactionBody::EditSubkeyV1("MY DOGECOIN KEY".into(), "MAI DOGE KEY".into(), None));
-        test_privates(&TransactionBody::RevokeSubkeyV1("MAI DOGE KEY".into(), RevocationReason::Compromised, Some("REVOKED DOGE KEY".into())));
-        test_privates(&TransactionBody::DeleteSubkeyV1("REVOKED DOGE KEY".into()));
-        test_privates(&TransactionBody::SetNicknameV1(Some("wreck-dum".into())));
-        test_privates(&TransactionBody::AddForwardV1("EMAIL".into(), ForwardType::Social("mobile".into(), "web2.0".into()), true));
-        test_privates(&TransactionBody::DeleteForwardV1("EMAIL".into()));
+        test_privates(&TransactionBody::AddSubkeyV1 {
+            key,
+            name: "MY DOGECOIN KEY".into(),
+            desc: Some("plz send doge".into()),
+        });
+        test_privates(&TransactionBody::EditSubkeyV1 {
+            name: "MY DOGECOIN KEY".into(),
+            new_name: "MAI DOGE KEY".into(),
+            desc: None,
+        });
+        test_privates(&TransactionBody::RevokeSubkeyV1 {
+            name: "MAI DOGE KEY".into(),
+            reason: RevocationReason::Compromised,
+            new_name: Some("REVOKED DOGE KEY".into()),
+        });
+        test_privates(&TransactionBody::DeleteSubkeyV1 { name: "REVOKED DOGE KEY".into() });
+        test_privates(&TransactionBody::SetNicknameV1 { nickname: Some("wreck-dum".into()) });
+        test_privates(&TransactionBody::AddForwardV1 {
+            name: "EMAIL".into(),
+            ty: ForwardType::Social { ty: "mobile".into(), handle: "web2.0".into() },
+            default: true,
+        });
+        test_privates(&TransactionBody::DeleteForwardV1 { name: "EMAIL".into() });
     }
 
     #[test]
     fn trans_entry_strip_has_private() {
         let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let body = TransactionBody::MakeClaimV1(ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Jackie Chrome".into()).unwrap()));
+        let body = TransactionBody::MakeClaimV1 {
+            spec: ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Jackie Chrome".into()).unwrap()),
+        };
         let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::random_alpha()], body);
         assert!(entry.has_private());
         assert!(entry.body().has_private());
@@ -1293,8 +1504,14 @@ mod tests {
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
         let identity = Identity::create(IdentityID::random(), alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone(), Timestamp::now());
 
-        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
-        let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
+        let body = TransactionBody::CreateIdentityV1 {
+            alpha: alpha_keypair.clone(),
+            policy: policy_keypair.clone(),
+            publish: publish_keypair.clone(),
+            root: root_keypair.clone(),
+        };
+        let now = Timestamp::now();
+        let entry = TransactionEntry::new(now.clone(), vec![], body);
         let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
         trans.verify(None).unwrap();
 
@@ -1304,7 +1521,7 @@ mod tests {
         let res = Transaction::new(&master_key, &None, SignWith::Root, entry.clone());
         assert_eq!(res.err(), Some(Error::DagKeyNotFound));
 
-        let body2 = TransactionBody::DeleteForwardV1("blassssstodon".into());
+        let body2 = TransactionBody::DeleteForwardV1 { name: "blassssstodon".into() };
         let entry2 = TransactionEntry::new(Timestamp::now(), vec![], body2);
         let res = Transaction::new(&master_key, &None, SignWith::Alpha, entry2.clone());
         assert_eq!(res.err(), Some(Error::DagKeyNotFound));
@@ -1314,18 +1531,22 @@ mod tests {
 
         let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         assert!(new_policy_keypair != policy_keypair);
-        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let action = PolicyRequestAction::ReplaceKeys {
+            policy: new_policy_keypair.clone(),
+            publish: publish_keypair.clone(),
+            root: root_keypair.clone(),
+        };
         let entry = PolicyRequestEntry::new(IdentityID::random(), PolicyID::random(), action);
         let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
-        let body3 = TransactionBody::ExecuteRecoveryPolicyV1(req);
-        let entry3 = TransactionEntry::new(Timestamp::now(), vec![], body3);
-        let trans3 = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Policy, entry3.clone()).unwrap();
-        trans3.verify(Some(&identity)).unwrap();
-        let res = Transaction::new(&master_key, &None, SignWith::Alpha, entry3.clone());
+        let body_recover = TransactionBody::ExecuteRecoveryPolicyV1 { request: req };
+        let entry_recover = TransactionEntry::new(Timestamp::now(), vec![], body_recover);
+        let trans_recover = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Policy, entry_recover.clone()).unwrap();
+        trans_recover.verify(Some(&identity)).unwrap();
+        let res = Transaction::new(&master_key, &None, SignWith::Alpha, entry_recover.clone());
         assert_eq!(res.err(), Some(Error::DagKeyNotFound));
-        let res = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Alpha, entry3.clone());
+        let res = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Alpha, entry_recover.clone());
         assert_eq!(res.err(), Some(Error::DagKeyNotFound));
-        let res = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Root, entry3.clone());
+        let res = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Root, entry_recover.clone());
         assert_eq!(res.err(), Some(Error::DagKeyNotFound));
 
         let mut trans2 = trans.clone();
@@ -1333,7 +1554,8 @@ mod tests {
         assert_eq!(trans2.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
 
         let mut trans3 = trans.clone();
-        trans3.entry_mut().set_created(Timestamp::now());
+        let then = Timestamp::from(now.deref().clone() - chrono::Duration::seconds(2));
+        trans3.entry_mut().set_created(then);
         assert_eq!(trans3.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
 
         let mut trans4 = trans.clone();
@@ -1343,7 +1565,12 @@ mod tests {
         let mut trans5 = trans.clone();
         let root_keypair2 = RootKeypair::new_ed25519(&master_key).unwrap();
         assert!(root_keypair != root_keypair2);
-        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair2.clone());
+        let body = TransactionBody::CreateIdentityV1 {
+            alpha: alpha_keypair.clone(),
+            policy: policy_keypair.clone(),
+            publish: publish_keypair.clone(),
+            root: root_keypair2.clone(),
+        };
         trans5.entry_mut().set_body(body);
         assert_eq!(trans5.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
     }
@@ -1356,7 +1583,12 @@ mod tests {
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
 
-        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let body = TransactionBody::CreateIdentityV1 {
+            alpha: alpha_keypair.clone(),
+            policy: policy_keypair.clone(),
+            publish: publish_keypair.clone(),
+            root: root_keypair.clone(),
+        };
         let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
         let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
 
@@ -1377,7 +1609,12 @@ mod tests {
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
 
-        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let body = TransactionBody::CreateIdentityV1 {
+            alpha: alpha_keypair.clone(),
+            policy: policy_keypair.clone(),
+            publish: publish_keypair.clone(),
+            root: root_keypair.clone(),
+        };
         let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
         let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
         let versioned = TransactionVersioned::from(trans.clone());
@@ -1397,7 +1634,12 @@ mod tests {
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
 
-        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let body = TransactionBody::CreateIdentityV1 {
+            alpha: alpha_keypair.clone(),
+            policy: policy_keypair.clone(),
+            publish: publish_keypair.clone(),
+            root: root_keypair.clone(),
+        };
         let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
         let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
         let versioned = TransactionVersioned::from(trans.clone());
@@ -1415,7 +1657,12 @@ mod tests {
         let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
 
-        let body = TransactionBody::CreateIdentityV1(alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone());
+        let body = TransactionBody::CreateIdentityV1 {
+            alpha: alpha_keypair.clone(),
+            policy: policy_keypair.clone(),
+            publish: publish_keypair.clone(),
+            root: root_keypair.clone(),
+        };
         let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
         let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
         let versioned = TransactionVersioned::from(trans.clone());
@@ -1505,7 +1752,7 @@ mod tests {
         let identity = transactions.build_identity().unwrap();
         assert_eq!(identity.id(), &IdentityID(transactions.transactions()[0].id().deref().clone()));
         match transactions.transactions()[0].entry().body() {
-            TransactionBody::CreateIdentityV1(ref alpha, ref policy, ref publish, ref root) => {
+            TransactionBody::CreateIdentityV1{ ref alpha, ref policy, ref publish, ref root } => {
                 assert_eq!(identity.keychain().alpha(), alpha);
                 assert_eq!(identity.keychain().policy(), policy);
                 assert_eq!(identity.keychain().publish(), publish);
@@ -1578,7 +1825,11 @@ mod tests {
         let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
         let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
         let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
-        let action = PolicyRequestAction::ReplaceKeys(new_policy_keypair.clone(), new_publish_keypair.clone(), new_root_keypair.clone());
+        let action = PolicyRequestAction::ReplaceKeys {
+            policy: new_policy_keypair.clone(),
+            publish: new_publish_keypair.clone(),
+            root: new_root_keypair.clone(),
+        };
 
         // cannot open a request unless you have an actual recovery policy
         let res = transactions.build_identity().unwrap()
@@ -1692,18 +1943,18 @@ mod tests {
         assert_claim!{ Name, String::from("Marty Malt") }
         assert_claim!{ Birthday, Date::from_str("2010-01-03").unwrap() }
         assert_claim!{ Email, String::from("marty@sids.com") }
-        assert_claim!{ Photo, ClaimBin(vec![1, 2, 3]) }
+        assert_claim!{ Photo, BinaryVec::from(vec![1, 2, 3]) }
         assert_claim!{ Pgp, String::from("12345") }
         assert_claim!{ Domain, String::from("slappy.com") }
         assert_claim!{ Url, Url::parse("https://killtheradio.net/").unwrap() }
         assert_claim!{ HomeAddress, String::from("111 blumps ln") }
         assert_claim!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        assert_claim!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, ClaimBin(vec![1, 2, 3, 4, 5])) }
+        assert_claim!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
         assert_claim!{
             raw,
-            |maybe, _| ClaimSpec::Extension(String::from("id:state:ca"), maybe),
-            ClaimBin(vec![7, 3, 2, 90]),
-            |spec: ClaimSpec| if let ClaimSpec::Extension(_, maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+            |maybe, _| ClaimSpec::Extension { key: String::from("id:state:ca"), value: maybe },
+            BinaryVec::from(vec![7, 3, 2, 90]),
+            |spec: ClaimSpec| if let ClaimSpec::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }
     }
 
@@ -1959,7 +2210,7 @@ mod tests {
         let transactions2 = transactions
             .add_forward(&master_key, Timestamp::now(), "email", ForwardType::Email("jackie@chrome.com".into()), true).unwrap()
             .add_forward(&master_key, Timestamp::now(), "my-website", ForwardType::Url("https://www.cactus-petes.com/yeeeehawwww".into()), false).unwrap()
-            .add_forward(&master_key, Timestamp::now(), "twitter", ForwardType::Social("twitter".into(), "lol_twitter_sux".into()), false).unwrap();
+            .add_forward(&master_key, Timestamp::now(), "twitter", ForwardType::Social { ty: "twitter".into(), handle: "lol_twitter_sux".into() }, false).unwrap();
         assert_signkey! { transactions2.transactions()[1], Root }
         assert_signkey! { transactions2.transactions()[2], Root }
         assert_signkey! { transactions2.transactions()[3], Root }
@@ -1983,7 +2234,7 @@ mod tests {
         let transactions2 = transactions
             .add_forward(&master_key, Timestamp::now(), "email", ForwardType::Email("jackie@chrome.com".into()), true).unwrap()
             .add_forward(&master_key, Timestamp::now(), "my-website", ForwardType::Url("https://www.cactus-petes.com/yeeeehawwww".into()), false).unwrap()
-            .add_forward(&master_key, Timestamp::now(), "twitter", ForwardType::Social("twitter".into(), "lol_twitter_sux".into()), false).unwrap();
+            .add_forward(&master_key, Timestamp::now(), "twitter", ForwardType::Social { ty: "twitter".into(), handle: "lol_twitter_sux".into() }, false).unwrap();
         let transactions3 = transactions2
             .delete_forward(&master_key, Timestamp::now(), "my-website").unwrap();
         assert_signkey! { transactions3.transactions()[4], Root }
@@ -2069,7 +2320,7 @@ mod tests {
         for trans in transactions4.transactions_mut() {
             let entry = trans.entry().clone();
             match entry.body() {
-                TransactionBody::CreateIdentityV1(..) | TransactionBody::SetPolicyKeyV1(..) | TransactionBody::SetPublishKeyV1(..) | TransactionBody::SetRootKeyV1(..) => {
+                TransactionBody::CreateIdentityV1 { .. } | TransactionBody::SetPolicyKeyV1 { .. } | TransactionBody::SetPublishKeyV1 { .. } | TransactionBody::SetRootKeyV1 { .. } => {
                     match trans {
                         TransactionVersioned::V1(ref mut inner) => {
                             inner.set_entry(entry.strip_private());

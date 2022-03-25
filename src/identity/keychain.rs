@@ -16,9 +16,10 @@ use crate::{
     error::{Error, Result},
     crypto::key::{KeyID, SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
     private::Private,
-    util::{Public, PublicMaybe, sign::Signable},
+    util::{Public, PublicMaybe, sign::Signable, ser::BinaryVec},
 };
 use getset;
+use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 
@@ -74,6 +75,8 @@ macro_rules! make_keytype {
         #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
         pub struct $signaturetype(SignKeypairSignature);
 
+        asn_encdec_newtype! { $signaturetype, SignKeypairSignature }
+
         impl Deref for $signaturetype {
             type Target = SignKeypairSignature;
             fn deref(&self) -> &Self::Target {
@@ -98,6 +101,8 @@ macro_rules! make_keytype {
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct $keytype_public(SignKeypairPublic);
 
+        asn_encdec_newtype! { $keytype_public, SignKeypairPublic }
+
         impl From<SignKeypairPublic> for $keytype_public {
             fn from(pubkey: SignKeypairPublic) -> Self {
                 Self(pubkey)
@@ -113,6 +118,8 @@ macro_rules! make_keytype {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct $keytype(SignKeypair);
+
+        asn_encdec_newtype! { $keytype, SignKeypair }
 
         impl From<SignKeypair> for $keytype {
             fn from(sign: SignKeypair) -> Self {
@@ -162,27 +169,34 @@ make_keytype! { PublishKeypair, PublishKeypairPublic, PublishKeypairSignature }
 make_keytype! { RootKeypair, RootKeypairPublic, RootKeypairSignature }
 
 /// Why we are deprecating a key.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum RevocationReason {
     /// No reason. Feeling cute today, might revoke my keys, IDK.
+    #[rasn(tag(explicit(0)))]
     Unspecified,
     /// This key is being replaced by the recovery mechanism.
+    #[rasn(tag(explicit(1)))]
     Recovery,
     /// Replacing this key with another.
+    #[rasn(tag(explicit(2)))]
     Superseded,
     /// This key has been compromised.
+    #[rasn(tag(explicit(3)))]
     Compromised,
     /// This key was signed by a compromised key and should never be used.
+    #[rasn(tag(explicit(4)))]
     Invalid,
 }
 
 /// Marks a key as revoked, signed with our root key. In the case that the
 /// root key is being revoked, the deprecation must be signed with the new
 /// root key.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Revocation {
     /// The reason we're deprecating this key.
+    #[rasn(tag(explicit(0)))]
     reason: RevocationReason,
 }
 
@@ -196,9 +210,11 @@ impl Revocation {
 }
 
 /// An enum that holds any type of key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum Key {
     /// A policy key
+    #[rasn(tag(explicit(0)))]
     Policy(PolicyKeypair),
     /// A publish key
     ///
@@ -210,20 +226,32 @@ pub enum Key {
     /// this allows implementations to know if a published identity was made
     /// with a revoked key, and under what circumstances the key was revoked,
     /// which they can use to adjust their trust of that identity.
+    #[rasn(tag(explicit(1)))]
     Publish(PublishKeypair),
     /// A root key
+    #[rasn(tag(explicit(2)))]
     Root(RootKeypair),
     /// A signing key.
+    #[rasn(tag(explicit(3)))]
     Sign(SignKeypair),
     /// An asymmetric crypto key.
+    #[rasn(tag(explicit(4)))]
     Crypto(CryptoKeypair),
     /// Hides our private data (including private claims).
+    #[rasn(tag(explicit(5)))]
     Secret(Private<SecretKey>),
     /// An extension type, can be used to save any kind of public/secret keypair
     /// that isn't covered by the stamp system.
-    ExtensionKeypair(Vec<u8>, Option<Private<Vec<u8>>>),
+    #[rasn(tag(explicit(6)))]
+    ExtensionKeypair {
+        #[rasn(tag(explicit(0)))]
+        public: BinaryVec,
+        #[rasn(tag(explicit(1)))]
+        secret: Option<Private<BinaryVec>>,
+    },
     /// An extension type, can be used to save any kind of key that isn't
     /// covered by the stamp system.
+    #[rasn(tag(explicit(7)))]
     ExtensionSecret(Private<Vec<u8>>),
 }
 
@@ -312,9 +340,9 @@ impl Key {
             Self::Sign(keypair) => Self::Sign(keypair.reencrypt(previous_master_key, new_master_key)?),
             Self::Crypto(keypair) => Self::Crypto(keypair.reencrypt(previous_master_key, new_master_key)?),
             Self::Secret(secret) => Self::Secret(secret.reencrypt(previous_master_key, new_master_key)?),
-            Self::ExtensionKeypair(public, private_maybe) => {
+            Self::ExtensionKeypair { public, secret: private_maybe } => {
                 if let Some(private) = private_maybe {
-                    Self::ExtensionKeypair(public, Some(private.reencrypt(previous_master_key, new_master_key)?))
+                    Self::ExtensionKeypair { public, secret: Some(private.reencrypt(previous_master_key, new_master_key)?) }
                 } else {
                     return Err(Error::CryptoKeyMissing)?;
                 }
@@ -332,7 +360,7 @@ impl Key {
             Self::Sign(keypair) => keypair.has_private(),
             Self::Crypto(keypair) => keypair.has_private(),
             Self::Secret(_) => true,
-            Self::ExtensionKeypair(_, private_maybe) => private_maybe.is_some(),
+            Self::ExtensionKeypair { secret: private_maybe, .. } => private_maybe.is_some(),
             Self::ExtensionSecret(_) => true,
         }
     }
@@ -347,7 +375,7 @@ impl PublicMaybe for Key {
             Self::Sign(keypair) => Some(Self::Sign(keypair.strip_private())),
             Self::Crypto(keypair) => Some(Self::Crypto(keypair.strip_private())),
             Self::Secret(_) => None,
-            Self::ExtensionKeypair(public, _) => Some(Self::ExtensionKeypair(public.clone(), None)),
+            Self::ExtensionKeypair { public, .. } => Some(Self::ExtensionKeypair { public: public.clone(), secret: None }),
             Self::ExtensionSecret(_) => None,
         }
     }
@@ -359,7 +387,7 @@ impl PublicMaybe for Key {
 /// If the subkey is a keypair, we sign the public key of the keypair (making it
 /// verifiable without the private data) and in the case of a secret key, we
 /// sign the whole key.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Subkey {
     /// The key itself.
@@ -370,16 +398,20 @@ pub struct Subkey {
     ///
     ///
     /// ...Nobody thinks you're funny.
+    #[rasn(tag(explicit(0)))]
     key: Key,
     /// The key's human-readable name, for example "email".
     ///
     /// This must be a unique value among all subkeys (even revoked ones). This
     /// is used in many places to reference the key.
+    #[rasn(tag(explicit(1)))]
     name: String,
     /// The key's human-readable description, for example "Please send me
     /// encrypted emails using this key." Or "HAI THIS IS MY DOGECOIN ADDRESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS!!!1"
+    #[rasn(tag(explicit(2)))]
     description: Option<String>,
     /// Allows revocation of a key.
+    #[rasn(tag(explicit(3)))]
     revocation: Option<Revocation>,
 }
 
@@ -439,7 +471,7 @@ impl PublicMaybe for Subkey {
 ///
 /// In the event a root key is revoked, the subkeys must be re-signed with
 /// the new root key.
-#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Keychain {
     /// The alpha key. One key to rule them all.
@@ -447,18 +479,23 @@ pub struct Keychain {
     /// You really should never use this key without a REALLY good reason. This
     /// key effectively controls all other keys in the identity, and should only
     /// be used if a top-level key has been compromised.
+    #[rasn(tag(explicit(0)))]
     alpha: AlphaKeypair,
     /// Our policy signing key. Lets us create recovery policies. This is signed
     /// by the alpha key, which prevents tampering.
+    #[rasn(tag(explicit(1)))]
     policy: PolicyKeypair,
     /// The publish key, signed by the alpha key. When we want to publish our
     /// identity anywhere, for instance to our personal website, an identity
     /// network, or anywhere else we might want others to find our identity, we
     /// sign the published identity with our publish key.
+    #[rasn(tag(explicit(2)))]
     publish: PublishKeypair,
     /// The identity's root signing key, signed by the alpha key.
+    #[rasn(tag(explicit(3)))]
     root: RootKeypair,
     /// Holds our subkeys, signed with our root keypair.
+    #[rasn(tag(explicit(4)))]
     subkeys: Vec<Subkey>,
 }
 
@@ -648,6 +685,88 @@ impl Public for Keychain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        crypto::key::{SecretKey},
+        util,
+    };
+
+    fn get_master_key() -> SecretKey {
+        let hashbytes = util::hash(b"my goat hurts".as_slice()).unwrap();
+        let seed: [u8; 32] = hashbytes[0..32].try_into().unwrap();
+        SecretKey::new_xchacha20poly1305_from_slice(&seed).unwrap()
+    }
+
+    #[test]
+    fn alpha_ser() {
+        let master_key = get_master_key();
+        let hashbytes = util::hash(b"get a job").unwrap();
+        let seed: [u8; 32] = hashbytes[0..32].try_into().unwrap();
+        let kp = SignKeypair::new_ed25519_from_seed(&master_key, &seed).unwrap();
+        let alpha = AlphaKeypair::from(kp);
+        let sig = alpha.sign(&master_key, b"who's this, steve??").unwrap();
+        let sig_inner: &SignKeypairSignature = sig.deref();
+        let ser = util::ser::serialize(&sig).unwrap();
+        let ser_inner = util::ser::serialize(sig_inner).unwrap();
+        assert_eq!(ser, ser_inner);
+        assert_eq!(
+            "oEIEQD1K6VIpwXjFMZdpb8XqMmgV2uRPedKr-AxGicJPqkndk79ryzsBzDmMTh2SYC-cscEng5BP4iqHlbyIxpRH5wI",
+            util::ser::base64_encode(&ser).as_str()
+        );
+    }
+
+    #[test]
+    fn policy_ser() {
+        let master_key = get_master_key();
+        let hashbytes = util::hash(b"im detective john kimble").unwrap();
+        let seed: [u8; 32] = hashbytes[0..32].try_into().unwrap();
+        let kp = SignKeypair::new_ed25519_from_seed(&master_key, &seed).unwrap();
+        let policy = PolicyKeypair::from(kp);
+        let sig = policy.sign(&master_key, b"who's this, steve??").unwrap();
+        let sig_inner: &SignKeypairSignature = sig.deref();
+        let ser = util::ser::serialize(&sig).unwrap();
+        let ser_inner = util::ser::serialize(sig_inner).unwrap();
+        assert_eq!(ser, ser_inner);
+        assert_eq!(
+            "oEIEQMv99PDoO1W65NLAIxDFKQPdqQKzQWh_ei3tX9Xy088_5m58QpcgfY_2rA0CvC2uKq0pzif5vGw_x4VsfnAAPQI",
+            util::ser::base64_encode(&ser).as_str()
+        );
+    }
+
+    #[test]
+    fn publish_ser() {
+        let master_key = get_master_key();
+        let hashbytes = util::hash(b"yeah sure you are").unwrap();
+        let seed: [u8; 32] = hashbytes[0..32].try_into().unwrap();
+        let kp = SignKeypair::new_ed25519_from_seed(&master_key, &seed).unwrap();
+        let publish = PublishKeypair::from(kp);
+        let sig = publish.sign(&master_key, b"who's this, steve??").unwrap();
+        let sig_inner: &SignKeypairSignature = sig.deref();
+        let ser = util::ser::serialize(&sig).unwrap();
+        let ser_inner = util::ser::serialize(sig_inner).unwrap();
+        assert_eq!(ser, ser_inner);
+        assert_eq!(
+            "oEIEQBLSREemDtNKdHdG3iog2PJAQ8Sf2JCXrasZqAkteWQUwFx12BbR3oP6guKGLYClgTlr_0f9mC_OoO9yeGtaAQw",
+            util::ser::base64_encode(&ser).as_str()
+        );
+    }
+
+    #[test]
+    fn root_ser() {
+        let master_key = get_master_key();
+        let hashbytes = util::hash(b"i will, bye").unwrap();
+        let seed: [u8; 32] = hashbytes[0..32].try_into().unwrap();
+        let kp = SignKeypair::new_ed25519_from_seed(&master_key, &seed).unwrap();
+        let root = RootKeypair::from(kp);
+        let sig = root.sign(&master_key, b"who's this, steve??").unwrap();
+        let sig_inner: &SignKeypairSignature = sig.deref();
+        let ser = util::ser::serialize(&sig).unwrap();
+        let ser_inner = util::ser::serialize(sig_inner).unwrap();
+        assert_eq!(ser, ser_inner);
+        assert_eq!(
+            "oEIEQKcTXzZt0l8VzWJt3oXI1woTLErwye9I4G2mh5yHNljtuDlu4f-5gEaojHFZOXroMolhB1MlsaG9d4qWGb-ERw8",
+            util::ser::base64_encode(&ser).as_str()
+        );
+    }
 
     #[test]
     fn key_as_type() {
@@ -757,7 +876,7 @@ mod tests {
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
         let key6 = Key::Secret(Private::seal(&master_key, &secret_key).unwrap());
-        let key7 = Key::ExtensionKeypair(vec![1,2,3], Some(Private::seal(&master_key, &vec![4,5,6]).unwrap()));
+        let key7 = Key::ExtensionKeypair { public: vec![1,2,3].into(), secret: Some(Private::seal(&master_key, &vec![4,5,6].into()).unwrap()) };
         let key8 = Key::ExtensionSecret(Private::seal(&master_key, &vec![6,7,8]).unwrap());
 
         assert!(key1.has_private());
