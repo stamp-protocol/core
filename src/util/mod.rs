@@ -16,7 +16,7 @@ pub(crate) mod sign;
 #[cfg(test)]
 pub(crate) mod test;
 
-pub use ser::{base64_encode, base64_decode, SerdeBinary, Binary};
+pub use ser::{base64_encode, base64_decode, SerdeBinary, Binary, BinarySecret, BinaryVec};
 
 macro_rules! object_id {
     (
@@ -127,7 +127,7 @@ pub struct Timestamp(#[serde(with = "crate::util::ser::timestamp")] DateTime<Utc
 impl Timestamp {
     /// Create a new Timestamp from the current date/time.
     pub fn now() -> Self {
-        Self(Utc::now())
+        Utc::now().into()
     }
 
     pub fn local(&self) -> DateTime<Local> {
@@ -171,7 +171,14 @@ impl From<NaiveDateTime> for Timestamp {
 
 impl From<DateTime<Utc>> for Timestamp {
     fn from(date: DateTime<Utc>) -> Self {
-        Self(date)
+        // we need to erase any precision below millisecond because it is not
+        // serialized and will screw things up for us.
+        let ts = date.timestamp_millis();
+        // i hate to panic here, but we're literally converting to i64 then
+        // from i64 without modification, so it would be very surprising if
+        // we failed here
+        let dt = chrono::Utc.timestamp_millis(ts);
+        Self(dt)
     }
 }
 
@@ -256,6 +263,7 @@ pub trait PublicMaybe: Clone {
 pub struct Url(url::Url);
 
 impl Url {
+    /// Parse a string Url
     pub fn parse(urlstr: &str) -> Result<Self> {
         Ok(url::Url::parse(urlstr).map(|x| x.into())?)
     }
@@ -269,6 +277,13 @@ impl Deref for Url {
 impl From<url::Url> for Url {
     fn from(url: url::Url) -> Self {
         Self(url)
+    }
+}
+
+impl From<Url> for String {
+    fn from(url: Url) -> Self {
+        let Url(inner) = url;
+        inner.into()
     }
 }
 
@@ -290,6 +305,12 @@ impl Decode for Url {
         let url = url::Url::parse(url_str)
             .map_err(|_| rasn::de::Error::custom("could not deserialize Url"))?;
         Ok(Self(url))
+    }
+}
+
+impl std::fmt::Display for Url {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
