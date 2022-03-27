@@ -230,7 +230,7 @@ mod tests {
 
         let published = PublishedIdentity::publish(&master_key, now.clone(), transactions.clone()).unwrap();
         let ser = published.serialize().unwrap();
-        assert_eq!(ser, r#"---
+        assert_eq!(ser.trim(), r#"---
 publish_signature:
   Ed25519: aV6hwrK42EaRJe9uV705q0wk4H79Bsw9X0i4mGEgDEL1tCYsO5xCR56baanG4PS8-Im-g0_Wx8XSOTBmuGM8AQ
 publish_date: "1977-06-07T04:32:06Z"

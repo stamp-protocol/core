@@ -358,7 +358,7 @@ mod tests {
         let ts = Timestamp::from_str("2021-06-06T00:00:00-06:00").unwrap();
         let stamp = make_stamp(&master_key, &root_keypair, claim_id, &id1, &id2, Some(ts));
         let ser = stamp.serialize().unwrap();
-        assert_eq!(ser, r#"---
+        assert_eq!(ser.trim(), r#"---
 id:
   Ed25519: SCnRe6aqLMRo4uXLN4Pki0yeAFQTcQJs3ozNxuSULXTk6PNCv2jZ1A_XKbHQQXuctuMGGPMMuCbku0Wl0Xi5AQ
 entry:

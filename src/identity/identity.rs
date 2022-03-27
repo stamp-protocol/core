@@ -902,7 +902,7 @@ mod tests {
 
         let identity = Identity::create(id.clone(), alpha.clone(), policy.clone(), publish.clone(), root.clone(), now.clone());
         let ser = identity.serialize().unwrap();
-        assert_eq!(ser, r#"---
+        assert_eq!(ser.trim(), r#"---
 id:
   Ed25519: fCIX7Z3EiXIanC2819hWhF3oNW9gg6ujZKW8D_Y1lfZJJODmkkjVJlOZKCtM6YMa_fSS4i6Witse0k2UlZ-GAQ
 created: "1977-06-07T04:32:06Z"
