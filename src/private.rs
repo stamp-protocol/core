@@ -253,7 +253,7 @@ pub enum MaybePrivate<T> {
     },
 }
 
-impl<T: Encode + Decode + Clone + std::fmt::Debug> MaybePrivate<T> {
+impl<T: Encode + Decode + Clone> MaybePrivate<T> {
     /// Create a new public MaybePrivate value.
     pub fn new_public(val: T) -> Self {
         Self::Public(val)
