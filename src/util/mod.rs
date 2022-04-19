@@ -283,7 +283,7 @@ impl From<url::Url> for Url {
 impl From<Url> for String {
     fn from(url: Url) -> Self {
         let Url(inner) = url;
-        inner.into()
+        inner.into_string()
     }
 }
 
