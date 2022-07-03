@@ -280,6 +280,7 @@ impl From<url::Url> for Url {
     }
 }
 
+#[allow(deprecated)]    // omg stfu
 impl From<Url> for String {
     fn from(url: Url) -> Self {
         let Url(inner) = url;
