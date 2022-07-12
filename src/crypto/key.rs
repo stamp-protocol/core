@@ -630,6 +630,18 @@ impl HmacKey {
     }
 }
 
+impl TryFrom<SecretKey> for HmacKey {
+    type Error = Error;
+
+    fn try_from(key: SecretKey) -> core::result::Result<Self, Self::Error> {
+        match key {
+            SecretKey::XChaCha20Poly1305(binsec) => {
+                Ok(Self::Sha512(binsec))
+            }
+        }
+    }
+}
+
 /// An HMAC hash
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
