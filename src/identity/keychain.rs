@@ -16,7 +16,7 @@ use crate::{
     error::{Error, Result},
     crypto::key::{KeyID, SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
     private::Private,
-    util::{Public, PublicMaybe, sign::Signable, ser::BinaryVec},
+    util::{Public, PublicMaybe, sign::Signable, ser, ser::BinaryVec},
 };
 use getset;
 use rasn::{AsnType, Encode, Decode};
@@ -303,7 +303,7 @@ impl Key {
         }
     }
 
-    /// Returns the `SignKeypair` if this is a signing key.
+    /// Returns the `CryptoKeypair` if this is a crypto key.
     pub fn as_cryptokey(&self) -> Option<&CryptoKeypair> {
         match self {
             Self::Crypto(ref x) => Some(x),
@@ -311,7 +311,7 @@ impl Key {
         }
     }
 
-    /// Returns the `SignKeypair` if this is a signing key.
+    /// Returns the `SecretKey` if this is a secret key.
     pub fn as_secretkey(&self) -> Option<&Private<SecretKey>> {
         match self {
             Self::Secret(ref x) => Some(x),
@@ -329,6 +329,16 @@ impl Key {
             Self::Crypto(keypair) => Some(keypair.key_id()),
             _ => None,
         }
+    }
+
+    /// Serialize this Key in binary format.
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        ser::serialize(self)
+    }
+
+    /// Deserialize a Key from a serialized set of bytes.
+    pub fn deserialize(bytes: &[u8]) -> Result<Self> {
+        ser::deserialize(bytes)
     }
 
     /// Consumes the key, and re-encryptes it with a new master key.
@@ -795,6 +805,19 @@ mod tests {
         assert_eq!(keytype!(keys, as_signkey), vec![false, false, false, true, false, false]);
         assert_eq!(keytype!(keys, as_cryptokey), vec![false, false, false, false, true, false]);
         assert_eq!(keytype!(keys, as_secretkey), vec![false, false, false, false, false, true]);
+    }
+
+    #[test]
+    fn key_serde() {
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let key = Key::Secret(Private::seal(&master_key, &secret_key).unwrap());
+        let ser = key.serialize().unwrap();
+        let key2 = Key::deserialize(ser.as_slice()).unwrap();
+        assert!(key.as_secretkey().is_some());
+        let sec1 = util::ser::serialize(&key.as_secretkey().unwrap().open(&master_key).unwrap()).unwrap();
+        let sec2 = util::ser::serialize(&key2.as_secretkey().unwrap().open(&master_key).unwrap()).unwrap();
+        assert_eq!(sec1, sec2);
     }
 
     #[test]
