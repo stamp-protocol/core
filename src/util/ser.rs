@@ -16,7 +16,7 @@ use serde::{Serialize, ser::Serializer, de::DeserializeOwned, de::Deserializer};
 use zeroize::Zeroize;
 
 pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
-    Ok(rasn::der::encode(obj).map_err(|_| Error::SerializeASN)?)
+    Ok(rasn::der::encode(obj).map_err(|_| Error::ASNSerialize)?)
 }
 
 pub(crate) fn serialize_human<T>(obj: &T) -> Result<String>
@@ -26,7 +26,7 @@ pub(crate) fn serialize_human<T>(obj: &T) -> Result<String>
 }
 
 pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
-    Ok(rasn::der::decode(bytes).map_err(|_| Error::DeserializeASN)?)
+    Ok(rasn::der::decode(bytes).map_err(|_| Error::ASNDeserialize)?)
 }
 
 pub(crate) fn deserialize_human<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
@@ -82,9 +82,9 @@ macro_rules! impl_asn1_binary {
     }
 }
 
-/// Defines a container for binary data in octet form. Effectively allows for
-/// strictly defining key/nonce/etc sizes and also allowing proper serialization
-/// and deserialization.
+/// Defines a container for fixed-length binary data in octet form. Effectively
+/// allows for strictly defining key/nonce/etc sizes and also allowing proper
+/// serialization and deserialization.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binary<const N: usize>([u8; N]);
 
@@ -120,8 +120,9 @@ impl<'de, const N: usize> serde::Deserialize<'de> for Binary<N> {
     }
 }
 
-/// Defines a container for SECRET binary data in octet form. This is just like
-/// [Binary] except that it implements Zeroize.
+/// Defines a container for SECRET fixed-length binary data in octet form. This
+/// is just like [Binary] except that it implements Zeroize and masks data from
+/// Display/Debug.
 #[derive(Zeroize)]
 #[zeroize(drop)]
 pub struct BinarySecret<const N: usize>([u8; N]);
@@ -169,9 +170,7 @@ impl<'de, const N: usize> serde::Deserialize<'de> for BinarySecret<N> {
     }
 }
 
-/// Defines a container for binary data in octet form. Effectively allows for
-/// strictly defining key/nonce/etc sizes and also allowing proper serialization
-/// and deserialization.
+/// Defines a container for variable-length binary data in octet form.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryVec(Vec<u8>);
 

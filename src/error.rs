@@ -7,6 +7,14 @@ use thiserror::Error;
 /// which an expectation is not met or a problem occurs.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// An error while engaging in deserialization.
+    #[error("ASN.1 deserialization error")]
+    ASNDeserialize,
+
+    /// An error while engaging in msgpack serialization.
+    #[error("ASN.1 serialization error")]
+    ASNSerialize,
+
     /// Trying to deserialize a value with the wrong length of data (ie, we
     /// usually see this when trying to populate a [u8; 64]
     #[error("incorrect data length")]
@@ -125,9 +133,10 @@ pub enum Error {
     #[error("an error occurred while ordering the transaction set")]
     DagOrderingError,
 
-    /// An error while engaging in deserialization.
-    #[error("ASN.1 deserialization error")]
-    DeserializeASN,
+    /// Found a transaction that references other transactions (via its
+    /// `previous_transactions`) in the DAG that do not exist.
+    #[error("orphaned transaction found {0}")]
+    DagOrphanedTransaction(String),
 
     /// An error while engaging in deserialization.
     #[error("deserialization error")]
@@ -220,10 +229,6 @@ pub enum Error {
     /// recovering against.
     #[error("this recovery request is for a different policy")]
     RecoveryPolicyRequestPolicyMismatch,
-
-    /// An error while engaging in msgpack serialization.
-    #[error("ASN.1 serialization error")]
-    SerializeASN,
 
     /// An error while engaging in yaml serialization.
     #[error("yaml serialization error")]

@@ -351,6 +351,12 @@ impl From<TransactionID> for String {
     }
 }
 
+impl From<&TransactionID> for String {
+    fn from(id: &TransactionID) -> Self {
+        ser::base64_encode(id.deref().as_ref())
+    }
+}
+
 impl Hash for TransactionID {
     fn hash<H: Hasher>(&self, state: &mut H) {
         let stringified = String::from(self.clone());
@@ -658,6 +664,11 @@ impl Transactions {
         Self {transactions: vec![]}
     }
 
+    /// Returns an iterator over these transactions
+    pub fn iter(&self) -> core::slice::Iter<'_, TransactionVersioned> {
+        self.transactions().iter()
+    }
+
     /// Run a transaction and return the output
     fn apply_transaction(identity: Option<Identity>, transaction: &TransactionVersioned) -> Result<Identity> {
         match transaction {
@@ -811,6 +822,15 @@ impl Transactions {
             }
         }
 
+        for trans in &transactions {
+            // make sure we don't have any orphaned transactions
+            for prev in trans.entry().previous_transactions() {
+                if !transaction_idx.contains_key(prev) {
+                    Err(Error::DagOrphanedTransaction(String::from(trans.id())))?;
+                }
+            }
+        }
+
         // populate a transaction_id -> branchnum index
         let mut transaction_branch_idx: HashMap<TransactionID, Vec<u32>> = HashMap::new();
         fn walker_identity_ranger(transaction_idx: &HashMap<TransactionID, &TransactionVersioned>, next_transactions_idx: &HashMap<TransactionID, Vec<TransactionID>>, transaction_branch_idx: &mut HashMap<TransactionID, Vec<u32>>, transaction: &TransactionVersioned, cur_branch: Vec<u32>) -> Result<()> {
@@ -892,6 +912,7 @@ impl Transactions {
             None => Err(Error::DagBuildError)?,
         };
         first_trans.verify(None)?;
+
         // tracks our per-branch identities
         let mut branch_identities: HashMap<u32, Identity> = HashMap::new();
         branch_identities.insert(0, Transactions::apply_transaction(None, first_trans)?);
@@ -1001,6 +1022,27 @@ impl Transactions {
         let versioned = trans.into();
         let identity = Self::apply_transaction(identity_maybe, &versioned)?;
         self.transactions_mut().push(versioned);
+        Ok(identity)
+    }
+
+    /// Push a raw transaction onto this transaction set. Generally, this might
+    /// come from a syncing source (StampNet's private syncing) that passes
+    /// around singular transactions. We verify this transactions by building
+    /// the identity after pushing.
+    pub fn push_transaction_raw(&mut self, versioned: TransactionVersioned) -> Result<Identity> {
+        let identity_maybe = match self.build_identity() {
+            Ok(id) => Some(id),
+            Err(Error::DagEmpty) => None,
+            Err(e) => Err(e)?,
+        };
+        let identity = Self::apply_transaction(identity_maybe, &versioned)?;
+        self.transactions_mut().push(versioned);
+        // build it again
+        let _identity_maybe = match self.build_identity() {
+            Ok(id) => Some(id),
+            Err(Error::DagEmpty) => None,
+            Err(e) => Err(e)?,
+        };
         Ok(identity)
     }
 
@@ -1249,6 +1291,16 @@ impl Public for Transactions {
 
     fn has_private(&self) -> bool {
         self.transactions().iter().find(|x| x.has_private()).is_some()
+    }
+}
+
+impl IntoIterator for Transactions {
+    type Item = TransactionVersioned;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let Transactions { transactions } = self;
+        transactions.into_iter()
     }
 }
 
@@ -1691,6 +1743,22 @@ mod tests {
 
     fn genesis() -> (SecretKey, Transactions) {
         genesis_time(Timestamp::now())
+    }
+
+    #[test]
+    fn transactions_push_raw() {
+        let now = Timestamp::from_str("2021-04-20T00:00:10Z").unwrap();
+        let (master_key_1, mut transactions_1) = genesis_time(now.clone());
+        let (_master_key_2, mut transactions_2) = genesis_time(now.clone());
+        let transactions_1_2 = transactions_1.clone()
+            .make_claim(&master_key_1, now.clone(), ClaimSpec::Name(MaybePrivate::new_public("Hooty McOwl".to_string()))).unwrap();
+        let raw = transactions_1_2.transactions()[1].clone();
+        transactions_1.push_transaction_raw(raw.clone()).unwrap();
+        transactions_2.build_identity().unwrap();
+        match transactions_2.push_transaction_raw(raw.clone()) {
+            Ok(_) => panic!("pushed a bad raw transaction: {}", String::from(raw.id())),
+            Err(e) => assert_eq!(e, Error::DagOrphanedTransaction(String::from(raw.id()))),
+        }
     }
 
     #[test]

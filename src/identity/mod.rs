@@ -172,18 +172,29 @@ mod tests {
         }
         for trans in published.identity().transactions() {
             published.verify().unwrap();
+            let num_prev = match trans {
+                TransactionVersioned::V1(ref inner) => inner.entry().previous_transactions().len(),
+            };
 
-            mod_trans!( published, trans, inner, {
-                inner.set_id(TransactionID::random_alpha());
-            }, Error::CryptoSignatureVerificationFailed);
+            match published.identity().transactions().get(idx + 1) {
+                Some(trans_id) => {
+                    let next_id = trans_id.id();
+                    mod_trans!( published, trans, inner, {
+                        inner.set_id(TransactionID::random_alpha());
+                    }, Error::DagOrphanedTransaction(String::from(next_id)));
+                }
+                None => {}
+            }
+
+            if num_prev > 0 {
+                mod_trans!( published, trans, inner, {
+                    inner.entry_mut().previous_transactions_mut().push(TransactionID::random_alpha());
+                }, Error::DagOrphanedTransaction(String::from(trans.id())));
+            }
 
             mod_trans!( published, trans, inner, {
                 inner.entry_mut().set_created(Timestamp::from_str("1719-09-12T13:44:58Z").unwrap());
             }, Error::CryptoSignatureVerificationFailed);
-
-            mod_trans!( published, trans, inner, {
-                inner.entry_mut().previous_transactions_mut().push(TransactionID::random_alpha());
-            }, if idx == 0 { Error::DagNoGenesis } else { Error::CryptoSignatureVerificationFailed });
 
             mod_trans!( published, trans, inner, {
                 let body = match inner.entry().body().clone() {
