@@ -37,7 +37,7 @@ use rand::{RngCore, rngs::OsRng};
 use rand_chacha::rand_core::{RngCore as RngCoreChaCha, SeedableRng};
 use rasn::{Encode, Decode, AsnType};
 use serde_derive::{Serialize, Deserialize};
-use std::convert::{TryInto};
+use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
 
 /// A constant that provides a default for CPU difficulty for interactive key derivation
@@ -271,6 +271,16 @@ impl SignKeypair {
         })
     }
 
+    /// Create a new ed25519 keypair from a [SecretKey]
+    pub fn new_ed25519_from_secret_key(master_key: &SecretKey, seckey: &SecretKey) -> Result<Self> {
+        let bytes: &[u8] = seckey.as_ref();
+        if bytes.len() < 32 {
+            Err(Error::BadLength)?;
+        }
+        let seed: [u8; 32] = bytes[0..32].try_into().map_err(|_| Error::BadLength)?;
+        Self::new_ed25519_from_seed(master_key, &seed)
+    }
+
     /// Sign a value with our secret signing key.
     ///
     /// Must be unlocked via our master key.
@@ -364,20 +374,28 @@ impl SignKeypairPublic {
     /// Verify a value with a detached signature given the public key of the
     /// signer.
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
-        match (self, signature) {
-            (Self::Ed25519(ref pubkey_bytes), SignKeypairSignature::Ed25519(ref sig)) => {
-                let pubkey = ed25519_dalek::PublicKey::from_bytes(&pubkey_bytes[..])
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
-                let signature = ed25519_dalek::Signature::from(sig.deref().clone());
-                pubkey.verify_strict(data, &signature)
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)
+        // this clone()s, but at least we aren't duplicating code anymore
+        let keypair = match self {
+            SignKeypairPublic::Ed25519(pubkey) => {
+                SignKeypair::Ed25519 { public: pubkey.clone(), secret: None }
             }
-        }
+        };
+        keypair.verify(signature, data)
     }
 
     /// Create a KeyID from this keypair.
     pub fn key_id(&self) -> KeyID {
         KeyID::SignKeypair(self.clone())
+    }
+
+    /// Serialize this public key
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        ser::serialize(self)
+    }
+
+    /// Deserialize into a public key
+    pub fn deserialize(bytes: &[u8]) -> Result<Self> {
+        ser::deserialize(bytes)
     }
 }
 
@@ -694,8 +712,8 @@ impl Hmac {
     }
 }
 
-/// Generate a master key from a passphrase/salt
-pub fn derive_master_key(passphrase: &[u8], salt_bytes: &[u8], ops: u32, mem: u32) -> Result<SecretKey> {
+/// Generate a secret key from a passphrase/salt
+pub fn derive_secret_key(passphrase: &[u8], salt_bytes: &[u8], ops: u32, mem: u32) -> Result<SecretKey> {
     const LEN: usize = 32;
     let salt: &[u8; 16] = salt_bytes[0..16].try_into()
         .map_err(|_| Error::CryptoBadSalt)?;
@@ -766,6 +784,28 @@ pub(crate) mod tests {
         match sig {
             SignKeypairSignature::Ed25519(ref sig) => {
                 let should_be: Vec<u8> = vec![81, 54, 50, 92, 69, 78, 205, 207, 10, 242, 222, 154, 70, 18, 242, 16, 67, 142, 59, 63, 41, 129, 98, 223, 161, 173, 210, 23, 78, 208, 43, 79, 130, 225, 189, 179, 88, 103, 74, 71, 116, 212, 6, 207, 194, 212, 25, 107, 56, 91, 185, 214, 146, 78, 185, 212, 90, 22, 99, 77, 193, 231, 239, 5];
+                assert_eq!(sig.as_ref(), should_be.as_slice());
+            }
+        }
+        let verify_real = our_keypair.verify(&sig, msg_real.as_bytes());
+        let verify_fake = our_keypair.verify(&sig, msg_fake.as_bytes());
+        assert_eq!(verify_real, Ok(()));
+        assert_eq!(verify_fake, Err(Error::CryptoSignatureVerificationFailed));
+    }
+
+    #[test]
+    fn signkeypair_ed25519_seckey_sign_verify() {
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let seed: [u8; 32] = vec![111, 229, 76, 13, 231, 38, 253, 27, 53, 2, 235, 174, 151, 186, 192, 33, 16, 2, 57, 32, 170, 23, 13, 47, 44, 234, 231, 35, 38, 107, 93, 198].try_into().unwrap();
+        let seckey = SecretKey::new_xchacha20poly1305_from_slice(&seed[..]).expect("bad seed");
+        let our_keypair = SignKeypair::new_ed25519_from_secret_key(&master_key, &seckey).unwrap();
+
+        let msg_real = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
+        let msg_fake = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...");
+        let sig = our_keypair.sign(&master_key, msg_real.as_bytes()).unwrap();
+        match sig {
+            SignKeypairSignature::Ed25519(ref sig) => {
+                let should_be: Vec<u8> = vec![27, 170, 26, 253, 20, 232, 242, 242, 221, 55, 38, 154, 109, 229, 98, 75, 255, 116, 24, 234, 59, 27, 235, 238, 135, 32, 154, 254, 53, 208, 115, 175, 3, 144, 208, 50, 39, 33, 119, 50, 209, 161, 0, 205, 254, 111, 171, 19, 169, 110, 20, 196, 219, 235, 2, 190, 201, 117, 31, 177, 152, 249, 71, 3];
                 assert_eq!(sig.as_ref(), should_be.as_slice());
             }
         }
@@ -903,10 +943,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn derives_master_key() {
+    fn derives_secret_key() {
         let id = util::hash("my key".as_bytes()).unwrap();
         let salt = util::hash(id.as_ref()).unwrap();
-        let master_key = derive_master_key("ZONING IS COMMUNISM".as_bytes(), &salt.as_ref(), KDF_OPS_INTERACTIVE, KDF_MEM_INTERACTIVE).unwrap();
+        let master_key = derive_secret_key("ZONING IS COMMUNISM".as_bytes(), &salt.as_ref(), KDF_OPS_INTERACTIVE, KDF_MEM_INTERACTIVE).unwrap();
         assert_eq!(master_key.as_ref(), &[148, 34, 57, 50, 168, 111, 176, 114, 120, 168, 159, 158, 96, 119, 14, 194, 52, 224, 58, 194, 77, 44, 168, 25, 54, 138, 172, 91, 164, 86, 190, 89]);
     }
 
