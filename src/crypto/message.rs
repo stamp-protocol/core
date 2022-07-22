@@ -21,7 +21,7 @@ use serde_derive::{Serialize, Deserialize};
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Message {
-    /// An anonymouse message without any signature information.
+    /// An anonymous message without any signature information.
     #[rasn(tag(explicit(0)))]
     Anonymous(Vec<u8>),
     /// A message signed by the sender that the recipient can use to verify the
