@@ -53,6 +53,7 @@ impl<T> Decode for Private<T> {
         })
     }
 }
+
 impl<T> Clone for Private<T> {
     fn clone(&self) -> Self {
         Self {
