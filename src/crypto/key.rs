@@ -25,7 +25,7 @@ use crate::{
         sign::Signable,
     },
 };
-use ed25519_dalek::Signer;
+use ed25519_dalek::{Signer};
 use hmac::{
     Mac,
     digest::{
@@ -281,10 +281,10 @@ impl SignKeypair {
         Self::new_ed25519_from_seed(master_key, &seed)
     }
 
-    /// Sign a value with our secret signing key.
-    ///
-    /// Must be unlocked via our master key.
-    pub fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<SignKeypairSignature> {
+    /// Hash a value then sign it, returning the hash and the signature. This is
+    /// already how signing works, but we basically control the hash process
+    /// ourselves so we can return the hash.
+    pub fn sign_and_hash(&self, master_key: &SecretKey, data: &[u8]) -> Result<(Binary<64>, SignKeypairSignature)> {
         match self {
             Self::Ed25519 { secret: ref sec_locked_opt, .. } => {
                 let sec_locked = sec_locked_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
@@ -292,8 +292,51 @@ impl SignKeypair {
                     .map_err(|_| Error::CryptoSignatureFailed)?;
                 let pubkey: ed25519_dalek::PublicKey = (&seckey).into();
                 let keypair = ed25519_dalek::Keypair { public: pubkey, secret: seckey };
-                let sig = keypair.sign(data);
-                Ok(SignKeypairSignature::Ed25519(Binary::new(sig.to_bytes())))
+                let mut prehashed = ed25519_dalek::Sha512::new();
+                prehashed.update(data);
+                // i don't like this clone but oh well...?
+                let sig_obj = keypair.sign_prehashed(prehashed.clone(), Some(b"stamp-protocol"));
+                let sig = SignKeypairSignature::Ed25519(Binary::new(sig_obj.to_bytes()));
+                let hash_vec = Vec::from(prehashed.finalize().as_slice());
+                let hash_arr: [u8; 64] = hash_vec.as_slice().try_into()
+                    .map_err(|_| Error::CryptoSignatureFailed)?;
+                let hash = Sha512(Binary(hash_arr));
+                Ok((hash, sig))
+            }
+        }
+    }
+
+    /// Sign a value with our secret signing key.
+    ///
+    /// Must be unlocked via our master key.
+    pub fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<SignKeypairSignature> {
+        // sign and hash but throw away the hash
+        self.sign_and_hash(master_key, data)
+            .map(|x| x.1)
+    }
+
+    /// Make sure a set of data has the appropriate hash and also verifies
+    /// against its signature.
+    pub fn verify_and_hash(&self, hash: Sha512, signature: &SignKeypairSignature, data: &[u8]) -> Result<Sha512> {
+        match (self, signature) {
+            (Self::Ed25519 { public: ref pubkey_bytes, .. }, SignKeypairSignature::Ed25519(ref sig_bytes)) => {
+                let pubkey = ed25519_dalek::PublicKey::from_bytes(&pubkey_bytes[..])
+                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
+                let sig_arr: [u8; 64] = sig_bytes.deref().clone().try_into()
+                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
+                let prehashed = ed25519_dalek::Sha512::default().chain(data);
+                let body_hash_vec = Vec::from(prehashed.clone().finalize().as_slice());
+                let body_hash_arr: [u8; 64] = hash_vec.as_slice().try_into()
+                    .map_err(|_| Error::CryptoSignatureFailed)?;
+                let body_hash = Sha512(Binary(body_hash_arr));
+
+                if hash != body_hash {
+                    Err(Error::CryptoSignatureVerificationFailed)?;
+                }
+
+                let sig = ed25519_dalek::Signature::from(sig_arr);
+                pubkey.verify_prehashed_strict(data, &sig)
+                    .map_err(|_| Error::CryptoSignatureVerificationFailed)
             }
         }
     }
@@ -301,17 +344,6 @@ impl SignKeypair {
     /// Verify a value with a detached signature given the public key of the
     /// signer.
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
-        match (self, signature) {
-            (Self::Ed25519 { public: ref pubkey_bytes, .. }, SignKeypairSignature::Ed25519(ref sig_bytes)) => {
-                let pubkey = ed25519_dalek::PublicKey::from_bytes(&pubkey_bytes[..])
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
-                let sig_arr: [u8; 64] = sig_bytes.deref().clone().try_into()
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
-                let sig = ed25519_dalek::Signature::from(sig_arr);
-                pubkey.verify_strict(data, &sig)
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)
-            }
-        }
     }
 
     /// Re-encrypt this signing keypair with a new master key.
@@ -622,6 +654,35 @@ impl From<CryptoKeypair> for CryptoKeypairPublic {
         match kp {
             CryptoKeypair::Curve25519XChaCha20Poly1305 { public, .. } => Self::Curve25519XChaCha20Poly1305(public),
         }
+    }
+}
+
+/// Holds a sha512 signature. We could just use Binary<64> directly but this
+/// sets a more clear intention, and these days I'm all about clear intentions
+/// and open communication (as long as it's securely encrypted between
+/// participants, of course).
+#[derive(Debug, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+pub struct Sha512(Binary<64>);
+
+impl Sha512 {
+    /// Create a new Sha512 from a byte array
+    pub fn new(bytes: [u8; 64]) -> Self {
+        Self(Binary::new(bytes))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn random() -> Self {
+        let mut randbuf = [0u8; 64];
+        OsRng.fill_bytes(&mut randbuf);
+        Self::new(randbuf)
+    }
+}
+
+impl Deref for Sha512 {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.deref()
     }
 }
 

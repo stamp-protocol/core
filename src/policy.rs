@@ -1,50 +1,24 @@
-//! The recovery system provides a method for replacing the recovery key (which
-//! has ultimate control over the keychain) in the event it is lost or stolen.
+//! The policy system provides a method for validating transactions using a
+//! pre-determined combination of cryptographic signatures (effectively
+//! multisig).
 //!
-//! The idea here is that using our policy keypair, we can create and sign a
-//! recovery policy that allows us to generate new policy, publish, and root
-//! keypairs for our identity, provided that it is ratified by some combination
-//! of signatures from other keys. So let's say you create a recovery policy
-//! that requires you to have at least three signatures of the five public
-//! keys that you list (which might belong to family members, identity
-//! companies, or other trusted third parties). If you lose any non-alpha key,
-//! you can create a recovery request, sign it with the policy key you hope
-//! to replace the lost one, and try to get three or more signatures on that
-//! request from your trusted circle. If you get the signatures you need, the
-//! protocol will "honor" the replacement request and grant you your new
-//! keys.
+//! Policies are general constructions that do not force M-of-N or any other
+//! rigid arrangement, but rather allow expressions of completely arbitrary
+//! combinations of keys.
 //!
-//! The recovery request currently only has one action available to it, which is
-//! to replace the policy, publis and root keys. In essence, this allows you to
-//! manage most aspects of your identity even without having ready access to the
-//! alpha or policy keypair, which allows them to be safely locked away (only to
-//! be used during emergencies).
-//!
-//! The policy itself can require any arbitrary combination of signatures, so
-//! it's really up to the identity holder to choose a policy they feel gives
-//! them the most benefit.
-//!
-//! It's important to weigh accessibilty and security here. You can say *all ten
-//! of the following identities must sign* in order to recover, but if one of
-//! those ten people dies, then you're SOL. If your policy is too difficult to
-//! actually satisfy, then you'll likely keep your higher-powered keys laying
-//! around more often, increasing your attack surface.
-//!
-//! Another note: the recovery keys we list must be exact matches: signatures
-//! from a subkey of one of those keys won't work. A person must sign a recovery
-//! request with whatever key is listed in the policy. The reason is that a
-//! recovery request must be able to be processed locally, so subkeys won't be
-//! available at the time of verification.
+//! In combination with capabilties, this allows an identity to be managed
+//! not just by keys it owns, but by trusted third parties as well.
 
 use crate::{
-    error::{Error, Result},
     crypto::key::{SecretKey, SignKeypair, SignKeypairPublic, SignKeypairSignature},
+    dag::{TransactionBody, TransactionID},
+    error::{Error, Result},
     identity::{
         Public,
-        identity::IdentityID,
-        keychain::{ExtendKeypair, PolicyKeypair, PolicyKeypairSignature, PublishKeypair, RootKeypair},
+        identity::{IdentityID, ForwardType},
+        keychain::{ExtendKeypair, AdminKeypairPublic, AdminKeypairSignature},
     },
-    util::ser,
+    util::ser::{self, BinaryVec},
 };
 use getset;
 #[cfg(test)] use rand::RngCore;
@@ -53,47 +27,266 @@ use serde_derive::{Serialize, Deserialize};
 use std::convert::TryInto;
 use std::ops::Deref;
 
-object_id! {
-    /// A unique identifier for recovery policies.
-    PolicyID
-}
-
-object_id! {
-    /// A unique identifier for recovery requests.
-    RequestID
-}
-
-/// A condition that goes into a recovery policy.
+/// Defines a context specifier specific to various claim types
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
-pub enum PolicyCondition {
+pub enum TransactionBodyType {
+    #[rasn(tag(explicit(0)))]
+    CreateIdentityV1,
+    #[rasn(tag(explicit(1)))]
+    MakeClaimV1,
+    #[rasn(tag(explicit(2)))]
+    DeleteClaimV1,
+    #[rasn(tag(explicit(3)))]
+    MakeStampV1,
+    #[rasn(tag(explicit(4)))]
+    RevokeStampV1,
+    #[rasn(tag(explicit(5)))]
+    AcceptStampV1,
+    #[rasn(tag(explicit(6)))]
+    DeleteStampV1,
+    #[rasn(tag(explicit(7)))]
+    AddSubkeyV1,
+    #[rasn(tag(explicit(8)))]
+    EditSubkeyV1,
+    #[rasn(tag(explicit(9)))]
+    RevokeSubkeyV1,
+    #[rasn(tag(explicit(10)))]
+    DeleteSubkeyV1,
+    #[rasn(tag(explicit(11)))]
+    SetNicknameV1,
+    #[rasn(tag(explicit(12)))]
+    AddForwrdV1,
+    #[rasn(tag(explicit(13)))]
+    DeleteForwardV1,
+}
+
+impl From<TransactionBody> for TransactionBodyType {
+    // Not sure if this is actually useful as much as it keeps ContextClaimType
+    // in sync with ClaimSpec
+    fn from(body: TransactionBody) -> Self {
+        match body {
+            TransactionBody::CreateIdentityV1 { .. } => Self::CreateIdentityV1,
+            TransactionBody::MakeClaimV1 { .. } => Self::MakeClaimV1,
+            TransactionBody::DeleteClaimV1 { .. } => Self::DeleteClaimV1,
+            TransactionBody::MakeStampV1 { .. } => Self::MakeStampV1,
+            TransactionBody::RevokeStampV1 { .. } => Self::RevokeStampV1,
+            TransactionBody::AcceptStampV1 { .. } => Self::AcceptStampV1,
+            TransactionBody::DeleteStampV1 { .. } => Self::DeleteStampV1,
+            TransactionBody::AddSubkeyV1 { .. } => Self::AddSubkeyV1,
+            TransactionBody::EditSubkeyV1 { .. } => Self::EditSubkeyV1,
+            TransactionBody::RevokeSubkeyV1 { .. } => Self::RevokeSubkeyV1,
+            TransactionBody::DeleteSubkeyV1 { .. } => Self::DeleteSubkeyV1,
+            TransactionBody::SetNicknameV1 { .. } => Self::SetNicknameV1,
+            TransactionBody::AddForwrdV1 { .. } => Self::AddForwrdV1,
+            TransactionBody::DeleteForwardV1 { .. } => Self::DeleteForwardV1,
+        }
+    }
+}
+
+/// Defines a context specifier specific to various claim types
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum ContextClaimType {
+    #[rasn(tag(explicit(0)))]
+    Identity,
+    #[rasn(tag(explicit(1)))]
+    Name,
+    #[rasn(tag(explicit(2)))]
+    Birthday,
+    #[rasn(tag(explicit(3)))]
+    Email,
+    #[rasn(tag(explicit(4)))]
+    Photo,
+    #[rasn(tag(explicit(5)))]
+    Pgp,
+    #[rasn(tag(explicit(6)))]
+    Domain,
+    #[rasn(tag(explicit(7)))]
+    Url,
+    #[rasn(tag(explicit(8)))]
+    Address,
+    #[rasn(tag(explicit(9)))]
+    Relation,
+    #[rasn(tag(explicit(10)))]
+    RelationExtension,
+    #[rasn(tag(explicit(11)))]
+    Extension,
+}
+
+impl From<ClaimSpec> for ContextClaimType {
+    // Not sure if this is actually useful as much as it keeps ContextClaimType
+    // in sync with ClaimSpec
+    fn from(spec: ClaimSpec) -> Self {
+        match spec {
+            ClaimSpec::Identity(..) => Self::Identity,
+            ClaimSpec::Name(..) => Self::Name,
+            ClaimSpec::Birthday(..) => Self::Birthday,
+            ClaimSpec::Email(..) => Self::Email,
+            ClaimSpec::Photo(..) => Self::Photo,
+            ClaimSpec::Pgp(..) => Self::Pgp,
+            ClaimSpec::Domain(..) => Self::Domain,
+            ClaimSpec::Url(..) => Self::Url,
+            ClaimSpec::Address(..) => Self::Address,
+            ClaimSpec::Relation(..) => Self::Relation,
+            ClaimSpec::RelationExtension(..) => Self::RelationExtension,
+            ClaimSpec::Extension { .. } => Self::Extension,
+        }
+    }
+}
+
+/// Defines a context specifier specific to various forward types
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum ContextForwardType {
+    #[rasn(tag(explicit(0)))]
+    Email,
+    #[rasn(tag(explicit(1)))]
+    Social,
+    #[rasn(tag(explicit(2)))]
+    Pgp,
+    #[rasn(tag(explicit(3)))]
+    Url,
+    #[rasn(tag(explicit(4)))]
+    Extension,
+}
+
+impl From<ForwardType> for ContextForwardType {
+    // Not sure if this is actually useful as much as it keeps ContextClaimType
+    // in sync with ClaimSpec
+    fn from(spec: ForwardType) -> Self {
+        match spec {
+            ForwardType::Email(..) => Self::Email,
+            ForwardType::Social { .. } => Self::Social,
+            ForwardType::Pgp(..) => Self::Pgp,
+            ForwardType::Url(..) => Self::Url,
+            ForwardType::Extension { .. } => Self::Extension,
+        }
+    }
+}
+
+/// Defines a context under which a transaction can be performed.
+///
+/// This is a recursive structure which allows defining arbitrary combinations
+/// of contexts.
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum Context {
+    /// Represents a context in which ALL given contexts must match.
+    #[rasn(tag(explicit(0)))]
+    All(Vec<Context>),
+    /// Represents a context in which one or more of the given contexts must
+    /// match.
+    #[rasn(tag(explicit(1)))]
+    Any(Vec<Context>),
+    /// Allows an action in the context of items with an exact ID match (for
+    /// instance, a claim that was created by transaction 0x03fd913)
+    #[rasn(tag(explicit(2)))]
+    ID(TransactionID),
+    /// Allows an action in the context of items with an exact name match. This
+    /// can be a forward or a subkey generally.
+    #[rasn(tag(explicit(3)))]
+    Name(String),
+    /// Allows an action in the context of items with name matching a glob pattern.
+    /// This can be a forward or a subkey generally.
+    #[rasn(tag(explicit(4)))]
+    NameGlob(String),
+    /// Allows actions on claims where the claim is of a particular type
+    #[rasn(tag(explicit(5)))]
+    ClaimType(ContextClaimType),
+    /// Allows actions on forwards where the claim is of a particular type
+    #[rasn(tag(explicit(6)))]
+    ForwardType(ContextForwardType),
+}
+
+/// Defines an action that can be taken on an identity. Effectively, this is the
+/// ability to group transactions (as defined by `[TransactionBody]`) within
+/// certain contexts (such as "manage subkeys if the name matches the glob
+/// pattern 'dogecoin/*'").
+///
+/// Capabilities do not control read access to data as this can only realistically
+/// be done through key management.
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum Capability {
+    /// The ability to perform a transaction in a given context
+    #[rasn(tag(explicit(0)))]
+    Transaction {
+        #[rasn(tag(explicit(0)))]
+        transaction: TransactionBodyType,
+        #[rasn(tag(explicit(1)))]
+        context: Context,
+    },
+    /// Allows creating any kind of custom actions/contexts outside the scope of
+    /// the Stamp protocol.
+    ///
+    /// For instance, an identity might have the ability to publish transactions
+    /// in other protocols, and the `Extension` capability allows that protocol
+    /// to define its own action types and contexts in serialized binary form.
+    ///
+    /// This allows harnessing the identity and its policy system for participating
+    /// in protocols outside of Stamp.
+    #[rasn(tag(explicit(1)))]
+    Extension {
+        #[rasn(tag(explicit(0)))]
+        #[serde(rename = "type")]
+        ty: BinaryVec,
+        #[rasn(tag(explicit(1)))]
+        context: BinaryVec,
+    }
+}
+
+/// A policy participant. Currently this is just an [Admin][AdminKeypair] public key
+/// but could be expanded later on to allow other participant types.
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum Participant {
+    /// This participant is a specific key, and policy signatures must come from
+    /// this exact key.
+    #[rasn(tag(explicit(0)))]
+    Key(AdminKeypairPublic),
+}
+
+/// A signature on a policy transaction. Currently only supports direct signatures
+/// from admin keys, but could allow expanding to other signature methods.
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum PolicySignature {
+    /// A signature on a transaction from a specific key, generally one that's
+    /// listed as a [Participant::Key] in the policy.
+    #[rasn(tag(explicit(0)))]
+    Key(AdminKeypairSignature),
+}
+
+/// A recursive structure that defines the conditions under which a multisig
+/// policy can be satisfied. Allows expressing arbitrary combinations of
+/// signatures.
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum Policy {
     /// All of the given conditions must be met.
     #[rasn(tag(explicit(0)))]
-    All(Vec<PolicyCondition>),
+    All(Vec<Policy>),
     /// Any of the given conditions can be met.
     #[rasn(tag(explicit(1)))]
-    Any(Vec<PolicyCondition>),
+    Any(Vec<Policy>),
     /// Of the given public keys, N many must produce a valid signature in order
     /// for the policy to be ratified.
     #[rasn(tag(explicit(2)))]
-    OfN {
+    MOfN {
         /// Must have at least this many signatures.
         #[rasn(tag(explicit(0)))]
         must_have: u16,
         /// The keys we're listing as identity recovery keys.
         #[rasn(tag(explicit(1)))]
-        pubkeys: Vec<SignKeypairPublic>,
+        participants: Vec<Participant>,
     },
-    /// A special condition that can never be satisfied. Useful for creating
-    /// policies that cannot be fulfilled.
-    #[rasn(tag(explicit(3)))]
-    Deny,
 }
 
-impl PolicyCondition {
+impl Policy {
     /// Tests whether the given signatures match the policy condition
-    pub(crate) fn test<F>(&self, signatures: &Vec<SignKeypairSignature>, sigtest: &F) -> Result<()>
-        where F: Fn(&SignKeypairPublic, &SignKeypairSignature) -> Result<()>,
+    pub(crate) fn test<F>(&self, signatures: &Vec<PolicySignature>, serialized_transaction: &[u8]) -> Result<()>
+        where F: Fn(&Participant, &PolicySignature) -> Result<()>,
     {
         match self {
             Self::All(conditions) => {
@@ -106,12 +299,17 @@ impl PolicyCondition {
                     .find(|c| c.test(signatures, sigtest).is_ok())
                     .ok_or(Error::PolicyConditionMismatch)?;
             }
-            Self::OfN { must_have, pubkeys } => {
-                let has = pubkeys.iter()
-                    .filter_map(|pubkey| {
+            Self::OfN { must_have, participants } => {
+                let has = participants.iter()
+                    .filter_map(|participant| {
                         for sig in signatures {
-                            if sigtest(pubkey, sig).is_ok() {
-                                return Some(());
+                            match (participant, sig) {
+                                (Participant::Key(pubkey), PolicySignature::Key(sig)) => {
+                                    if pubkey.verify(sig, &serialized_transaction).is_ok() {
+                                        return Some(());
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                         None
@@ -121,214 +319,42 @@ impl PolicyCondition {
                     Err(Error::PolicyConditionMismatch)?;
                 }
             }
-            Self::Deny => {
-                Err(Error::PolicyConditionMismatch)?;
-            }
         }
         Ok(())
     }
 }
 
-/// A recovery policy.
+/// Matches a set of [Capabilities][Capability] to a multisig [Policy], making
+/// it so the policy must be fulfilled in order to perform those capabilities.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct RecoveryPolicy {
+pub struct CapabilityPolicy {
+    /// The capabilities (or actions) this policy can access
     #[rasn(tag(explicit(0)))]
-    id: PolicyID,
+    capabilities: Vec<Capability>,
+    /// The signature policy defining which keys are required to perform the
+    /// specified capabilities
     #[rasn(tag(explicit(1)))]
-    conditions: PolicyCondition,
+    policy: Policy,
 }
 
-impl RecoveryPolicy {
-    /// Create a new recovery policy
-    pub(crate) fn new(id: PolicyID, conditions: PolicyCondition) -> Self {
-        Self {
-            id,
-            conditions,
-        }
+impl CapabilityPolicy {
+    /// Create a new `CapabilityPolicy`
+    pub fn new(capabilities: Vec<Capability>, policy: Policy) -> Self {
+        Self { capabilities, policy }
     }
 
-    pub(crate) fn validate_request(&self, identity_id: &IdentityID, request: &PolicyRequest) -> Result<()> {
-        // make sure the request signature is valid
-        match request.entry().action() {
-            PolicyRequestAction::ReplaceKeys { policy, .. } => request.verify(&policy)?,
-        }
-
-        // check the identity matches the request
-        if identity_id != request.entry().identity_id() {
-            Err(Error::RecoveryPolicyRequestIdentityMismatch)?;
-        }
-
-        // check the polocy matches the request
-        if self.id() != request.entry().policy_id() {
-            Err(Error::RecoveryPolicyRequestPolicyMismatch)?;
-        }
-
-        // check the signatures match the policy conditions
-        let serialized = ser::serialize(request.entry())?;
-        self.conditions().test(
-            request.signatures(),
-            &|pubkey, sig| pubkey.verify(sig, &serialized),
-        )?;
-
-        Ok(())
-    }
-}
-
-/// The actions we can take on a recovery request.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(choice)]
-pub enum PolicyRequestAction {
-    /// Replace the current policy-controlled keys.
-    #[rasn(tag(explicit(0)))]
-    ReplaceKeys {
-        #[rasn(tag(explicit(0)))]
-        policy: PolicyKeypair,
-        #[rasn(tag(explicit(1)))]
-        publish: PublishKeypair,
-        #[rasn(tag(explicit(2)))]
-        root: RootKeypair,
-    },
-}
-
-impl PolicyRequestAction {
-    fn reencrypt(self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
-        match self {
-            Self::ReplaceKeys { policy, publish, root } => {
-                let new_policy = policy.reencrypt(old_master_key, new_master_key)?;
-                let new_publish = publish.reencrypt(old_master_key, new_master_key)?;
-                let new_root = root.reencrypt(old_master_key, new_master_key)?;
-                Ok(Self::ReplaceKeys {
-                    policy: new_policy,
-                    publish: new_publish,
-                    root: new_root,
-                })
-            }
-        }
-    }
-}
-
-impl Public for PolicyRequestAction {
-    fn strip_private(&self) -> Self {
-        match self {
-            Self::ReplaceKeys { policy, publish, root } => {
-                Self::ReplaceKeys {
-                    policy: policy.strip_private(),
-                    publish: publish.strip_private(),
-                    root: root.strip_private(),
-                }
-            }
-        }
+    /// Determine if this particular `CapabilityPolicy` allows performing the
+    /// action `capability`.
+    pub fn can(&self, capability: Capability) -> bool {
+        todo!();
     }
 
-    fn has_private(&self) -> bool {
-        match self {
-            Self::ReplaceKeys { policy, publish, root } => {
-                policy.has_private() || publish.has_private() || root.has_private()
-            }
-        }
-    }
-}
-
-/// The inner data of a recovery request. This object is what our recovery
-/// compadres sign when they help us execute a recovery request.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct PolicyRequestEntry {
-    /// "The ID of the identity we're trying to recover," he said with a boyish
-    /// grin.
-    #[rasn(tag(explicit(0)))]
-    identity_id: IdentityID,
-    /// The ID of the policy we're trying to satisfy.
-    #[rasn(tag(explicit(1)))]
-    policy_id: PolicyID,
-    /// What exactly is it we're trying to do.
-    #[rasn(tag(explicit(2)))]
-    action: PolicyRequestAction,
-}
-
-impl PolicyRequestEntry {
-    /// Create a new request entry.
-    pub(crate) fn new(identity_id: IdentityID, policy_id: PolicyID, action: PolicyRequestAction) -> Self {
-        Self {
-            identity_id,
-            policy_id,
-            action,
-        }
-    }
-}
-
-/// A recovery request. Must be signed and validated according to the identity's
-/// current [recovery policy](RecoveryPolicy) to be
-/// considered valid.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct PolicyRequest {
-    /// The ID of this request. This is a signature (using the new policy
-    /// keypair) of our `PolicyRequestEntry`.
-    #[rasn(tag(explicit(0)))]
-    id: RequestID,
-    /// The actual policy request data: this contains the new policy and the new
-    /// recovery key we'll use in the event the request satisfies the current
-    /// policy.
-    #[rasn(tag(explicit(1)))]
-    entry: PolicyRequestEntry,
-    /// Here, we collect the signaturs needed to fulfill the policy. The request
-    /// can only be executed if the signatures match the conditions of the
-    /// policy.
-    ///
-    /// Each signature must sign the `entry` field (the [PolicyRequestEntry]
-    /// object).
-    #[rasn(tag(explicit(2)))]
-    signatures: Vec<SignKeypairSignature>,
-}
-
-impl PolicyRequest {
-    /// Create a new recovery policy request.
-    pub(crate) fn new(master_key: &SecretKey, sign_keypair: &PolicyKeypair, entry: PolicyRequestEntry) -> Result<Self> {
-        let serialized = ser::serialize(&entry)?;
-        let sig = sign_keypair.sign(master_key, &serialized)?;
-        let id = RequestID(sig.deref().clone());
-        Ok(Self {
-            id,
-            entry,
-            signatures: Vec::new(),
-        })
-    }
-
-    /// Make sure this policy request is properly signed.
-    pub(crate) fn verify(&self, sign_keypair: &PolicyKeypair) -> Result<()> {
-        let serialized = ser::serialize(self.entry())?;
-        sign_keypair.verify(&PolicyKeypairSignature::from(self.id().deref().clone()), &serialized)
-    }
-
-    /// Sign this policy request and add the signature to the `signatures` list.
-    /// Generally, this is done by someone in the policy's condition lists,
-    /// although that's not enforced in any way.
-    pub(crate) fn sign(mut self, master_key: &SecretKey, sign_keypair: &SignKeypair) -> Result<Self> {
-        let serialized = ser::serialize(self.entry())?;
-        let sig = sign_keypair.sign(master_key, &serialized)?;
-        self.signatures_mut().push(sig);
-        Ok(self)
-    }
-
-    /// Reencrypt this policy request.
-    pub(crate) fn reencrypt(mut self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
-        let new_action = self.entry().action().clone().reencrypt(old_master_key, new_master_key)?;
-        self.entry_mut().set_action(new_action);
-        Ok(self)
-    }
-}
-
-impl Public for PolicyRequest {
-    fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        clone.entry_mut().set_action(self.entry().action().strip_private());
-        clone
-    }
-
-    fn has_private(&self) -> bool {
-        self.entry().action().has_private()
+    /// Determine if this particular `CapabilityPolicy` allows performing the
+    /// action `capability`, and also checks the `signatures` against the policy
+    /// to make sure we have the signatures we need to perform this action.
+    pub fn validate(&self, capability: Capability, signatures: &Vec<PolicySignature>) -> bool {
+        todo!();
     }
 }
 
@@ -343,10 +369,6 @@ mod tests {
 
     #[test]
     fn policy_condition_test() {
-        let conditions = PolicyCondition::Deny;
-        let res = conditions.test(&vec![], &|_, _| Ok(()));
-        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
-
         let master_key = SecretKey::new_xchacha20poly1305().unwrap();
 
         let gus = SignKeypair::new_ed25519(&master_key).unwrap();
@@ -677,6 +699,16 @@ mod tests {
                 assert!(!root.has_private());
             }
         }
+    }
+
+    #[test]
+    fn capability_policy_can() {
+        todo!();
+    }
+
+    #[test]
+    fn capability_policy_validate() {
+        todo!();
     }
 }
 

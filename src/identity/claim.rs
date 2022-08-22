@@ -52,8 +52,11 @@ pub enum RelationshipType {
 pub struct Relationship<T> {
     /// The type of relationship we have.
     #[rasn(tag(explicit(0)))]
+    #[serde(rename = "type")]
     ty: RelationshipType,
     /// Who the relationship is with.
+    ///
+    /// Eg: "your mom"
     #[rasn(tag(explicit(1)))]
     subject: T,
 }
@@ -183,7 +186,7 @@ pub enum ClaimSpec {
     /// Must be stamped in-person. At the DMV. The one that's further away.
     /// Sorry, that's the protocol.
     #[rasn(tag(explicit(8)))]
-    HomeAddress(MaybePrivate<String>),
+    Address(MaybePrivate<String>),
     /// A claim that I am in a relationship with another identity, hopefully
     /// stamped by that identity ='[
     #[rasn(tag(explicit(9)))]
@@ -230,7 +233,7 @@ impl ClaimSpec {
             Self::Pgp(maybe) => Self::Pgp(maybe.reencrypt(current_key, new_key)?),
             Self::Domain(maybe) => Self::Domain(maybe.reencrypt(current_key, new_key)?),
             Self::Url(maybe) => Self::Url(maybe.reencrypt(current_key, new_key)?),
-            Self::HomeAddress(maybe) => Self::HomeAddress(maybe.reencrypt(current_key, new_key)?),
+            Self::Address(maybe) => Self::Address(maybe.reencrypt(current_key, new_key)?),
             Self::Relation(maybe) => Self::Relation(maybe.reencrypt(current_key, new_key)?),
             Self::RelationExtension(maybe) => Self::RelationExtension(maybe.reencrypt(current_key, new_key)?),
             Self::Extension { key, value } => Self::Extension { key, value: value.reencrypt(current_key, new_key)? },
@@ -250,7 +253,7 @@ impl ClaimSpec {
             Self::Pgp(maybe) => Self::Pgp(maybe.into_public(open_key)?),
             Self::Domain(maybe) => Self::Domain(maybe.into_public(open_key)?),
             Self::Url(maybe) => Self::Url(maybe.into_public(open_key)?),
-            Self::HomeAddress(maybe) => Self::HomeAddress(maybe.into_public(open_key)?),
+            Self::Address(maybe) => Self::Address(maybe.into_public(open_key)?),
             Self::Relation(maybe) => Self::Relation(maybe.into_public(open_key)?),
             Self::RelationExtension(maybe) => Self::RelationExtension(maybe.into_public(open_key)?),
             Self::Extension { key, value } => Self::Extension { key, value: value.into_public(open_key)? },
@@ -270,7 +273,7 @@ impl Public for ClaimSpec {
             Self::Pgp(val) => Self::Pgp(val.strip_private()),
             Self::Domain(val) => Self::Domain(val.strip_private()),
             Self::Url(val) => Self::Url(val.strip_private()),
-            Self::HomeAddress(val) => Self::HomeAddress(val.strip_private()),
+            Self::Address(val) => Self::Address(val.strip_private()),
             Self::Relation(val) => Self::Relation(val.strip_private()),
             Self::RelationExtension(val) => Self::RelationExtension(val.strip_private()),
             Self::Extension { key, value } => Self::Extension { key: key.clone(), value: value.strip_private() },
@@ -287,7 +290,7 @@ impl Public for ClaimSpec {
             Self::Pgp(val) => val.has_private(),
             Self::Domain(val) => val.has_private(),
             Self::Url(val) => val.has_private(),
-            Self::HomeAddress(val) => val.has_private(),
+            Self::Address(val) => val.has_private(),
             Self::Relation(val) => val.has_private(),
             Self::RelationExtension(val) => val.has_private(),
             Self::Extension { value, .. } => value.has_private(),
@@ -489,7 +492,7 @@ pub(crate) mod tests {
         claim_reenc!{ Pgp, String::from("12345") }
         claim_reenc!{ Domain, String::from("slappy.com") }
         claim_reenc!{ Url, Url::parse("https://killtheradio.net/").unwrap() }
-        claim_reenc!{ HomeAddress, String::from("111 blumps ln") }
+        claim_reenc!{ Address, String::from("111 blumps ln") }
         claim_reenc!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
         claim_reenc!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
         claim_reenc!{
@@ -538,7 +541,7 @@ pub(crate) mod tests {
         claim_pub_priv!{ Pgp, String::from("I LIKE FOOTBALL") }
         claim_pub_priv!{ Domain, String::from("I-LIKE.TO.RUN") }
         claim_pub_priv!{ Url, Url::parse("https://www.imdb.com/title/tt0101660/").unwrap() }
-        claim_pub_priv!{ HomeAddress, String::from("22334 FOOTBALL LANE, FOOTBALLSVILLE, CA 00001") }
+        claim_pub_priv!{ Address, String::from("22334 FOOTBALL LANE, FOOTBALLSVILLE, CA 00001") }
         claim_pub_priv!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
         claim_pub_priv!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
         claim_pub_priv!{
@@ -582,7 +585,7 @@ pub(crate) mod tests {
         thtrip!{ Pgp, String::from("I PLAY FOOTBALL") }
         thtrip!{ Domain, String::from("WITH.MY.DAD") }
         thtrip!{ Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap() }
-        thtrip!{ HomeAddress, String::from("445 Elite Football Sports Street, Football, KY 44666") }
+        thtrip!{ Address, String::from("445 Elite Football Sports Street, Football, KY 44666") }
         thtrip!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
         thtrip!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
         thtrip!{
@@ -661,7 +664,7 @@ pub(crate) mod tests {
             "stamp://{{identity_id}}/claim/{{claim_id}}".into(),
             "stamp://{{identity_id_short}}/claim/{{claim_id_short}}".into(),
         ] }
-        assert_instant!{ HomeAddress, String::from("445 Elite Football Sports Street, Football, KY 44666"), vec![] }
+        assert_instant!{ Address, String::from("445 Elite Football Sports Street, Football, KY 44666"), vec![] }
         assert_instant!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), vec![] }
         assert_instant!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])), vec![] }
         assert_instant!{
@@ -713,7 +716,7 @@ pub(crate) mod tests {
         as_pub!{ Pgp, String::from("0x00000000000") }
         as_pub!{ Domain, String::from("decolonizing-decolonization.decolonize.org") }
         as_pub!{ Url, Url::parse("https://i.gifer.com/RL4.gif").unwrap() }
-        as_pub!{ HomeAddress, String::from("22334 MECHA SHIVA LANE, GAINESVILLE, FL 00001") }
+        as_pub!{ Address, String::from("22334 MECHA SHIVA LANE, GAINESVILLE, FL 00001") }
         as_pub!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
         as_pub!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
         as_pub!{
@@ -752,7 +755,7 @@ pub(crate) mod tests {
         has_priv! { Pgp, String::from("45de280a"), true }
         has_priv! { Domain, String::from("good-times.great-trucks.nsf"), true }
         has_priv! { Url, Url::parse("https://you-might.be/wrong").unwrap(), true }
-        has_priv! { HomeAddress, String::from("Mojave Desert"), true }
+        has_priv! { Address, String::from("Mojave Desert"), true }
         has_priv! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), true }
         has_priv! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])), true }
         has_priv! { raw, |maybe, _| ClaimSpec::Extension { key: "tuna-melt-tuna-melt-TUNA-MELT-TUNA-MELT".into(), value: maybe }, BinaryVec::from(vec![123, 122, 100]), true }

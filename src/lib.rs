@@ -93,6 +93,7 @@ pub mod error;
 pub mod util;
 pub mod private;
 pub mod crypto;
+pub mod policy;
 pub mod identity;
 pub mod dag;
 

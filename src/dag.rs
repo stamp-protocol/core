@@ -7,7 +7,7 @@
 use crate::{
     error::{Error, Result},
     crypto::{
-        key::{SecretKey, SignKeypairSignature},
+        key::{SecretKey, Sha512, SignKeypairSignature},
     },
     identity::{
         claim::{
@@ -21,13 +21,8 @@ use crate::{
         },
         keychain::{
             ExtendKeypair,
-            AlphaKeypair,
-            AlphaKeypairSignature,
-            PolicyKeypair,
-            PolicyKeypairSignature,
-            PublishKeypair,
-            RootKeypair,
-            RootKeypairSignature,
+            AdminKeypair,
+            AdminKeypairSignature,
             Key,
             RevocationReason,
         },
@@ -44,7 +39,6 @@ use crate::{
     },
     util::{
         Public,
-        PublicMaybe,
         Timestamp,
         ser::{self, SerdeBinary},
     },
@@ -61,81 +55,54 @@ use std::ops::Deref;
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum TransactionBody {
-    /// Used when a transaction's entire body is private data and we wish to
-    /// still include the transaction, but hide the body.
-    ///
-    /// For instance, if adding a `SecretKey` subkey, there is no public
-    /// component to the transaction body, only private data. So if we're
-    /// stripping private data, the entire transaction body would be blank. We
-    /// need to show something for each transaction though, and using an Option
-    /// doesn't make sense just for this one case, so this allows us to still
-    /// include a transaction body without needing to use "tricks" in a higher
-    /// container.
-    Private,
-
+    /// Create a new identity. The [ID][TranscationID] of this transaction will
+    /// be the identity's public ID forever after.
     #[rasn(tag(explicit(0)))]
     CreateIdentityV1 {
         #[rasn(tag(explicit(0)))]
-        alpha: AlphaKeypair,
-        #[rasn(tag(explicit(1)))]
-        policy: PolicyKeypair,
-        #[rasn(tag(explicit(2)))]
-        publish: PublishKeypair,
-        #[rasn(tag(explicit(3)))]
-        root: RootKeypair,
+        alpha: AdminKeypair,
     },
+    /// Make a new claim on this identity. The [ID][TransactionID] if this
+    /// transaction will be the claim's ID.
     #[rasn(tag(explicit(1)))]
-    SetRecoveryPolicyV1 {
-        #[rasn(tag(explicit(0)))]
-        policy: Option<PolicyCondition>,
-    },
-    #[rasn(tag(explicit(2)))]
-    ExecuteRecoveryPolicyV1 {
-        #[rasn(tag(explicit(0)))]
-        request: PolicyRequest,
-    },
-    #[rasn(tag(explicit(3)))]
     MakeClaimV1 {
         #[rasn(tag(explicit(0)))]
         spec: ClaimSpec,
     },
-    #[rasn(tag(explicit(4)))]
+    /// Delete/remove a claim by ID.
+    #[rasn(tag(explicit(2)))]
     DeleteClaimV1 {
         #[rasn(tag(explicit(0)))]
         claim_id: ClaimID,
     },
+    /// Make a stamp that is saved and advertised with this identity.
+    #[rasn(tag(explicit(3)))]
+    MakeStampV1 {
+        #[rasn(tag(explicit(0)))]
+        stamp: Stamp,
+    },
+    /// Revoke a stamp we previously created and store this revocation with the
+    /// identity.
+    #[rasn(tag(explicit(4)))]
+    RevokeStampV1 {
+        #[rasn(tag(explicit(0)))]
+        revocation: StampRevocation,
+    }
+    /// Accept a stamp on one of our claims into our identity. This allows those
+    /// who have our identity to see the trust others have put into us.
     #[rasn(tag(explicit(5)))]
     AcceptStampV1 {
         #[rasn(tag(explicit(0)))]
         stamp: Stamp,
     },
+    /// Delete a stamp on one of our claims.
     #[rasn(tag(explicit(6)))]
     DeleteStampV1 {
         #[rasn(tag(explicit(0)))]
         stamp_id: StampID,
     },
+    /// Add a new subkey to our keychain.
     #[rasn(tag(explicit(7)))]
-    SetPolicyKeyV1 {
-        #[rasn(tag(explicit(0)))]
-        keypair: PolicyKeypair,
-        #[rasn(tag(explicit(1)))]
-        reason: RevocationReason,
-    },
-    #[rasn(tag(explicit(8)))]
-    SetPublishKeyV1 {
-        #[rasn(tag(explicit(0)))]
-        keypair: PublishKeypair,
-        #[rasn(tag(explicit(1)))]
-        reason: RevocationReason,
-    },
-    #[rasn(tag(explicit(9)))]
-    SetRootKeyV1 {
-        #[rasn(tag(explicit(0)))]
-        keypair: RootKeypair,
-        #[rasn(tag(explicit(1)))]
-        reason: RevocationReason,
-    },
-    #[rasn(tag(explicit(10)))]
     AddSubkeyV1 { 
         #[rasn(tag(explicit(0)))]
         key: Key,
@@ -144,16 +111,19 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(2)))]
         desc: Option<String>,
     },
-    #[rasn(tag(explicit(11)))]
+    /// Edit the name/description of a subkey by its unique name.
+    #[rasn(tag(explicit(8)))]
     EditSubkeyV1 {
         #[rasn(tag(explicit(0)))]
         name: String,
         #[rasn(tag(explicit(1)))]
         new_name: String,
         #[rasn(tag(explicit(2)))]
-        desc: Option<String>,
+        new_desc: Option<String>,
     },
-    #[rasn(tag(explicit(12)))]
+    /// Mark a subkey as revoked, allowing old signatures to be validated but
+    /// without permitting new signatures to be created.
+    #[rasn(tag(explicit(9)))]
     RevokeSubkeyV1 {
         #[rasn(tag(explicit(0)))]
         name: String,
@@ -162,26 +132,31 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(2)))]
         new_name: Option<String>,
     },
-    #[rasn(tag(explicit(13)))]
+    /// Delete a subkey entirely from the identity.
+    #[rasn(tag(explicit(10)))]
     DeleteSubkeyV1 {
         #[rasn(tag(explicit(0)))]
         name: String,
     },
-    #[rasn(tag(explicit(14)))]
+    /// Set this identity's nickname.
+    #[rasn(tag(explicit(11)))]
     SetNicknameV1 {
         #[rasn(tag(explicit(0)))]
         nickname: Option<String>,
     },
-    #[rasn(tag(explicit(15)))]
+    /// Add a forward to another location.
+    #[rasn(tag(explicit(12)))]
     AddForwardV1 {
         #[rasn(tag(explicit(0)))]
         name: String,
         #[rasn(tag(explicit(1)))]
+        #[serde(rename = "type")]
         ty: ForwardType,
         #[rasn(tag(explicit(2)))]
         default: bool,
     },
-    #[rasn(tag(explicit(16)))]
+    /// Delete a forward.
+    #[rasn(tag(explicit(13)))]
     DeleteForwardV1 { 
         #[rasn(tag(explicit(0)))]
         name: String,
@@ -192,41 +167,18 @@ impl TransactionBody {
     /// Reencrypt this transaction body
     fn reencrypt(self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let new_self = match self {
-            Self::Private => Self::Private,
-            Self::CreateIdentityV1 { alpha, policy, publish, root } => {
-                let new_alpha = alpha.reencrypt(old_master_key, new_master_key)?;
-                let new_policy = policy.reencrypt(old_master_key, new_master_key)?;
-                let new_publish = publish.reencrypt(old_master_key, new_master_key)?;
-                let new_root = root.reencrypt(old_master_key, new_master_key)?;
+            Self::CreateIdentityV1 { admin } => {
+                let new_admin = admin.reencrypt(old_master_key, new_master_key)?;
                 Self::CreateIdentityV1 {
-                    alpha: new_alpha,
-                    policy: new_policy,
-                    publish: new_publish,
-                    root: new_root,
+                    admin: new_admin
                 }
             }
-            Self::SetRecoveryPolicyV1 { policy } => Self::SetRecoveryPolicyV1 { policy },
-            Self::ExecuteRecoveryPolicyV1 { request } => Self::ExecuteRecoveryPolicyV1 {
-                request: request.reencrypt(old_master_key, new_master_key)?,
-            },
             Self::MakeClaimV1 { spec } => Self::MakeClaimV1 {
                 spec: spec.reencrypt(old_master_key, new_master_key)?,
             },
             Self::DeleteClaimV1 { claim_id } => Self::DeleteClaimV1 { claim_id },
             Self::AcceptStampV1 { stamp } => Self::AcceptStampV1 { stamp },
             Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
-            Self::SetPolicyKeyV1 { keypair, reason } => {
-                let new_keypair = keypair.reencrypt(old_master_key, new_master_key)?;
-                Self::SetPolicyKeyV1 { keypair: new_keypair, reason }
-            }
-            Self::SetPublishKeyV1 { keypair, reason } => {
-                let new_keypair = keypair.reencrypt(old_master_key, new_master_key)?;
-                Self::SetPublishKeyV1 { keypair: new_keypair, reason }
-            }
-            Self::SetRootKeyV1 { keypair, reason } => {
-                let new_keypair = keypair.reencrypt(old_master_key, new_master_key)?;
-                Self::SetRootKeyV1 { keypair: new_keypair, reason }
-            }
             Self::AddSubkeyV1 { key, name, desc } => {
                 let new_subkey = key.reencrypt(old_master_key, new_master_key)?;
                 Self::AddSubkeyV1 { key: new_subkey, name, desc }
@@ -245,48 +197,12 @@ impl TransactionBody {
 impl Public for TransactionBody {
     fn strip_private(&self) -> Self {
         match self.clone() {
-            Self::Private => Self::Private,
-            Self::CreateIdentityV1 { alpha, policy, publish, root } => {
-                Self::CreateIdentityV1 {
-                    alpha: alpha.strip_private(),
-                    policy: policy.strip_private(),
-                    publish: publish.strip_private(),
-                    root: root.strip_private(),
-                }
-            }
-            Self::SetRecoveryPolicyV1 { policy } => Self::SetRecoveryPolicyV1 { policy },
-            Self::ExecuteRecoveryPolicyV1 { request } => Self::ExecuteRecoveryPolicyV1 { request: request.strip_private() },
+            Self::CreateIdentityV1 { admin } => Self::CreateIdentityV1 { admin: admin.strip_private() },
             Self::MakeClaimV1 { spec } => Self::MakeClaimV1 { spec: spec.strip_private() },
             Self::DeleteClaimV1 { claim_id } => Self::DeleteClaimV1 { claim_id },
             Self::AcceptStampV1 { stamp } => Self::AcceptStampV1 { stamp: stamp.strip_private() },
             Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
-            Self::SetPolicyKeyV1 { keypair, reason } => {
-                Self::SetPolicyKeyV1 {
-                    keypair: keypair.strip_private(),
-                    reason,
-                }
-            }
-            Self::SetPublishKeyV1 { keypair, reason } => {
-                Self::SetPublishKeyV1 {
-                    keypair: keypair.strip_private(),
-                    reason,
-                }
-            }
-            Self::SetRootKeyV1 { keypair, reason } => {
-                Self::SetRootKeyV1 {
-                    keypair: keypair.strip_private(),
-                    reason,
-                }
-            }
-            Self::AddSubkeyV1 { key, name, desc } => {
-                // here's a good place to use Self::Private -- if stripping the
-                // key removes ALL of its data, then we probably don't want to
-                // include the transaction body.
-                match key.strip_private_maybe() {
-                    Some(stripped) => Self::AddSubkeyV1 { key: stripped, name, desc },
-                    None => Self::Private,
-                }
-            }
+            Self::AddSubkeyV1 { key, name, desc } => Self::AddSubkeyV1 { key: key.strip_private(), name, desc },
             Self::EditSubkeyV1 { name, new_name, desc: new_desc } => Self::EditSubkeyV1 { name, new_name, desc: new_desc },
             Self::RevokeSubkeyV1 { name, reason, new_name } => Self::RevokeSubkeyV1 { name, reason, new_name },
             Self::DeleteSubkeyV1 { name } => Self::DeleteSubkeyV1 { name },
@@ -298,10 +214,7 @@ impl Public for TransactionBody {
 
     fn has_private(&self) -> bool {
         match self {
-            Self::Private => false,
-            Self::CreateIdentityV1 { alpha, policy, publish, root } => {
-                alpha.has_private() || policy.has_private() || publish.has_private() || root.has_private()
-            }
+            Self::CreateIdentityV1 { admin } => admin.has_private(),
             Self::SetRecoveryPolicyV1 { .. } => false,
             Self::ExecuteRecoveryPolicyV1 { request } => request.has_private(),
             Self::MakeClaimV1 { spec } => spec.has_private(),
@@ -322,45 +235,32 @@ impl Public for TransactionBody {
     }
 }
 
-/// The TransactionID holds the signature of a transaction by a particular key.
+/// The TransactionID is a SHA512 hash of the transaction body
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(choice)]
-pub enum TransactionID {
-    #[rasn(tag(explicit(0)))]
-    Alpha(AlphaKeypairSignature),
-    #[rasn(tag(explicit(1)))]
-    Policy(PolicyKeypairSignature),
-    #[rasn(tag(explicit(2)))]
-    Root(RootKeypairSignature),
-}
+pub struct TransactionID(Sha512);
 
 impl Deref for TransactionID {
-    type Target = SignKeypairSignature;
+    type Target = [u8];
     fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Alpha(inner) => inner.deref(),
-            Self::Policy(inner) => inner.deref(),
-            Self::Root(inner) => inner.deref(),
-        }
+        self.0.deref()
     }
 }
 
 impl From<TransactionID> for String {
     fn from(id: TransactionID) -> Self {
-        ser::base64_encode(id.deref().as_ref())
+        ser::base64_encode(id.deref())
     }
 }
 
 impl From<&TransactionID> for String {
     fn from(id: &TransactionID) -> Self {
-        ser::base64_encode(id.deref().as_ref())
+        ser::base64_encode(id.deref())
     }
 }
 
 impl Hash for TransactionID {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let stringified = String::from(self.clone());
-        stringified.hash(state);
+        self.deref().hash(state);
     }
 }
 
@@ -368,11 +268,8 @@ impl Eq for TransactionID {}
 
 #[cfg(test)]
 impl TransactionID {
-    pub(crate) fn random_alpha() -> Self {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
-        let sig = alpha_keypair.sign(&master_key, "hi im jerry".as_bytes()).unwrap();
-        Self::Alpha(sig)
+    pub(crate) fn random() -> Self {
+        Self(Sha512::random())
     }
 }
 
@@ -431,13 +328,16 @@ impl Public for TransactionEntry {
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transaction {
-    /// This is a signature of this transaction's `entry`.
+    /// This is a SHA512 hash of the transaction's `entry`
     #[rasn(tag(explicit(0)))]
     id: TransactionID,
     /// This holds our transaction body: any references to previous
     /// transactions as well as the transaction type/data.
     #[rasn(tag(explicit(1)))]
     entry: TransactionEntry,
+    /// The signatures on this transaction's ID.
+    #[rasn(tag(explicit(2)))]
+    signatures: Vec<TransactionSignature>,
 }
 
 impl Transaction {
@@ -676,9 +576,6 @@ impl Transactions {
                 match trans.entry().body().clone() {
                     // if this is a private transaction, just pass the identity
                     // back as-is
-                    TransactionBody::Private => {
-                        identity.ok_or(Error::DagMissingIdentity)
-                    }
                     TransactionBody::CreateIdentityV1 { alpha, policy, publish, root } => {
                         let identity_id = IdentityID(trans.id().deref().clone());
                         Ok(Identity::create(identity_id, alpha, policy, publish, root, trans.entry().created().clone()))
@@ -1085,11 +982,11 @@ impl Transactions {
     // -------------------------------------------------------------------------
 
     /// Create an identity.
-    pub fn create_identity<T: Into<Timestamp> + Clone>(mut self, master_key: &SecretKey, now: T, alpha: AlphaKeypair, policy: PolicyKeypair, publish: PublishKeypair, root: RootKeypair) -> Result<Self> {
+    pub fn create_identity<T: Into<Timestamp> + Clone>(mut self, master_key: &SecretKey, now: T, alpha: AdminKeypair) -> Result<Self> {
         if self.transactions().len() > 0 {
             Err(Error::DagCreateIdentityOnExistingChain)?;
         }
-        let body = TransactionBody::CreateIdentityV1 { alpha, policy, publish, root };
+        let body = TransactionBody::CreateIdentityV1 { alpha };
         self.push_transaction(master_key, SignWith::Alpha, now.clone(), body)?;
         Ok(self)
     }
@@ -1334,7 +1231,6 @@ mod tests {
     fn trans_body_strip_has_private() {
         fn test_privates(body: &TransactionBody) {
             match body {
-                TransactionBody::Private => {}
                 TransactionBody::CreateIdentityV1 { alpha, policy, publish, root } => {
                     assert!(body.has_private());
                     let body2 = TransactionBody::CreateIdentityV1 {
@@ -2015,7 +1911,7 @@ mod tests {
         assert_claim!{ Pgp, String::from("12345") }
         assert_claim!{ Domain, String::from("slappy.com") }
         assert_claim!{ Url, Url::parse("https://killtheradio.net/").unwrap() }
-        assert_claim!{ HomeAddress, String::from("111 blumps ln") }
+        assert_claim!{ Address, String::from("111 blumps ln") }
         assert_claim!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
         assert_claim!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
         assert_claim!{

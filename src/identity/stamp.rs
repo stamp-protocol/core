@@ -10,7 +10,7 @@ use crate::{
         Public,
         claim::{Claim, ClaimID},
         identity::IdentityID,
-        keychain::{RootKeypair, Subkey},
+        keychain::{AdminKeypair, Subkey},
     },
     crypto::{
         key::SecretKey,
@@ -482,7 +482,7 @@ entry:
         req_open!{ Pgp, String::from("8989898989") }
         req_open!{ Domain, String::from("get.a.job") }
         req_open!{ Url, Url::parse("http://mrwgifs.com/wp-content/uploads/2014/05/Beavis-Typing-Random-Characters-On-The-Computer-On-Mike-Judges-Beavis-and-Butt-Head.gif").unwrap() }
-        req_open!{ HomeAddress, String::from("123 DOINK ln., Bork, KY 44666") }
+        req_open!{ Address, String::from("123 DOINK ln., Bork, KY 44666") }
         req_open!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
         req_open!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
 

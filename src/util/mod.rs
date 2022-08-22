@@ -251,13 +251,6 @@ pub trait Public: Clone {
     fn has_private(&self) -> bool;
 }
 
-pub trait PublicMaybe: Clone {
-    /// Strip the private data from a object, unless the object is entirely
-    /// private in which case return None.
-    fn strip_private_maybe(&self) -> Option<Self>;
-}
-
-
 /// A wrapper around URLs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Url(url::Url);

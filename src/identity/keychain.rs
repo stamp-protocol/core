@@ -15,8 +15,9 @@
 use crate::{
     error::{Error, Result},
     crypto::key::{KeyID, SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
-    private::Private,
-    util::{Public, PublicMaybe, sign::Signable, ser, ser::BinaryVec},
+    policy::CapabilityPolicy,
+    private::{Private, PrivateWithHmac},
+    util::{Public, sign::Signable, ser, ser::BinaryVec},
 };
 use getset;
 use rasn::{AsnType, Encode, Decode};
@@ -163,12 +164,9 @@ macro_rules! make_keytype {
     }
 }
 
-make_keytype! { AlphaKeypair, AlphaKeypairPublic, AlphaKeypairSignature }
-make_keytype! { PolicyKeypair, PolicyKeypairPublic, PolicyKeypairSignature }
-make_keytype! { PublishKeypair, PublishKeypairPublic, PublishKeypairSignature }
-make_keytype! { RootKeypair, RootKeypairPublic, RootKeypairSignature }
+make_keytype! { AdminKeypair, AdminKeypairPublic, AdminKeypairSignature }
 
-/// Why we are deprecating a key.
+/// Why we are revoking a key.
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum RevocationReason {
@@ -189,70 +187,22 @@ pub enum RevocationReason {
     Invalid,
 }
 
-/// Marks a key as revoked, signed with our root key. In the case that the
-/// root key is being revoked, the deprecation must be signed with the new
-/// root key.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Revocation {
-    /// The reason we're deprecating this key.
-    #[rasn(tag(explicit(0)))]
-    reason: RevocationReason,
-}
-
-impl Revocation {
-    /// Create a new revocation.
-    pub fn new(reason: RevocationReason) -> Self {
-        Self {
-            reason,
-        }
-    }
-}
-
 /// An enum that holds any type of key.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Key {
-    /// A policy key
+    /// An admin key
     #[rasn(tag(explicit(0)))]
-    Policy(PolicyKeypair),
-    /// A publish key
-    ///
-    /// NOTE: although the idea of keeping a publish key in the subkeys is kind
-    /// of dumb (because a publish key is really only useful in the context of
-    /// an instance of a published identity and thus only needs to be validated
-    /// against the *current* publish key in all cases), we do want to keep it
-    /// around so that the revocation of the publish key can be made available.
-    /// this allows implementations to know if a published identity was made
-    /// with a revoked key, and under what circumstances the key was revoked,
-    /// which they can use to adjust their trust of that identity.
-    #[rasn(tag(explicit(1)))]
-    Publish(PublishKeypair),
-    /// A root key
-    #[rasn(tag(explicit(2)))]
-    Root(RootKeypair),
+    Admin(AdminKeypair),
     /// A signing key.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(explicit(1)))]
     Sign(SignKeypair),
     /// An asymmetric crypto key.
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(explicit(2)))]
     Crypto(CryptoKeypair),
     /// Hides our private data (including private claims).
-    #[rasn(tag(explicit(5)))]
-    Secret(Private<SecretKey>),
-    /// An extension type, can be used to save any kind of public/secret keypair
-    /// that isn't covered by the stamp system.
-    #[rasn(tag(explicit(6)))]
-    ExtensionKeypair {
-        #[rasn(tag(explicit(0)))]
-        public: BinaryVec,
-        #[rasn(tag(explicit(1)))]
-        secret: Option<Private<BinaryVec>>,
-    },
-    /// An extension type, can be used to save any kind of key that isn't
-    /// covered by the stamp system.
-    #[rasn(tag(explicit(7)))]
-    ExtensionSecret(Private<Vec<u8>>),
+    #[rasn(tag(explicit(3)))]
+    Secret(PrivateWithHmac<SecretKey>),
 }
 
 impl Key {
@@ -267,30 +217,14 @@ impl Key {
     }
 
     /// Create a new secret key
-    pub fn new_secret(key: Private<SecretKey>) -> Self {
+    pub fn new_secret(key: PrivateWithHmac<SecretKey>) -> Self {
         Self::Secret(key)
     }
 
     /// Returns the `SignKeypair` if this is a policy key.
-    pub fn as_policykey(&self) -> Option<&PolicyKeypair> {
+    pub fn as_adminkey(&self) -> Option<&AdminKeypair> {
         match self {
-            Self::Policy(ref x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Returns the `SignKeypair` if this is a publish key.
-    pub fn as_publishkey(&self) -> Option<&PublishKeypair> {
-        match self {
-            Self::Publish(ref x) => Some(x),
-            _ => None,
-        }
-    }
-
-    /// Returns the `SignKeypair` if this is a root key.
-    pub fn as_rootkey(&self) -> Option<&RootKeypair> {
-        match self {
-            Self::Root(ref x) => Some(x),
+            Self::Admin(ref x) => Some(x),
             _ => None,
         }
     }
@@ -322,9 +256,7 @@ impl Key {
     /// Returns a KeyID for this key, if possible.
     pub fn key_id(&self) -> Option<KeyID> {
         match self {
-            Self::Policy(keypair) => Some(keypair.key_id()),
-            Self::Publish(keypair) => Some(keypair.key_id()),
-            Self::Root(keypair) => Some(keypair.key_id()),
+            Self::Admin(keypair) => Some(keypair.key_id()),
             Self::Sign(keypair) => Some(keypair.key_id()),
             Self::Crypto(keypair) => Some(keypair.key_id()),
             _ => None,
@@ -344,59 +276,37 @@ impl Key {
     /// Consumes the key, and re-encryptes it with a new master key.
     pub fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let key = match self {
-            Self::Policy(keypair) => Self::Policy(keypair.reencrypt(previous_master_key, new_master_key)?),
-            Self::Publish(keypair) => Self::Publish(keypair.reencrypt(previous_master_key, new_master_key)?),
-            Self::Root(keypair) => Self::Root(keypair.reencrypt(previous_master_key, new_master_key)?),
+            Self::Admin(keypair) => Self::Admin(keypair.reencrypt(previous_master_key, new_master_key)?),
             Self::Sign(keypair) => Self::Sign(keypair.reencrypt(previous_master_key, new_master_key)?),
             Self::Crypto(keypair) => Self::Crypto(keypair.reencrypt(previous_master_key, new_master_key)?),
             Self::Secret(secret) => Self::Secret(secret.reencrypt(previous_master_key, new_master_key)?),
-            Self::ExtensionKeypair { public, secret: private_maybe } => {
-                if let Some(private) = private_maybe {
-                    Self::ExtensionKeypair { public, secret: Some(private.reencrypt(previous_master_key, new_master_key)?) }
-                } else {
-                    return Err(Error::CryptoKeyMissing)?;
-                }
-            }
-            Self::ExtensionSecret(secret) => Self::ExtensionSecret(secret.reencrypt(previous_master_key, new_master_key)?),
         };
         Ok(key)
     }
+}
 
-    pub fn has_private(&self) -> bool {
+impl Public for Key {
+    fn strip_private(&self) -> Self {
         match self {
-            Self::Policy(keypair) => keypair.has_private(),
-            Self::Publish(keypair) => keypair.has_private(),
-            Self::Root(keypair) => keypair.has_private(),
+            Self::Admin(keypair) => Self::Admin(keypair.strip_private()),
+            Self::Sign(keypair) => Self::Sign(keypair.strip_private()),
+            Self::Crypto(keypair) => Self::Crypto(keypair.strip_private()),
+            Self::Secret(container) => Self::Secret(container.strip_private()),
+        }
+    }
+
+    fn has_private(&self) -> bool {
+        match self {
+            Self::Admin(keypair) => keypair.has_private(),
             Self::Sign(keypair) => keypair.has_private(),
             Self::Crypto(keypair) => keypair.has_private(),
-            Self::Secret(_) => true,
-            Self::ExtensionKeypair { secret: private_maybe, .. } => private_maybe.is_some(),
-            Self::ExtensionSecret(_) => true,
+            Self::Secret(container) => container.has_private(),
         }
     }
 }
 
-impl PublicMaybe for Key {
-    fn strip_private_maybe(&self) -> Option<Self> {
-        match self {
-            Self::Policy(keypair) => Some(Self::Policy(keypair.strip_private())),
-            Self::Publish(keypair) => Some(Self::Publish(keypair.strip_private())),
-            Self::Root(keypair) => Some(Self::Root(keypair.strip_private())),
-            Self::Sign(keypair) => Some(Self::Sign(keypair.strip_private())),
-            Self::Crypto(keypair) => Some(Self::Crypto(keypair.strip_private())),
-            Self::Secret(_) => None,
-            Self::ExtensionKeypair { public, .. } => Some(Self::ExtensionKeypair { public: public.clone(), secret: None }),
-            Self::ExtensionSecret(_) => None,
-        }
-    }
-}
-
-/// Holds a subkey's id/signature (signed by the root key), its key data, and an
+/// Holds a subkey's key data, (unique) name, an optional descriiption, and an
 /// optional revocation.
-///
-/// If the subkey is a keypair, we sign the public key of the keypair (making it
-/// verifiable without the private data) and in the case of a secret key, we
-/// sign the whole key.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Subkey {
@@ -422,7 +332,7 @@ pub struct Subkey {
     description: Option<String>,
     /// Allows revocation of a key.
     #[rasn(tag(explicit(3)))]
-    revocation: Option<Revocation>,
+    revocation: Option<RevocationReason>,
 }
 
 impl Subkey {
@@ -453,70 +363,94 @@ impl Deref for Subkey {
     }
 }
 
-impl PublicMaybe for Subkey {
-    /// Returns a version of this key(entry) without any private data. Useful
-    /// for signing.
-    fn strip_private_maybe(&self) -> Option<Self> {
-        match self.key().strip_private_maybe() {
-            Some(x) => {
-                let mut clone = self.clone();
-                clone.set_key(x);
-                Some(clone)
-            }
-            None => None,
-        }
+impl Public for Subkey {
+    fn strip_private(&self) -> Self {
+        let mut clone = self.clone();
+        clone.set_key(self.key().strip_private());
+        clone
+    }
+
+    fn has_private(&self) => {
+        self.key().has_private();
+    }
+}
+
+/// Represents an *active* (not revoked) named administration key.
+///
+/// Admin keys that are stored as [subkeys][Subkey].
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct AdminKey {
+    /// The admin keypair.
+    #[rasn(tag(explicit(0)))]
+    key: AdminKeypair,
+    /// The key's human-readable name, for example "claims/manage".
+    ///
+    /// This must be a unique value among all admin keys.
+    #[rasn(tag(explicit(1)))]
+    name: String,
+    /// The key's human-readable description, for example "This key is used to
+    /// manage claims"
+    #[rasn(tag(explicit(2)))]
+    description: Option<String>,
+}
+
+impl AdminKey {
+    fn new(key: AdminKeypair, name: String, description: Option<String>) -> Self {
+        Self { key, name, description }
     }
 }
 
 /// Holds the keys for our identity.
 ///
-/// This includes an always-present root signing key, and any number of other
-/// keys. There's no restriction on how many keys we can have or what kind of
-/// keys (signing, enryption, etc).
+/// This is a set of administration keys which can be used to manage the
+/// identity itself (although management can happen with external keys as well)
+/// as well as a collection of subkeys, which can be used by various third
+/// party applications (including Stamp's CLU/GUI) for cryptography.
+///
+/// Aside from keys, the keychain also stores a collection of capabilities and
+/// policies which control which actions can be performed by which combinations
+/// of keys. This generalized setup allows things as easy as "one key for all
+/// actions" or as granular as "three signatures from these five keys can add
+/// a new subkey if its name matches to glob pattern "turtl/*". The sky is the
+/// limit.
 ///
 /// The keys stored here can also be revoked. They can remain stored here for
 /// the purposes of verifying old signatures or decrypting old messages, but
-/// revoked keys should not be used to sign or encrypt new data. Even the
-/// root key can be revoked in the case that it's compromised.
-///
-/// In the event a root key is revoked, the subkeys must be re-signed with
-/// the new root key.
+/// revoked keys must not be used to sign or encrypt new data.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Keychain {
-    /// The alpha key. One key to rule them all.
+    /// A collection of capabilities, each eith a key policy attached to it. The
+    /// idea here is that we can specify a capability/action such as "add subkey"
+    /// and allow that action to be performed if we have the proper signature(s)
+    /// as determined by the key policy.
     ///
-    /// You really should never use this key without a REALLY good reason. This
-    /// key effectively controls all other keys in the identity, and should only
-    /// be used if a top-level key has been compromised.
+    /// This allows use to not only run transactions against this identity, but
+    /// also allows others to do so as well, given they sign their transactions
+    /// according to the given policies.
     #[rasn(tag(explicit(0)))]
-    alpha: AlphaKeypair,
-    /// Our policy signing key. Lets us create recovery policies. This is signed
-    /// by the alpha key, which prevents tampering.
+    capabilities: Vec<CapabilityPolicy>,
+    /// Holds this identity's owned administration keypairs. These are keys used
+    /// to manage the identity, although it's entirely possible to manage the
+    /// identity using keys owned by other identities by using the policy system.
     #[rasn(tag(explicit(1)))]
-    policy: PolicyKeypair,
-    /// The publish key, signed by the alpha key. When we want to publish our
-    /// identity anywhere, for instance to our personal website, an identity
-    /// network, or anywhere else we might want others to find our identity, we
-    /// sign the published identity with our publish key.
+    admin_keys: Vec<AdminKey>,
+    /// Holds subkeys, which are non-admin keys owned by this identity. Generally
+    /// these are accessed/used by other systems for things like creating messages
+    /// or accessing encrypted data. For instance, an application that manages
+    /// encrypted notes might store a subkey in the keychain which can be used to
+    /// unlock the note data.
     #[rasn(tag(explicit(2)))]
-    publish: PublishKeypair,
-    /// The identity's root signing key, signed by the alpha key.
-    #[rasn(tag(explicit(3)))]
-    root: RootKeypair,
-    /// Holds our subkeys, signed with our root keypair.
-    #[rasn(tag(explicit(4)))]
     subkeys: Vec<Subkey>,
 }
 
 impl Keychain {
     /// Create a new keychain
-    pub(crate) fn new(alpha_keypair: AlphaKeypair, policy_keypair: PolicyKeypair, publish_keypair: PublishKeypair, root_keypair: RootKeypair) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            alpha: alpha_keypair,
-            policy: policy_keypair,
-            publish: publish_keypair,
-            root: root_keypair,
+            capabilities: Vec::new(),
+            admin_keys: Vec::new(),
             subkeys: Vec::new(),
         }
     }
@@ -549,16 +483,24 @@ impl Keychain {
         self.subkeys().iter().find(|x| x.name() == name)
     }
 
-    /// Grab all root keys.
-    pub fn keys_root(&self) -> Vec<&RootKeypair> {
-        let mut search_keys = vec![self.root()];
-        search_keys.append(&mut self.subkeys_root());
+    /// Find an admin key by name.
+    pub fn admin_key_by_name(&self, name: &str) -> Option<&AdminKey> {
+        self.admin_keys().iter().find(|x| x.name() == name)
+    }
+
+    /// Grab all admin keys (active and revoked).
+    pub fn keys_admin(&self) -> Vec<&AdminKeypair> {
+        let mut search_keys = self.admin_keys()
+            .iter()
+            .map(|key| key.key())
+            .collect::<Vec<_>>();
+        search_keys.append(&mut self.subkeys_admin());
         search_keys
     }
 
-    fn subkeys_root(&self) -> Vec<&RootKeypair> {
+    fn subkeys_admin(&self) -> Vec<&AdminKeypair> {
         self.subkeys().iter()
-            .filter_map(|x| x.key().as_rootkey())
+            .filter_map(|x| x.key().as_adminkey())
             .collect::<Vec<_>>()
     }
 
@@ -574,6 +516,15 @@ impl Keychain {
         self.subkeys().iter()
             .filter_map(|x| x.key().as_cryptokey())
             .collect::<Vec<_>>()
+    }
+
+    /// Add an admin key but check for dupes
+    fn add_admin_key_impl(&mut self, admin_key: AdminKey) -> Result<()> {
+        if self.admin_key_by_name(admin_key.name()).is_some() {
+            Err(Error::DuplicateName)?;
+        }
+        self.admin_keys_mut().push(subkey);
+        Ok(())
     }
 
     /// Add a subkey but check for dupes
@@ -621,6 +572,13 @@ impl Keychain {
         subkey.revoke(reason, None);
         self.add_subkey_impl(subkey)?;
         self.set_root(new_root_keypair);
+        Ok(self)
+    }
+
+    /// Add a new admin keypair.
+    pub(crate) fn add_admin_key<T: Into<String>>(mut self, key: AdminKeypair, name: T, description: Option<T>) -> Result<Self> {
+        let admin_key = AdminKey::new(key, name.into(), description.map(|x| x.into()));
+        self.add_admin_key_impl(admin_key)?;
         Ok(self)
     }
 
@@ -898,9 +856,7 @@ mod tests {
         let key3 = Key::Root(root_keypair.clone());
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
-        let key6 = Key::Secret(Private::seal(&master_key, &secret_key).unwrap());
-        let key7 = Key::ExtensionKeypair { public: vec![1,2,3].into(), secret: Some(Private::seal(&master_key, &vec![4,5,6].into()).unwrap()) };
-        let key8 = Key::ExtensionSecret(Private::seal(&master_key, &vec![6,7,8]).unwrap());
+        let key6 = Key::Secret(PrivateWithHmac::seal(&master_key, secret_key).unwrap());
 
         assert!(key1.has_private());
         assert!(key2.has_private());
@@ -908,26 +864,20 @@ mod tests {
         assert!(key4.has_private());
         assert!(key5.has_private());
         assert!(key6.has_private());
-        assert!(key7.has_private());
-        assert!(key8.has_private());
 
-        let key1_2 = key1.strip_private_maybe();
-        let key2_2 = key2.strip_private_maybe();
-        let key3_2 = key3.strip_private_maybe();
-        let key4_2 = key4.strip_private_maybe();
-        let key5_2 = key5.strip_private_maybe();
-        let key6_2 = key6.strip_private_maybe();
-        let key7_2 = key7.strip_private_maybe();
-        let key8_2 = key8.strip_private_maybe();
+        let key1_2 = key1.strip_private();
+        let key2_2 = key2.strip_private();
+        let key3_2 = key3.strip_private();
+        let key4_2 = key4.strip_private();
+        let key5_2 = key5.strip_private();
+        let key6_2 = key6.strip_private();
 
-        assert!(!key1_2.unwrap().has_private());
-        assert!(!key2_2.unwrap().has_private());
-        assert!(!key3_2.unwrap().has_private());
-        assert!(!key4_2.unwrap().has_private());
-        assert!(!key5_2.unwrap().has_private());
-        assert!(key6_2.is_none());
-        assert!(!key7_2.unwrap().has_private());
-        assert!(key8_2.is_none());
+        assert!(!key1_2.has_private());
+        assert!(!key2_2.has_private());
+        assert!(!key3_2.has_private());
+        assert!(!key4_2.has_private());
+        assert!(!key5_2.has_private());
+        assert!(!key6_2.has_private());
     }
 
     fn keychain_new() -> (SecretKey, Keychain) {

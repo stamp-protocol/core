@@ -7,6 +7,7 @@
 use crate::{
     error::{Error, Result},
     crypto::key::{SecretKey, SignKeypair},
+    dag::TransactionID,
     identity::{
         claim::{ClaimID, Claim, ClaimSpec, ClaimContainer},
         keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, RevocationReason, Key, Keychain},
@@ -27,16 +28,9 @@ use serde_derive::{Serialize, Deserialize};
 use std::convert::TryInto;
 use std::ops::Deref;
 
-object_id! {
-    /// A unique identifier for identities.
-    ///
-    /// We generate this by signing the string "This is my stamp." in a `DateSigner`
-    /// using our initial private signing key.
-    ///
-    /// `IdentityID`s are permanent and are not regenerated when the keysets are
-    /// rotated.
-    IdentityID
-}
+/// The TransactionID is a SHA512 hash of the transaction body
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+pub struct IdentityID(TransactionID);
 
 /// A set of forward types.
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
@@ -49,13 +43,14 @@ pub enum ForwardType {
     #[rasn(tag(explicit(1)))]
     Social {
         #[rasn(tag(explicit(0)))]
+        #[serde(rename = "type")]
         ty: String,
         #[rasn(tag(explicit(1)))]
         handle: String,
     },
     /// A PGP keypair ID or URL to a published public key
     #[rasn(tag(explicit(2)))]
-    PGP(String),
+    Pgp(String),
     /// A raw url.
     #[rasn(tag(explicit(3)))]
     Url(String),
@@ -64,7 +59,8 @@ pub enum ForwardType {
     #[rasn(tag(explicit(4)))]
     Extension {
         #[rasn(tag(explicit(0)))]
-        ty: String,
+        #[serde(rename = "type")]
+        ty: BinaryVec,
         #[rasn(tag(explicit(1)))]
         data: BinaryVec,
     },
@@ -172,19 +168,14 @@ pub struct Identity {
     /// When this identity came into being.
     #[rasn(tag(explicit(1)))]
     created: Timestamp,
-    /// Our identity recovery mechanism. This allows us to replace various
-    /// keypairs in the event they're lost or compromised and we don't have or
-    /// don't want to use our alpha key.
-    #[rasn(tag(explicit(2)))]
-    recovery_policy: Option<RecoveryPolicy>,
     /// Holds the keys for our identity.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(explicit(2)))]
     keychain: Keychain,
     /// The claims this identity makes.
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(explicit(3)))]
     claims: Vec<ClaimContainer>,
     /// Extra data that can be attached to our identity.
-    #[rasn(tag(explicit(5)))]
+    #[rasn(tag(explicit(4)))]
     extra_data: IdentityExtraData,
 }
 

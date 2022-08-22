@@ -235,6 +235,70 @@ impl<T: Encode + Decode> PrivateVerifiable<T> {
     }
 }
 
+/// A container that holds an (encrypted) HMAC key, a set of (encrypted) data
+/// of type `T`, and an [Hmac] of the unencrypted data.
+///
+/// The idea here is to allow verification of private data such that:
+///
+/// 1. When the data is unlocked, it can be verified against the HMAC to ensure
+/// is has not been tampered with.
+/// 1. If multiple people can access the private data of the identity, one
+/// cannot maliciously replace the private contents of a transaction without
+/// breaking the signature of the HMAC on that content.
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct PrivateWithHmac<T> {
+    /// Holds the HMAC for this private data so it can be verified without
+    /// revealing the data itself
+    #[rasn(tag(explicit(0)))]
+    hmac: Hmac,
+    /// The (encrypted) data AND HMAC key.
+    #[rasn(tag(explicit(1)))]
+    data: Option<PrivateVerifiable<T>>,
+}
+
+impl<T: Encode + Decode + Clone> PrivateWithHmac<T> {
+    /// Create a new `PrivateWithHmac` container around our data.
+    pub fn seal(seal_key: &SecretKey, val: T) -> Result<Self> {
+        let (hmac, private_verifiable) = PrivateVerifiable::seal(seal_key, &val)?;
+        Ok(Self { hmac, data: Some(private_verifiable) })
+    }
+
+    /// Unlock the data held within, and verify it against our heroic HMAC.
+    pub fn open_and_verify(&self, seal_key: &SecretKey) -> Result<T> {
+        match self.data() {
+            Some(prv) => prv.open_and_verify(seal_key, self.hmac()),
+            None => Err(Error::PrivateDataMissing)?,
+        }
+    }
+
+    /// Reencrypt this PrivateWithHmac container with a new key.
+    pub(crate) fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
+        match self {
+            Self {hmac, Some(prv)} => {
+                Self {
+                    hmac,
+                    data: Some(prv.reencrypt(previous_seal_key, new_seal_key)?),
+                }
+            }
+            Self {hmac, None} => Self {hmac, data: None},
+        }
+    }
+}
+
+impl<T> Public for PrivateWithHmac<T> {
+    fn strip_private(&self) -> Self {
+        Self {
+            hmac: self.hmac().clone(),
+            data: None,
+        }
+    }
+
+    fn has_private(&self) -> bool {
+        self.data().is_some()
+    }
+}
+
 /// A wrapper that contains either public/plaintext data of type T or encrypted
 /// data, which can be deserialized to T.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -246,12 +310,7 @@ pub enum MaybePrivate<T> {
     ///
     /// Make sure to check if this object has data via <MaybePrivate::has_data()>
     /// before trying to use it.
-    Private {
-        /// The HMAC for this private data
-        hmac: Hmac,
-        /// The data itself
-        data: Option<PrivateVerifiable<T>>,
-    },
+    Private(PrivateWithHmac<T>)
 }
 
 impl<T: Encode + Decode + Clone> MaybePrivate<T> {
@@ -262,14 +321,14 @@ impl<T: Encode + Decode + Clone> MaybePrivate<T> {
 
     /// Create a new private MaybePrivate value.
     pub fn new_private(seal_key: &SecretKey, val: T) -> Result<Self> {
-        let (hmac, private_verifiable) = PrivateVerifiable::seal(seal_key, &val)?;
-        Ok(Self::Private { hmac, data: Some(private_verifiable) })
+        let container = PrivateWithHmac::seal(seal_key, val)?;
+        Ok(Self::Private(container))
     }
 
     /// Get the HMAC for this MaybePrivate, if it has one.
     pub fn hmac(&self) -> Option<&Hmac> {
         match self {
-            Self::Private { hmac, .. } => Some(hmac),
+            Self::Private(container) => Some(container.hmac())
             _ => None,
         }
     }
@@ -283,7 +342,7 @@ impl<T: Encode + Decode + Clone> MaybePrivate<T> {
     pub fn has_data(&self) -> bool {
         match self {
             Self::Public(_) => true,
-            Self::Private { data, .. } => data.is_some(),
+            Self::Private(container) => container.data().is_some(),
         }
     }
 
@@ -292,8 +351,7 @@ impl<T: Encode + Decode + Clone> MaybePrivate<T> {
     pub fn open(&self, seal_key: &SecretKey) -> Result<T> {
         match self {
             Self::Public(x) => Ok(x.clone()),
-            Self::Private { hmac, data: Some(prv) } => prv.open_and_verify(seal_key, hmac),
-            Self::Private { data: None, .. } => Err(Error::PrivateDataMissing)?,
+            Self::Private(container) => container.open_and_verify(seal_key),
         }
     }
 
@@ -309,20 +367,18 @@ impl<T: Encode + Decode + Clone> MaybePrivate<T> {
     pub fn into_public(self, seal_key: &SecretKey) -> Result<Self> {
         match self {
             Self::Public(x) => Ok(Self::Public(x)),
-            Self::Private { hmac, data: Some(prv) } => Ok(Self::Public(prv.open_and_verify(seal_key, &hmac)?)),
-            Self::Private { data: None, .. } => Err(Error::PrivateDataMissing),
+            Self::Private(container) => {
+                let unsealed = container.open_and_verify(seal_key)?;
+                Self::Public(unsealed)
+            }
         }
     }
 
     /// Reencrypt this MaybePrivate container with a new key.
     pub(crate) fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let maybe = match self {
-            Self::Public(x) => Self::Public(x.clone()),
-            Self::Private { hmac, data: Some(prv) } => Self::Private {
-                hmac: hmac.clone(),
-                data: Some(prv.reencrypt(previous_seal_key, new_seal_key)?),
-            },
-            Self::Private { hmac, data: None } => Self::Private { hmac: hmac.clone(), data: None },
+            Self::Public(x) => Self::Public(x),
+            Self::Private(container) => Self::Private(container.reencrypt(previous_seal_key, new_seal_key)),
         };
         Ok(maybe)
     }

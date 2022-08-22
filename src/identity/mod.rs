@@ -13,13 +13,11 @@
 
 
 pub mod keychain;
-pub mod recovery;
 pub mod claim;
 pub mod stamp;
 pub mod identity;
 
 pub use keychain::*;
-pub use recovery::*;
 pub use claim::*;
 pub use stamp::*;
 pub use identity::*;
@@ -136,7 +134,7 @@ mod tests {
         let transactions = transactions
             .make_claim(&master_key, now.clone(), ClaimSpec::Identity(identity_id.clone())).unwrap()
             .make_claim(&master_key, now.clone(), ClaimSpec::Name(MaybePrivate::new_public("Von Jonie Himself".to_string()))).unwrap()
-            .make_claim(&master_key, now.clone(), ClaimSpec::HomeAddress(MaybePrivate::new_private(&master_key, "6969 Uhhhhuhuhuhuh Thtreet".to_string()).unwrap())).unwrap();
+            .make_claim(&master_key, now.clone(), ClaimSpec::Address(MaybePrivate::new_private(&master_key, "6969 Uhhhhuhuhuhuh Thtreet".to_string()).unwrap())).unwrap();
         (master_key, transactions)
     }
 
