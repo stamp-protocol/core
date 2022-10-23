@@ -25,9 +25,9 @@ macro_rules! object_id {
     ) => {
         #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
         $(#[$meta])*
-        pub struct $name(pub(crate) crate::crypto::key::SignKeypairSignature);
+        pub struct $name(pub(crate) crate::dag::TransactionID);
 
-        asn_encdec_newtype! { $name, crate::crypto::key::SignKeypairSignature }
+        asn_encdec_newtype! { $name, crate::dag::TransactionID }
 
         impl $name {
             /// Take a full string id and return the shortened ID
@@ -40,58 +40,45 @@ macro_rules! object_id {
         #[allow(dead_code)]
         impl $name {
             pub(crate) fn blank() -> Self {
-                let sigbytes = [0u8; ed25519_dalek::SIGNATURE_LENGTH];
-                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(crate::util::ser::Binary::new(sigbytes));
-                $name(sig)
+                let hash = crate::crypto::key::Sha512::from([0u8; crate::crypto::key::SHA512_LEN]);
+                $name(crate::dag::TransactionID::from(hash))
             }
 
+            #[cfg(test)]
             pub(crate) fn random() -> Self {
-                let mut sigbytes = [0u8; ed25519_dalek::SIGNATURE_LENGTH];
-                rand::rngs::OsRng.fill_bytes(&mut sigbytes);
-                sigbytes[ed25519_dalek::SIGNATURE_LENGTH - 1] = 0;
-                let sig = crate::crypto::key::SignKeypairSignature::Ed25519(crate::util::ser::Binary::new(sigbytes));
-                $name(sig)
+                let hash = crate::crypto::key::Sha512::random();
+                $name(crate::dag::TransactionID::from(hash))
             }
         }
 
         impl Deref for $name {
-            type Target = crate::crypto::key::SignKeypairSignature;
+            type Target = crate::dag::TransactionID;
             fn deref(&self) -> &Self::Target {
                 &self.0
             }
         }
 
-        impl std::convert::From<crate::crypto::key::SignKeypairSignature> for $name {
-            fn from(sig: crate::crypto::key::SignKeypairSignature) -> Self {
-                Self(sig)
+        impl std::convert::From<crate::dag::TransactionID> for $name {
+            fn from(hash: crate::dag::TransactionID) -> Self {
+                Self(hash)
             }
         }
 
         impl std::convert::From<&$name> for String {
             fn from(id: &$name) -> String {
-                let ser_val: u8 = match &id.0 {
-                    crate::crypto::key::SignKeypairSignature::Ed25519(_) => 0,
-                };
-                let mut bytes = Vec::from(id.as_ref());
-                bytes.push(ser_val);
-                crate::util::ser::base64_encode(&bytes)
+                let bytes = id.deref().deref().deref();
+                crate::util::ser::base64_encode(bytes)
             }
         }
 
         impl std::convert::TryFrom<&str> for $name {
             type Error = crate::error::Error;
             fn try_from(id_str: &str) -> std::result::Result<Self, Self::Error> {
-                let mut bytes = crate::util::ser::base64_decode(id_str.as_bytes())?;
-                let ser_val = bytes.pop().ok_or(crate::error::Error::SignatureMissing)?;
-                let id_sig = match ser_val {
-                    _ => {
-                        let bytes_arr: [u8; ed25519_dalek::SIGNATURE_LENGTH] = bytes.try_into()
-                            .map_err(|_| crate::error::Error::BadLength)?;
-                        let sig = ed25519_dalek::Signature::from(bytes_arr);
-                        crate::crypto::key::SignKeypairSignature::Ed25519(crate::util::ser::Binary::new(sig.to_bytes()))
-                    }
-                };
-                Ok(Self(id_sig))
+                let bytes = crate::util::ser::base64_decode(id_str.as_bytes())?;
+                let hash_bytes: [u8; crate::crypto::key::SHA512_LEN] = bytes.try_into()
+                    .map_err(|_| crate::error::Error::BadLength)?;
+                let hash = crate::crypto::key::Sha512::from(hash_bytes);
+                Ok(Self(crate::dag::TransactionID::from(hash)))
             }
         }
     }
@@ -243,7 +230,7 @@ impl FromStr for Date {
     }
 }
 
-pub trait Public: Clone {
+pub trait Public {
     /// Strip the private data from a object, returning only public data.
     fn strip_private(&self) -> Self;
 
@@ -312,10 +299,10 @@ impl std::fmt::Display for Url {
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{SignKeypairSignature},
+        crypto::key::{Sha512},
+        dag::TransactionID,
         util::ser::{self, Binary},
     };
-    use rand::prelude::*;
     use std::convert::{TryFrom, TryInto};
     use std::ops::Deref;
 
@@ -325,11 +312,9 @@ mod tests {
             TestID
         }
 
-        let sigbytes = vec![61, 47, 37, 255, 130, 49, 42, 60, 55, 247, 221, 146, 149, 13, 27, 227, 23, 228, 6, 170, 103, 177, 184, 3, 124, 102, 180, 148, 228, 67, 30, 140, 172, 59, 90, 94, 220, 123, 143, 239, 97, 164, 186, 213, 141, 217, 174, 43, 186, 16, 184, 236, 166, 130, 38, 5, 176, 33, 22, 5, 111, 171, 57, 2];
-        let sigarr: [u8; 64] = sigbytes.try_into().unwrap();
-        let sig = SignKeypairSignature::Ed25519(Binary::new(sigarr));
+        let hash = Sha512::hash(b"get a job").unwrap();
 
-        let id = TestID(sig);
+        let id = TestID(TransactionID::from(hash));
 
         let string_id = String::try_from(&id).unwrap();
         assert_eq!(&string_id, "PS8l_4IxKjw3992SlQ0b4xfkBqpnsbgDfGa0lORDHoysO1pe3HuP72GkutWN2a4ruhC47KaCJgWwIRYFb6s5AgA");

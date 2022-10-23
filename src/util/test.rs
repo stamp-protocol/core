@@ -1,9 +1,11 @@
 use crate::{
     crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
+    dag::Transactions,
     identity::{
         identity::{IdentityID, Identity},
-        keychain::{ExtendKeypair, AlphaKeypair, PolicyKeypair, PublishKeypair, RootKeypair, Key},
+        keychain::{ExtendKeypair, AdminKey, AdminKeypair, Key},
     },
+    policy::{Capability, CapabilityPolicy, Participant, Policy},
     util::Timestamp,
 };
 use std::thread;
@@ -15,13 +17,34 @@ pub(crate) fn sleep(millis: u64) {
     thread::sleep(Duration::from_millis(millis));
 }
 
+pub(crate) fn create_fake_identity(now: Timestamp) -> (SecretKey, Transactions, AdminKey) {
+    let transactions = Transactions::new();
+    let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+    let sign = SignKeypair::new_ed25519(&master_key).unwrap();
+    let admin = AdminKeypair::from(sign);
+    let admin_key = AdminKey::new(admin, "Alpha", None);
+    let capability = CapabilityPolicy::new(
+        "default".into(),
+        vec![Capability::Permissive],
+        Policy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
+    );
+    let trans_id = transactions
+        .create_identity(now, vec![admin_key.clone()], vec![capability]).unwrap()
+        .sign(&master_key, &admin_key).unwrap();
+    let transactions2 = transactions.push_transaction(trans_id).unwrap();
+    (master_key, transactions2, admin_key)
+}
+
 pub(crate) fn setup_identity_with_subkeys() -> (SecretKey, Identity) {
     let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-    let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
-    let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
-    let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
-    let root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
-    let identity = Identity::create(IdentityID::random(), alpha_keypair, policy_keypair, publish_keypair, root_keypair, Timestamp::now())
+    let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
+    let capability = CapabilityPolicy::new(
+        "Test default".into(),
+        vec![Capability::Permissive],
+        Policy::MOfN { must_have: 1, participants: vec![Participant::Key(admin_keypair.clone().into())] }
+    );
+    let admin_key = AdminKey::new(admin_keypair, "Alpha", None);
+    let identity = Identity::create(IdentityID::random(), vec![admin_key], vec![capability], Timestamp::now())
         .add_subkey(Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap()), "sign", None).unwrap()
         .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap()), "cryptololol", None).unwrap();
     (master_key, identity)

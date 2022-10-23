@@ -25,12 +25,11 @@ use crate::{
         sign::Signable,
     },
 };
-use ed25519_dalek::{Signer};
+use ed25519_dalek::{Digest as Ed25519Digest, Signer, generic_array::GenericArray};
 use hmac::{
     Mac,
     digest::{
         FixedOutput,
-        crypto_common::generic_array::GenericArray,
     },
 };
 use rand::{RngCore, rngs::OsRng};
@@ -63,25 +62,23 @@ pub enum KeyID {
     SignKeypair(SignKeypairPublic),
     #[rasn(tag(explicit(1)))]
     CryptoKeypair(CryptoKeypairPublic),
+    #[rasn(tag(explicit(2)))]
+    SecretKey(Hmac),
 }
 
 impl KeyID {
     pub fn as_string(&self) -> String {
-        fn get_bytes(ty_prefix: u8, key_prefix: u8, bytes: &[u8]) -> Vec<u8> {
-            let mut res = vec![ty_prefix, key_prefix];
-            let mut bytes_vec = Vec::from(bytes);
-            res.append(&mut bytes_vec);
-            res
-        }
-        let bytes = match self {
+        match self {
             Self::SignKeypair(SignKeypairPublic::Ed25519(pubkey)) => {
-                get_bytes(0, 0, pubkey.as_ref())
+                ser::base64_encode(pubkey.as_ref())
             }
             Self::CryptoKeypair(CryptoKeypairPublic::Curve25519XChaCha20Poly1305(pubkey)) => {
-                get_bytes(1, 0, pubkey.as_ref())
+                ser::base64_encode(pubkey.as_ref())
             }
-        };
-        ser::base64_encode(&bytes)
+            Self::SecretKey(hmac) => {
+                ser::base64_encode(hmac.deref())
+            }
+        }
     }
 
     #[cfg(test)]
@@ -96,6 +93,18 @@ impl KeyID {
     pub(crate) fn random_crypto() -> Self {
         let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         Self::CryptoKeypair(CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap().into())
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn random_secret() -> Self {
+        Self::SecretKey(Hmac::new_sha512(&HmacKey::new_sha512().unwrap(), b"get a job").unwrap())
+    }
+}
+
+impl std::fmt::Display for KeyID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_string())
     }
 }
 
@@ -284,7 +293,7 @@ impl SignKeypair {
     /// Hash a value then sign it, returning the hash and the signature. This is
     /// already how signing works, but we basically control the hash process
     /// ourselves so we can return the hash.
-    pub fn sign_and_hash(&self, master_key: &SecretKey, data: &[u8]) -> Result<(Binary<64>, SignKeypairSignature)> {
+    pub fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<SignKeypairSignature> {
         match self {
             Self::Ed25519 { secret: ref sec_locked_opt, .. } => {
                 let sec_locked = sec_locked_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
@@ -292,51 +301,9 @@ impl SignKeypair {
                     .map_err(|_| Error::CryptoSignatureFailed)?;
                 let pubkey: ed25519_dalek::PublicKey = (&seckey).into();
                 let keypair = ed25519_dalek::Keypair { public: pubkey, secret: seckey };
-                let mut prehashed = ed25519_dalek::Sha512::new();
-                prehashed.update(data);
-                // i don't like this clone but oh well...?
-                let sig_obj = keypair.sign_prehashed(prehashed.clone(), Some(b"stamp-protocol"));
+                let sig_obj = keypair.sign(data);
                 let sig = SignKeypairSignature::Ed25519(Binary::new(sig_obj.to_bytes()));
-                let hash_vec = Vec::from(prehashed.finalize().as_slice());
-                let hash_arr: [u8; 64] = hash_vec.as_slice().try_into()
-                    .map_err(|_| Error::CryptoSignatureFailed)?;
-                let hash = Sha512(Binary(hash_arr));
-                Ok((hash, sig))
-            }
-        }
-    }
-
-    /// Sign a value with our secret signing key.
-    ///
-    /// Must be unlocked via our master key.
-    pub fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<SignKeypairSignature> {
-        // sign and hash but throw away the hash
-        self.sign_and_hash(master_key, data)
-            .map(|x| x.1)
-    }
-
-    /// Make sure a set of data has the appropriate hash and also verifies
-    /// against its signature.
-    pub fn verify_and_hash(&self, hash: Sha512, signature: &SignKeypairSignature, data: &[u8]) -> Result<Sha512> {
-        match (self, signature) {
-            (Self::Ed25519 { public: ref pubkey_bytes, .. }, SignKeypairSignature::Ed25519(ref sig_bytes)) => {
-                let pubkey = ed25519_dalek::PublicKey::from_bytes(&pubkey_bytes[..])
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
-                let sig_arr: [u8; 64] = sig_bytes.deref().clone().try_into()
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
-                let prehashed = ed25519_dalek::Sha512::default().chain(data);
-                let body_hash_vec = Vec::from(prehashed.clone().finalize().as_slice());
-                let body_hash_arr: [u8; 64] = hash_vec.as_slice().try_into()
-                    .map_err(|_| Error::CryptoSignatureFailed)?;
-                let body_hash = Sha512(Binary(body_hash_arr));
-
-                if hash != body_hash {
-                    Err(Error::CryptoSignatureVerificationFailed)?;
-                }
-
-                let sig = ed25519_dalek::Signature::from(sig_arr);
-                pubkey.verify_prehashed_strict(data, &sig)
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)
+                Ok(sig)
             }
         }
     }
@@ -344,6 +311,18 @@ impl SignKeypair {
     /// Verify a value with a detached signature given the public key of the
     /// signer.
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
+        match (self, signature) {
+            (Self::Ed25519 { public: ref pubkey_bytes, .. }, SignKeypairSignature::Ed25519(ref sig_bytes)) => {
+                let pubkey = ed25519_dalek::PublicKey::from_bytes(&pubkey_bytes[..])
+                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
+                let sig_arr: [u8; 64] = sig_bytes.deref().clone().try_into()
+                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
+                let sig = ed25519_dalek::Signature::from(sig_arr);
+                pubkey.verify_strict(data, &sig)
+                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
+                Ok(())
+            }
+        }
     }
 
     /// Re-encrypt this signing keypair with a new master key.
@@ -657,32 +636,54 @@ impl From<CryptoKeypair> for CryptoKeypairPublic {
     }
 }
 
+pub const SHA512_LEN: usize = 64;
+
 /// Holds a sha512 signature. We could just use Binary<64> directly but this
 /// sets a more clear intention, and these days I'm all about clear intentions
 /// and open communication (as long as it's securely encrypted between
 /// participants, of course).
-#[derive(Debug, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
-pub struct Sha512(Binary<64>);
+#[derive(Clone, Debug, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+pub struct Sha512(Binary<SHA512_LEN>);
 
 impl Sha512 {
-    /// Create a new Sha512 from a byte array
-    pub fn new(bytes: [u8; 64]) -> Self {
-        Self(Binary::new(bytes))
+    /// How bany bytes are in this Sha512? HMMM I WONDER
+    pub fn len() -> usize {
+        SHA512_LEN
+    }
+
+    /// Create a new SHA512 hash from binary data
+    pub fn hash(input: &[u8]) -> Result<Self> {
+        let genarr = ed25519_dalek::Sha512::digest(input);
+        let hash_arr: [u8; 64] = genarr.as_slice().try_into()
+            .map_err(|_| Error::CryptoHashFailed)?;
+        Ok(Self(Binary::new(hash_arr)))
     }
 
     #[cfg(test)]
     pub(crate) fn random() -> Self {
         let mut randbuf = [0u8; 64];
         OsRng.fill_bytes(&mut randbuf);
-        Self::new(randbuf)
+        Self(Binary::new(randbuf))
+    }
+}
+
+impl From<[u8; 64]> for Sha512 {
+    fn from(arr: [u8; 64]) -> Self {
+        Self(Binary::new(arr))
     }
 }
 
 impl Deref for Sha512 {
-    type Target = [u8];
+    type Target = [u8; 64];
 
     fn deref(&self) -> &Self::Target {
         &self.0.deref()
+    }
+}
+
+impl std::fmt::Display for Sha512 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", ser::base64_encode(self.deref()))
     }
 }
 

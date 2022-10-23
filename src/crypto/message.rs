@@ -57,11 +57,11 @@ impl ser::SerdeBinary for Message {}
 /// because an identity could have many CryptoKeypairs).
 pub fn send(sender_master_key: &SecretKey, sender_identity_id: &IdentityID, sender_key: &Subkey, recipient_key: &Subkey, message: &[u8]) -> Result<Message> {
     let sender_crypto = sender_key.key().as_cryptokey()
-        .ok_or(Error::IdentitySubkeyWrongType)?;
+        .ok_or(Error::KeychainSubkeyWrongType)?;
     let recipient_crypto = recipient_key.key().as_cryptokey()
-        .ok_or(Error::IdentitySubkeyWrongType)?;
+        .ok_or(Error::KeychainSubkeyWrongType)?;
     let sealed = recipient_crypto.seal(sender_master_key, sender_crypto, message)?;
-    let key_id = sender_key.key_id().ok_or(Error::IdentitySubkeyWrongType)?;
+    let key_id = sender_key.key_id();
     let signed_msg = SignedObject::new(sender_identity_id.clone(), key_id, sealed);
     Ok(Message::Signed(signed_msg))
 }
@@ -72,9 +72,9 @@ pub fn send(sender_master_key: &SecretKey, sender_identity_id: &IdentityID, send
 /// message, which signs the *outside* of the message (not the inside).
 pub fn open(recipient_master_key: &SecretKey, recipient_key: &Subkey, sender_key: &Subkey, sealed: &Message) -> Result<Vec<u8>> {
     let sender_crypto = sender_key.key().as_cryptokey()
-        .ok_or(Error::IdentitySubkeyWrongType)?;
+        .ok_or(Error::KeychainSubkeyWrongType)?;
     let recipient_crypto = recipient_key.key().as_cryptokey()
-        .ok_or(Error::IdentitySubkeyWrongType)?;
+        .ok_or(Error::KeychainSubkeyWrongType)?;
     let signed_message = match sealed {
         Message::Signed(SignedObject { ref body, .. }) => body,
         _ => Err(Error::CryptoWrongMessageType)?,
@@ -88,7 +88,7 @@ pub fn open(recipient_master_key: &SecretKey, recipient_key: &Subkey, sender_key
 /// cryptographically verified.
 pub fn send_anonymous(recipient_key: &Subkey, message: &[u8]) -> Result<Message> {
     let recipient_crypto = recipient_key.key().as_cryptokey()
-        .ok_or(Error::IdentitySubkeyWrongType)?;
+        .ok_or(Error::KeychainSubkeyWrongType)?;
     let sealed = recipient_crypto.seal_anonymous(message)?;
     Ok(Message::Anonymous(sealed))
 }
@@ -96,7 +96,7 @@ pub fn send_anonymous(recipient_key: &Subkey, message: &[u8]) -> Result<Message>
 /// Open an anonymous message send with [send_anonymous].
 pub fn open_anonymous(recipient_master_key: &SecretKey, recipient_key: &Subkey, sealed: &Message) -> Result<Vec<u8>> {
     let recipient_crypto = recipient_key.key().as_cryptokey()
-        .ok_or(Error::IdentitySubkeyWrongType)?;
+        .ok_or(Error::KeychainSubkeyWrongType)?;
     let anon_message = match sealed {
         Message::Anonymous(ref data) => data,
         _ => Err(Error::CryptoWrongMessageType)?,

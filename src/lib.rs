@@ -1,37 +1,42 @@
 //! Welcome to the Stamp core, a reference implementation of the Stamp protocol.
 //!
-//! The Stamp protocol is essentially a successor to PGP. It seeks to provide
-//! a meaningful cryptographic identity for a given person, which can be signed
-//! by either their peers or various institutions.
+//! The Stamp protocol is a p2p cryptographic system for managing personal and group
+//! identities. Like PGP, it allows creating a web of trust when users "stamp"
+//! the claims made by peers or institutions. However unlike PGP, Stamp is not
+//! limited to a single set of owned keys. A Stamp identity can be managed entirely
+//! by third parties via multisig transactions, making it a good option for managing
+//! identities for groups or organizations.
 //!
-//! Stamp deviates from PGP in that any number of claims can be made by a
-//! Stamp identity, and any of them can be individually signed. For instance, an
+//! Stamp allows any number of claims to be created on an identity, and any of them
+//! can be individually signed ("stamped"). For instance, an
 //! identity might claim ownership of an email address, and any person or 
 //! organization might "stamp" (verify) that claim by having the owner of the
 //! identity sign a random string sent over email and return it to the verifier.
 //! Any number of claims or types of claims can be made and signed by any other
-//! participant.
+//! participant. Some claims, such as domain and URL claims, can be verified
+//! without any stamps from others.
 //!
-//! The Stamp protocol defines not just methods for encryption, signing, and
-//! verification, but also for key recovery among trusted peers or institutions.
+//! Because of the robust claim system, Stamp identities can also act as forwarding
+//! mechanisms for other p2p (or centralized) systems. For instance, you could claim
+//! ownership of an email address, an ActivityPub handle, etc and anyone (or anything)
+//! reading your identity would know how to reach you. This allows other systems to
+//! follow *your identity* and if you were to, say, switch ActivityPub servers, you
+//! could take your network with you.
 //!
-//! Stamp also allows an identity to point (or "forward") to other locations or
-//! distributed/decentralized systems. Your identity might be the canonical
-//! place that your followers on a decentralized social network might find you:
-//! switching servers doesn't mean you have to rebuild your network anymore,
-//! because you can update your Stamp identity to point at your new location.
-//! You can forward interested parties to websites, email address, social
-//! networks, or any custom representation of location.
+//! The multisig protocol within Stamp allows for another useful feature: recovery.
+//! You can create a policy that allows friends, family, or institutions to replace
+//! your keys in the event of loss or theft. Losing a private key no longer has to
+//! be a catastrophic loss.
 //!
 //! The goals of this protocol are as follows:
 //!
 //! 1. To provide a semi-permanent container for a cryptographically-verified
-//! online/offline electronic identity.
+//! online/offline electronic identity for individuals and groups.
 //! 1. To allow signing and verification of any number of custom pieces of
 //! information ("claims") that assert one's identity, including ones that are
 //! private and only accessible by the identity owner (and those who they choose
 //! to verify that claim).
-//! 1. To allow the identity holder the ultimate control over their identity.
+//! 1. To allow the identity holder(s) the ultimate control over their identity.
 //! 1. To remain as distributed as possible.
 //! 1. To be easy to use by choosing sensible defaults, providing good UX
 //! wherever possible, and being opinionated wherever needed.

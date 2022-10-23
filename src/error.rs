@@ -37,17 +37,9 @@ pub enum Error {
     #[error("incorrect seed given for keypair")]
     CryptoBadSeed,
 
-    /// Error creating hash digest
-    #[error("could not create hash digest")]
-    CryptoHashStateDigestError,
-
-    /// Error creating hash state
-    #[error("could not init hash state")]
-    CryptoHashStateInitError,
-
-    /// Error updating hash state
-    #[error("could not update hash state")]
-    CryptoHashStateUpdateError,
+    /// Failed to create a hash
+    #[error("failed to create a hash")]
+    CryptoHashFailed,
 
     /// HMAC failed to build properly
     #[error("HMAC failed to build properly")]
@@ -112,10 +104,6 @@ pub enum Error {
     #[error("cannot build an identity from an empty transaction set")]
     DagEmpty,
 
-    /// A key wasn't found when running a DAG operation
-    #[error("key missing while processing transaction")]
-    DagKeyNotFound,
-
     /// The DAG chain looped (so this is more of a DG or G than DAG)
     #[error("an endless loop occurred while processing the transaction set")]
     DagLoop,
@@ -146,6 +134,10 @@ pub enum Error {
     #[error("the given name is already in use (names must be unique)")]
     DuplicateName,
 
+    /// Tried to find a capability policy but it wasn't there.
+    #[error("capability policy not found {0}")]
+    IdentityCapabilityPolicyNotFound(String),
+
     /// The claim being operated on cannot be verified automatically
     #[error("this claim cannot be automatically verified")]
     IdentityClaimVerificationNotAllowed,
@@ -153,10 +145,6 @@ pub enum Error {
     /// The claim being operated on wasn't found
     #[error("identity claim not found")]
     IdentityClaimNotFound,
-
-    /// The forward with that name couldn't be found
-    #[error("that forward couldn't be found")]
-    IdentityForwardNotFound,
 
     /// An operation is being performed on an object not owned by the current
     /// identity
@@ -176,21 +164,13 @@ pub enum Error {
     #[error("identity stamp already exists")]
     IdentityStampAlreadyExists,
 
+    /// This stamp revocation is being duplicated
+    #[error("identity stamp revocation already exists")]
+    IdentityStampRevocationAlreadyExists,
+
     /// The stamp being operated on wasn't found
     #[error("identity stamp not found")]
     IdentityStampNotFound,
-
-    /// This subkey is already revoked.
-    #[error("subkey is already revoked")]
-    IdentitySubkeyAlreadyRevoked,
-
-    /// The subkey being operated on wasn't found
-    #[error("identity subkey not found")]
-    IdentitySubkeyNotFound,
-
-    /// The subkey being operated on is the wrong type
-    #[error("the given subkey cannot be used for the requested operation")]
-    IdentitySubkeyWrongType,
 
     /// Verification of an identity failed.
     #[error("Verification of identity failed: {0}")]
@@ -200,13 +180,34 @@ pub enum Error {
     #[error("io error {0:?}")]
     IoError(#[from] std::io::Error),
 
+    /// Key not found in [Keychain][crate::identity::keychain::Keychain].
+    #[error("keychain key not found: {0}")]
+    KeychainKeyNotFound(crate::crypto::key::KeyID),
+
+    /// This subkey is already revoked.
+    #[error("subkey is already revoked")]
+    KeychainSubkeyAlreadyRevoked,
+
+    /// The subkey being operated on is the wrong type
+    #[error("the given subkey cannot be used for the requested operation")]
+    KeychainSubkeyWrongType,
+
     /// Keygen failed
     #[error("keygen failed")]
     KeygenFailed,
 
+    /// A given policy does not have the capabilities required to perform the
+    /// requested action.
+    #[error("the policy does not have the capabilities required to perform that action")]
+    PolicyCapabilityMismatch,
+
     /// The request doesn't satisfy the policy. 20 beats your 5. I'm sorry, sir.
     #[error("the recovery request does not meet the policy's conditions")]
     PolicyConditionMismatch,
+
+    /// No policy/capability matched the transaction
+    #[error("no matching policy/capability found for the given transaction")]
+    PolicyNotFound,
 
     /// A key cannot be verified against the executed recovery policy chain.
     #[error("policy verification of key failed")]
@@ -237,6 +238,27 @@ pub enum Error {
     /// We're trying to verify a signature on a value, but it's missing.
     #[error("signature missing on a value")]
     SignatureMissing,
+
+    /// The SHA512 of a transaction's body does not match its ID. He's tampered
+    /// with it.
+    #[error("transaction ID mismatch: {0}")]
+    TransactionIDMismatch(crate::dag::TransactionID),
+
+    /// Expected one transaction, got another.
+    #[error("transaction mismatch")]
+    TransactionMismatch,
+
+    /// This transaction cannot be saved
+    #[error("transaction cannot be saved: {0}")]
+    TransactionInvalid(String),
+
+    /// This transaction has no signatures. Why don't you try and get one?
+    #[error("transaction has no signatures")]
+    TransactionNoSignatures,
+
+    /// A signature on a transaction is not valid.
+    #[error("transaction signature invalid: {0:?}")]
+    TransactionSignatureInvalid(crate::identity::keychain::AdminKeypairPublic),
 
     /// Error parsing a URL
     #[error("URL parse error")]

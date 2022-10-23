@@ -60,9 +60,9 @@ impl ser::SerdeBinary for Signature {}
 /// Sign a message with a private key, returning the detached signature.
 pub fn sign(master_key: &SecretKey, signing_identity_id: &IdentityID, signing_key: &Subkey, message: &[u8]) -> Result<Signature> {
     let sign_key = signing_key.key().as_signkey()
-        .ok_or(Error::IdentitySubkeyWrongType)?;
+        .ok_or(Error::KeychainSubkeyWrongType)?;
     let signature = sign_key.sign(master_key, message)?;
-    let key_id = signing_key.key_id().ok_or(Error::IdentitySubkeyWrongType)?;
+    let key_id = signing_key.key_id();
     Ok(Signature::Detached {
         sig: SignedObject::new(signing_identity_id.clone(), key_id, signature)
     })
@@ -74,16 +74,16 @@ pub fn verify(signing_key: &Subkey, signature: &Signature, message: &[u8]) -> Re
         .map(|x| x.body())
         .ok_or(Error::CryptoWrongSignatureType)?;
     let sign_key = signing_key.key().as_signkey()
-        .ok_or(Error::IdentitySubkeyWrongType)?;
+        .ok_or(Error::KeychainSubkeyWrongType)?;
     sign_key.verify(detached, message)
 }
 
 /// Sign a message with a private key, returning the detached signature.
 pub fn sign_attached(master_key: &SecretKey, signing_identity_id: &IdentityID, signing_key: &Subkey, message: &[u8]) -> Result<Signature> {
     let sign_key = signing_key.key().as_signkey()
-        .ok_or(Error::IdentitySubkeyWrongType)?;
+        .ok_or(Error::KeychainSubkeyWrongType)?;
     let signature = sign_key.sign(master_key, message)?;
-    let key_id = signing_key.key_id().ok_or(Error::IdentitySubkeyWrongType)?;
+    let key_id = signing_key.key_id();
     Ok(Signature::Attached {
         sig: SignedObject::new(signing_identity_id.clone(), key_id, signature),
         data: message.to_vec().into(),
@@ -96,7 +96,7 @@ pub fn verify_attached(signing_key: &Subkey, signature: &Signature) -> Result<()
         .map(|x| (x.0.body(), x.1))
         .ok_or(Error::CryptoWrongSignatureType)?;
     let sign_key = signing_key.key().as_signkey()
-        .ok_or(Error::IdentitySubkeyWrongType)?;
+        .ok_or(Error::KeychainSubkeyWrongType)?;
     sign_key.verify(attached.0, attached.1)
 }
 

@@ -10,21 +10,19 @@
 //! not just by keys it owns, but by trusted third parties as well.
 
 use crate::{
-    crypto::key::{SecretKey, SignKeypair, SignKeypairPublic, SignKeypairSignature},
-    dag::{TransactionBody, TransactionID},
+    crypto::key::{KeyID},
+    dag::{TransactionBody, TransactionID, Transaction},
     error::{Error, Result},
     identity::{
-        Public,
-        identity::{IdentityID, ForwardType},
-        keychain::{ExtendKeypair, AdminKeypairPublic, AdminKeypairSignature},
+        claim::ClaimSpec,
+        identity::{Identity, IdentityID},
+        keychain::{ExtendKeypair, AdminKeypair, AdminKeypairPublic, AdminKeypairSignature},
     },
-    util::ser::{self, BinaryVec},
+    util::{ser::BinaryVec},
 };
 use getset;
-#[cfg(test)] use rand::RngCore;
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
-use std::convert::TryInto;
 use std::ops::Deref;
 
 /// Defines a context specifier specific to various claim types
@@ -34,40 +32,59 @@ pub enum TransactionBodyType {
     #[rasn(tag(explicit(0)))]
     CreateIdentityV1,
     #[rasn(tag(explicit(1)))]
-    MakeClaimV1,
+    ResetIdentityV1,
     #[rasn(tag(explicit(2)))]
-    DeleteClaimV1,
+    AddAdminKeyV1,
     #[rasn(tag(explicit(3)))]
-    MakeStampV1,
+    EditAdminKeyV1,
     #[rasn(tag(explicit(4)))]
-    RevokeStampV1,
+    RevokeAdminKeyV1,
     #[rasn(tag(explicit(5)))]
-    AcceptStampV1,
+    AddCapabilityPolicyV1,
     #[rasn(tag(explicit(6)))]
-    DeleteStampV1,
+    DeleteCapabilityPolicyV1,
     #[rasn(tag(explicit(7)))]
-    AddSubkeyV1,
+    MakeClaimV1,
     #[rasn(tag(explicit(8)))]
-    EditSubkeyV1,
+    EditClaimV1,
     #[rasn(tag(explicit(9)))]
-    RevokeSubkeyV1,
+    DeleteClaimV1,
     #[rasn(tag(explicit(10)))]
-    DeleteSubkeyV1,
+    MakeStampV1,
     #[rasn(tag(explicit(11)))]
-    SetNicknameV1,
+    RevokeStampV1,
     #[rasn(tag(explicit(12)))]
-    AddForwrdV1,
+    AcceptStampV1,
     #[rasn(tag(explicit(13)))]
-    DeleteForwardV1,
+    DeleteStampV1,
+    #[rasn(tag(explicit(14)))]
+    AddSubkeyV1,
+    #[rasn(tag(explicit(15)))]
+    EditSubkeyV1,
+    #[rasn(tag(explicit(16)))]
+    RevokeSubkeyV1,
+    #[rasn(tag(explicit(17)))]
+    DeleteSubkeyV1,
+    #[rasn(tag(explicit(18)))]
+    SetNicknameV1,
+    #[rasn(tag(explicit(19)))]
+    PublishV1,
 }
 
-impl From<TransactionBody> for TransactionBodyType {
+impl From<&TransactionBody> for TransactionBodyType {
     // Not sure if this is actually useful as much as it keeps ContextClaimType
     // in sync with ClaimSpec
-    fn from(body: TransactionBody) -> Self {
-        match body {
+    fn from(body: &TransactionBody) -> Self {
+        match *body {
             TransactionBody::CreateIdentityV1 { .. } => Self::CreateIdentityV1,
+            TransactionBody::ResetIdentityV1 { .. } => Self::ResetIdentityV1,
+            TransactionBody::AddAdminKeyV1 { .. } => Self::AddAdminKeyV1,
+            TransactionBody::EditAdminKeyV1 { .. } => Self::EditAdminKeyV1,
+            TransactionBody::RevokeAdminKeyV1 { .. } => Self::RevokeAdminKeyV1,
+            TransactionBody::AddCapabilityPolicyV1 { .. } => Self::AddCapabilityPolicyV1,
+            TransactionBody::DeleteCapabilityPolicyV1 { .. } => Self::DeleteCapabilityPolicyV1,
             TransactionBody::MakeClaimV1 { .. } => Self::MakeClaimV1,
+            TransactionBody::EditClaimV1 { .. } => Self::EditClaimV1,
             TransactionBody::DeleteClaimV1 { .. } => Self::DeleteClaimV1,
             TransactionBody::MakeStampV1 { .. } => Self::MakeStampV1,
             TransactionBody::RevokeStampV1 { .. } => Self::RevokeStampV1,
@@ -78,8 +95,7 @@ impl From<TransactionBody> for TransactionBodyType {
             TransactionBody::RevokeSubkeyV1 { .. } => Self::RevokeSubkeyV1,
             TransactionBody::DeleteSubkeyV1 { .. } => Self::DeleteSubkeyV1,
             TransactionBody::SetNicknameV1 { .. } => Self::SetNicknameV1,
-            TransactionBody::AddForwrdV1 { .. } => Self::AddForwrdV1,
-            TransactionBody::DeleteForwardV1 { .. } => Self::DeleteForwardV1,
+            TransactionBody::PublishV1 { .. } => Self::PublishV1,
         }
     }
 }
@@ -114,11 +130,11 @@ pub enum ContextClaimType {
     Extension,
 }
 
-impl From<ClaimSpec> for ContextClaimType {
+impl From<&ClaimSpec> for ContextClaimType {
     // Not sure if this is actually useful as much as it keeps ContextClaimType
     // in sync with ClaimSpec
-    fn from(spec: ClaimSpec) -> Self {
-        match spec {
+    fn from(spec: &ClaimSpec) -> Self {
+        match *spec {
             ClaimSpec::Identity(..) => Self::Identity,
             ClaimSpec::Name(..) => Self::Name,
             ClaimSpec::Birthday(..) => Self::Birthday,
@@ -135,36 +151,6 @@ impl From<ClaimSpec> for ContextClaimType {
     }
 }
 
-/// Defines a context specifier specific to various forward types
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(choice)]
-pub enum ContextForwardType {
-    #[rasn(tag(explicit(0)))]
-    Email,
-    #[rasn(tag(explicit(1)))]
-    Social,
-    #[rasn(tag(explicit(2)))]
-    Pgp,
-    #[rasn(tag(explicit(3)))]
-    Url,
-    #[rasn(tag(explicit(4)))]
-    Extension,
-}
-
-impl From<ForwardType> for ContextForwardType {
-    // Not sure if this is actually useful as much as it keeps ContextClaimType
-    // in sync with ClaimSpec
-    fn from(spec: ForwardType) -> Self {
-        match spec {
-            ForwardType::Email(..) => Self::Email,
-            ForwardType::Social { .. } => Self::Social,
-            ForwardType::Pgp(..) => Self::Pgp,
-            ForwardType::Url(..) => Self::Url,
-            ForwardType::Extension { .. } => Self::Extension,
-        }
-    }
-}
-
 /// Defines a context under which a transaction can be performed.
 ///
 /// This is a recursive structure which allows defining arbitrary combinations
@@ -172,31 +158,133 @@ impl From<ForwardType> for ContextForwardType {
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Context {
-    /// Represents a context in which ALL given contexts must match.
+    /// Represents a context in which ALL given contexts must match (an AND gate)
     #[rasn(tag(explicit(0)))]
     All(Vec<Context>),
     /// Represents a context in which one or more of the given contexts must
-    /// match.
+    /// match (an OR gate).
     #[rasn(tag(explicit(1)))]
     Any(Vec<Context>),
+    /// Allows an action in any context (ie, context is irrelevant).
+    #[rasn(tag(explicit(2)))]
+    Permissive,
+    /// Allows an action in the context of an identity that has this exact ID.
+    #[rasn(tag(explicit(3)))]
+    IdentityID(IdentityID),
     /// Allows an action in the context of items with an exact ID match (for
     /// instance, a claim that was created by transaction 0x03fd913)
-    #[rasn(tag(explicit(2)))]
-    ID(TransactionID),
+    #[rasn(tag(explicit(4)))]
+    ObjectID(TransactionID),
+    /// Allows an action on a keypair that has a public key matching the given
+    /// ID.
+    #[rasn(tag(explicit(5)))]
+    KeyID(KeyID),
     /// Allows an action in the context of items with an exact name match. This
-    /// can be a forward or a subkey generally.
-    #[rasn(tag(explicit(3)))]
+    /// can be an admin key, subkey, or capability policy generally.
+    #[rasn(tag(explicit(6)))]
     Name(String),
     /// Allows an action in the context of items with name matching a glob pattern.
-    /// This can be a forward or a subkey generally.
-    #[rasn(tag(explicit(4)))]
+    /// For instance `email-keys/*`
+    #[rasn(tag(explicit(7)))]
     NameGlob(String),
     /// Allows actions on claims where the claim is of a particular type
-    #[rasn(tag(explicit(5)))]
+    #[rasn(tag(explicit(8)))]
     ClaimType(ContextClaimType),
-    /// Allows actions on forwards where the claim is of a particular type
-    #[rasn(tag(explicit(6)))]
-    ForwardType(ContextForwardType),
+}
+
+impl Context {
+    /// Takes a transaction and returns all the contexts it covers.
+    pub(crate) fn contexts_from_transaction(transaction: &Transaction, identity: &Identity) -> Vec<Self> {
+        let mut contexts = Vec::new();
+        match transaction.entry().body() {
+            TransactionBody::CreateIdentityV1 { .. } => {}
+            TransactionBody::ResetIdentityV1 { .. } => {}
+            TransactionBody::AddAdminKeyV1 { admin_key } => {
+                contexts.push(Self::KeyID(admin_key.key().key_id()));
+                contexts.push(Self::Name(admin_key.name().clone()));
+            }
+            TransactionBody::EditAdminKeyV1 { id, .. } => {
+                identity.keychain().admin_key_by_keyid(id)
+                    .map(|admin_key| contexts.push(Self::Name(admin_key.name().clone())));
+                contexts.push(Self::KeyID(id.clone()));
+            }
+            TransactionBody::RevokeAdminKeyV1 { id, .. } => {
+                identity.keychain().admin_key_by_keyid(id)
+                    .map(|admin_key| contexts.push(Self::Name(admin_key.name().clone())));
+                contexts.push(Self::KeyID(id.clone()));
+            }
+            TransactionBody::AddCapabilityPolicyV1 { capability } => {
+                contexts.push(Self::Name(capability.name().clone()));
+            }
+            TransactionBody::DeleteCapabilityPolicyV1 { name } => {
+                contexts.push(Self::Name(name.clone()));
+            }
+            TransactionBody::MakeClaimV1 { spec, name } => {
+                contexts.push(Self::ClaimType(ContextClaimType::from(spec)));
+                if let Some(name) = name {
+                    contexts.push(Self::Name(name.clone()));
+                }
+            }
+            TransactionBody::EditClaimV1 { claim_id, .. } => {
+                contexts.push(Self::ObjectID(claim_id.deref().clone()));
+            }
+            TransactionBody::DeleteClaimV1 { claim_id } => {
+                contexts.push(Self::ObjectID(claim_id.deref().clone()));
+            }
+            TransactionBody::MakeStampV1 { stamp } => {
+                contexts.push(Self::ObjectID(stamp.claim_id().deref().clone()));
+                contexts.push(Self::IdentityID(stamp.stampee().clone()));
+            }
+            TransactionBody::RevokeStampV1 { revocation } => {
+                contexts.push(Self::ObjectID(revocation.stamp_id().deref().clone()));
+                contexts.push(Self::IdentityID(revocation.stampee().clone()));
+
+                let stamp_maybe = identity.find_claim_stamp_by_id(revocation.stamp_id());
+                if let Some(stamp) = stamp_maybe {
+                    contexts.push(Self::ObjectID(stamp.entry().claim_id().deref().clone()));
+                }
+            }
+            TransactionBody::AcceptStampV1 { stamp_transaction } => {
+                match stamp_transaction.entry().body() {
+                    TransactionBody::MakeStampV1 { stamp } => {
+                        contexts.push(Self::ObjectID(stamp.claim_id().deref().clone()));
+                        contexts.push(Self::IdentityID(stamp.stamper().clone()));
+                    }
+                    _ => {}
+                }
+            }
+            TransactionBody::DeleteStampV1 { stamp_id } => {
+                let stamp_maybe = identity.find_claim_stamp_by_id(stamp_id);
+                if let Some(stamp) = stamp_maybe {
+                    contexts.push(Self::ObjectID(stamp.id().deref().clone()));
+                    contexts.push(Self::ObjectID(stamp.entry().claim_id().deref().clone()));
+                    contexts.push(Self::IdentityID(stamp.entry().stamper().clone()));
+                }
+            }
+            TransactionBody::AddSubkeyV1 { key, name, .. } => {
+                contexts.push(Self::Name(name.clone()));
+                contexts.push(Self::KeyID(key.key_id().clone()));
+            }
+            TransactionBody::EditSubkeyV1 { id, .. } => {
+                contexts.push(Self::KeyID(id.clone()));
+                identity.keychain().subkey_by_keyid(id)
+                    .map(|subkey| contexts.push(Self::Name(subkey.name().clone())));
+            }
+            TransactionBody::RevokeSubkeyV1 { id, .. } => {
+                contexts.push(Self::KeyID(id.clone()));
+                identity.keychain().subkey_by_keyid(id)
+                    .map(|subkey| contexts.push(Self::Name(subkey.name().clone())));
+            }
+            TransactionBody::DeleteSubkeyV1 { id } => {
+                contexts.push(Self::KeyID(id.clone()));
+                identity.keychain().subkey_by_keyid(id)
+                    .map(|subkey| contexts.push(Self::Name(subkey.name().clone())));
+            }
+            TransactionBody::SetNicknameV1 { .. } => {}
+            TransactionBody::PublishV1 { .. } => {}
+        }
+        contexts
+    }
 }
 
 /// Defines an action that can be taken on an identity. Effectively, this is the
@@ -209,11 +297,14 @@ pub enum Context {
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Capability {
-    /// The ability to perform a transaction in a given context
+    /// A capability that allows all actions
     #[rasn(tag(explicit(0)))]
+    Permissive,
+    /// The ability to perform a transaction in a given context
+    #[rasn(tag(explicit(1)))]
     Transaction {
         #[rasn(tag(explicit(0)))]
-        transaction: TransactionBodyType,
+        body_type: TransactionBodyType,
         #[rasn(tag(explicit(1)))]
         context: Context,
     },
@@ -226,13 +317,27 @@ pub enum Capability {
     ///
     /// This allows harnessing the identity and its policy system for participating
     /// in protocols outside of Stamp.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(explicit(2)))]
     Extension {
         #[rasn(tag(explicit(0)))]
-        #[serde(rename = "type")]
         ty: BinaryVec,
         #[rasn(tag(explicit(1)))]
         context: BinaryVec,
+    }
+}
+
+impl Capability {
+    pub(crate) fn test(&self, test: &Capability) -> Result<()> {
+        match self {
+            // allow anything
+            Self::Permissive => Ok(()),
+            // tricky...
+            Self::Transaction { body_type, context } => {
+                todo!();
+            }
+            // don't validate extensions. you need to do that yourself.
+            Self::Extension { .. } => Ok(()),
+        }
     }
 }
 
@@ -247,6 +352,18 @@ pub enum Participant {
     Key(AdminKeypairPublic),
 }
 
+impl From<AdminKeypairPublic> for Participant {
+    fn from(admin_pubkey: AdminKeypairPublic) -> Self {
+        Participant::Key(admin_pubkey)
+    }
+}
+
+impl From<AdminKeypair> for Participant {
+    fn from(admin_pubkey: AdminKeypair) -> Self {
+        Participant::Key(admin_pubkey.into())
+    }
+}
+
 /// A signature on a policy transaction. Currently only supports direct signatures
 /// from admin keys, but could allow expanding to other signature methods.
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
@@ -255,7 +372,10 @@ pub enum PolicySignature {
     /// A signature on a transaction from a specific key, generally one that's
     /// listed as a [Participant::Key] in the policy.
     #[rasn(tag(explicit(0)))]
-    Key(AdminKeypairSignature),
+    Key {
+        key: AdminKeypairPublic,
+        signature: AdminKeypairSignature,
+    },
 }
 
 /// A recursive structure that defines the conditions under which a multisig
@@ -284,32 +404,35 @@ pub enum Policy {
 }
 
 impl Policy {
-    /// Tests whether the given signatures match the policy condition
-    pub(crate) fn test<F>(&self, signatures: &Vec<PolicySignature>, serialized_transaction: &[u8]) -> Result<()>
-        where F: Fn(&Participant, &PolicySignature) -> Result<()>,
-    {
+    /// Tests whether the given signatures match the current policy. KEEP IN MIND
+    /// that the signatures *must* be validated before we get here. We're simply
+    /// testing that the signatures are from keys that satisfy the policy: WE DO
+    /// NOT VALIDATE THE SIGNATURES.
+    pub(crate) fn test(&self, signatures: &Vec<PolicySignature>) -> Result<()> {
         match self {
-            Self::All(conditions) => {
-                conditions.iter()
-                    .map(|c| c.test(signatures, sigtest))
+            Self::All(policies) => {
+                policies.iter()
+                    .map(|p| p.test(signatures))
                     .collect::<Result<Vec<_>>>()?;
             }
-            Self::Any(conditions) => {
-                conditions.iter()
-                    .find(|c| c.test(signatures, sigtest).is_ok())
+            Self::Any(policies) => {
+                policies.iter()
+                    .find(|p| p.test(signatures).is_ok())
                     .ok_or(Error::PolicyConditionMismatch)?;
             }
-            Self::OfN { must_have, participants } => {
+            Self::MOfN { must_have, participants } => {
                 let has = participants.iter()
                     .filter_map(|participant| {
                         for sig in signatures {
                             match (participant, sig) {
-                                (Participant::Key(pubkey), PolicySignature::Key(sig)) => {
-                                    if pubkey.verify(sig, &serialized_transaction).is_ok() {
+                                (Participant::Key(ref pubkey), PolicySignature::Key { key, .. }) => {
+                                    // NOTE: all signatures have already been validated
+                                    // upstreeaaaaam so all we need to do is verify that
+                                    // the participant's key matches the signing key.
+                                    if pubkey == key {
                                         return Some(());
                                     }
                                 }
-                                _ => {}
                             }
                         }
                         None
@@ -326,35 +449,49 @@ impl Policy {
 
 /// Matches a set of [Capabilities][Capability] to a multisig [Policy], making
 /// it so the policy must be fulfilled in order to perform those capabilities.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct CapabilityPolicy {
-    /// The capabilities (or actions) this policy can access
+    /// The *unique* name of this capability policy.
     #[rasn(tag(explicit(0)))]
+    name: String,
+    /// The capabilities (or actions) this policy can access. These are permissive,
+    /// and combined via OR.
+    #[rasn(tag(explicit(1)))]
     capabilities: Vec<Capability>,
     /// The signature policy defining which keys are required to perform the
     /// specified capabilities
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(explicit(2)))]
     policy: Policy,
 }
 
 impl CapabilityPolicy {
     /// Create a new `CapabilityPolicy`
-    pub fn new(capabilities: Vec<Capability>, policy: Policy) -> Self {
-        Self { capabilities, policy }
+    pub fn new(name: String, capabilities: Vec<Capability>, policy: Policy) -> Self {
+        Self { name, capabilities, policy }
     }
 
     /// Determine if this particular `CapabilityPolicy` allows performing the
-    /// action `capability`.
-    pub fn can(&self, capability: Capability) -> bool {
-        todo!();
+    /// action `capability` in the given `context`.
+    pub fn can(&self, capability: &Capability) -> bool {
+        self.capabilities().iter().find(|c| c.test(capability).is_ok()).is_some()
     }
 
     /// Determine if this particular `CapabilityPolicy` allows performing the
     /// action `capability`, and also checks the `signatures` against the policy
     /// to make sure we have the signatures we need to perform this action.
-    pub fn validate(&self, capability: Capability, signatures: &Vec<PolicySignature>) -> bool {
-        todo!();
+    pub(crate) fn validate_transaction(&self, transaction: &Transaction, contexts: &Vec<Context>) -> Result<()> {
+        // don't check the signature validity here. just check that we have the signatures
+        // needed to satisfy the policy. signature checks happen higher level.
+        self.policy().test(transaction.signatures())?;
+        let transaction_capability = Capability::Transaction {
+            body_type: transaction.entry().body().into(),
+            context: Context::Any(contexts.clone()),
+        };
+        if !self.can(&transaction_capability) {
+            Err(Error::PolicyCapabilityMismatch)?;
+        }
+        Ok(())
     }
 }
 
@@ -362,45 +499,50 @@ impl CapabilityPolicy {
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{SignKeypair},
-        error::Error,
+        crypto::key::{SecretKey},
+        identity::keychain::{AdminKeypair},
         util,
     };
 
     #[test]
-    fn policy_condition_test() {
+    fn capability_test() {
+        todo!();
+    }
+
+    #[test]
+    fn policy_test() {
         let master_key = SecretKey::new_xchacha20poly1305().unwrap();
 
-        let gus = SignKeypair::new_ed25519(&master_key).unwrap();
-        let marty = SignKeypair::new_ed25519(&master_key).unwrap();
-        let jackie = SignKeypair::new_ed25519(&master_key).unwrap();
-        let rosarita = SignKeypair::new_ed25519(&master_key).unwrap();
-        let dirk = SignKeypair::new_ed25519(&master_key).unwrap();
-        let twinkee = SignKeypair::new_ed25519(&master_key).unwrap();
-        let syd = SignKeypair::new_ed25519(&master_key).unwrap();
-        let scurvy = SignKeypair::new_ed25519(&master_key).unwrap();
-        let kitty = SignKeypair::new_ed25519(&master_key).unwrap();
+        let gus = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let marty = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let jackie = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let rosarita = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let dirk = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let twinkee = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let syd = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let scurvy = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let kitty = AdminKeypair::new_ed25519(&master_key).unwrap();
 
-        let conditions = PolicyCondition::Any(vec![
-            PolicyCondition::All(vec![
-                PolicyCondition::OfN {
+        let conditions = Policy::Any(vec![
+            Policy::All(vec![
+                Policy::MOfN {
                     must_have: 1, 
-                    pubkeys: vec![
+                    participants: vec![
                         dirk.clone().into(),
                         jackie.clone().into(),
                     ],
                 },
-                PolicyCondition::OfN {
+                Policy::MOfN {
                     must_have: 1, 
-                    pubkeys: vec![
+                    participants: vec![
                         syd.clone().into(),
                         twinkee.clone().into(),
                     ],
                 },
             ]),
-            PolicyCondition::OfN {
+            Policy::MOfN {
                 must_have: 3, 
-                pubkeys: vec![
+                participants: vec![
                     gus.clone().into(),
                     marty.clone().into(),
                     jackie.clone().into(),
@@ -441,7 +583,10 @@ mod tests {
         let fs = |key| {
             possible_signatures.iter()
                 .find(|ent| ent.0 == key)
-                .map(|x| x.1.clone())
+                .map(|x| PolicySignature::Key {
+                    key: x.0.clone().into(),
+                    signature: x.1.clone(),
+                })
                 .unwrap()
         };
         let passing_combinations = vec![
@@ -454,9 +599,6 @@ mod tests {
             vec!["gus", "jackie", "dirk"],
             vec!["gus", "marty", "dirk"],
         ];
-        let sigtest = |pubkey: &SignKeypairPublic, sig: &SignKeypairSignature| {
-            pubkey.verify(sig, obj.as_bytes())
-        };
         let should_pass = |names: &Vec<&str>| -> bool {
             if names.len() == 0 {
                 return false;
@@ -477,7 +619,7 @@ mod tests {
         };
         for combo in combinations {
             let combo_sigs = combo.iter().map(|name| fs(kn(name))).collect::<Vec<_>>();
-            let res = conditions.test(&combo_sigs, &sigtest);
+            let res = conditions.test(&combo_sigs);
             match res {
                 Ok(_) => {
                     if !should_pass(&combo) {
@@ -494,220 +636,12 @@ mod tests {
     }
 
     #[test]
-    fn policy_sign_request_validate_request() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let gus = SignKeypair::new_ed25519(&master_key).unwrap();
-        let marty = SignKeypair::new_ed25519(&master_key).unwrap();
-        let jackie = SignKeypair::new_ed25519(&master_key).unwrap();
-        let rosarita = SignKeypair::new_ed25519(&master_key).unwrap();
-        let dirk = SignKeypair::new_ed25519(&master_key).unwrap();
-
-        let identity_id = IdentityID::random();
-        let policy_id = PolicyID::random();
-
-        let policy = RecoveryPolicy::new(policy_id.clone(), PolicyCondition::OfN {
-            must_have: 3,
-            pubkeys: vec![
-                gus.clone().into(),
-                marty.clone().into(),
-                jackie.clone().into(),
-                rosarita.clone().into(),
-                dirk.clone().into(),
-            ],
-        });
-
-        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
-        let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
-        let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
-        let action = PolicyRequestAction::ReplaceKeys {
-            policy: new_policy_keypair.clone(),
-            publish: new_publish_keypair.clone(),
-            root: new_root_keypair.clone(),
-        };
-        let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action.clone());
-        let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
-
-        let entry2 = PolicyRequestEntry::new(identity_id.clone(), PolicyID::random(), action.clone());
-        let req_random_policy = PolicyRequest::new(&master_key, &new_policy_keypair, entry2).unwrap();
-
-        macro_rules! sig_failed {
-            ($req_mod:ident, $setter:expr) => {
-                let mut $req_mod = req.clone();
-                $setter;
-                let res = policy.validate_request(&identity_id, &$req_mod);
-                assert_eq!(res.err(), Some(Error::CryptoSignatureVerificationFailed));
-            }
-        }
-
-        sig_failed! { req_mod, req_mod.set_id(RequestID::random()) }
-        sig_failed! { req_mod, req_mod.entry_mut().set_identity_id(IdentityID::random()) }
-        sig_failed! { req_mod, req_mod.entry_mut().set_policy_id(PolicyID::random()) }
-        match req.entry().action().clone() {
-            PolicyRequestAction::ReplaceKeys { publish, root, .. } => {
-                let new_policy = PolicyKeypair::new_ed25519(&master_key).unwrap();
-                let new_action = PolicyRequestAction::ReplaceKeys {
-                    policy: new_policy,
-                    publish,
-                    root,
-                };
-                sig_failed! { req_mod, req_mod.entry_mut().set_action(new_action) }
-            }
-        }
-
-        let res = policy.validate_request(&IdentityID::random(), &req);
-        assert_eq!(res.err(), Some(Error::RecoveryPolicyRequestIdentityMismatch));
-
-        let res = policy.validate_request(&identity_id, &req_random_policy);
-        assert_eq!(res.err(), Some(Error::RecoveryPolicyRequestPolicyMismatch));
-
-        let res = policy.validate_request(&identity_id, &req);
-        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
-
-        // ok, let's get some sigs
-        let req_signed = req
-            .sign(&master_key, &gus).unwrap()
-            .sign(&master_key, &marty).unwrap();
-        // almost there...
-        let res = policy.validate_request(&identity_id, &req_signed);
-        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
-
-        // marty signs again...shouldn't count
-        let req_signed_2 = req_signed.clone()
-            .sign(&master_key, &marty).unwrap();
-        assert_eq!(req_signed_2.signatures().len(), 3);
-        // nice try
-        let res = policy.validate_request(&identity_id, &req_signed_2);
-        assert_eq!(res.err(), Some(Error::PolicyConditionMismatch));
-
-        // rosarita to the rescue
-        let req_signed_3 = req_signed.clone()
-            .sign(&master_key, &rosarita).unwrap();
-        // this shoudl get it
-        let res = policy.validate_request(&identity_id, &req_signed_3);
-        assert_eq!(res, Ok(()));
-    }
-
-    #[test]
-    fn policy_request_new_verify() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
-        let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
-        let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
-        let identity_id = IdentityID::random();
-        let policy_id = PolicyID::random();
-        let action = PolicyRequestAction::ReplaceKeys {
-            policy: new_policy_keypair.clone(),
-            publish: new_publish_keypair.clone(),
-            root: new_root_keypair.clone(),
-        };
-        let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action);
-        let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
-
-        assert_eq!(req.entry().identity_id(), &identity_id);
-        assert_eq!(req.entry().policy_id(), &policy_id);
-        match req.entry().action() {
-            PolicyRequestAction::ReplaceKeys { policy, publish, root } => {
-                assert_eq!(policy, &new_policy_keypair);
-                assert_eq!(publish, &new_publish_keypair);
-                assert_eq!(root, &new_root_keypair);
-            }
-        }
-
-        req.verify(&new_policy_keypair).unwrap();
-
-        // wrong key won't verify
-        let res = req.verify(&PolicyKeypair::from(new_root_keypair.deref().clone()));
-        assert_eq!(res.err(), Some(Error::CryptoSignatureVerificationFailed));
-
-        // modified request won't verify
-        let mut req2 = req.clone();
-        let identity_id2 = IdentityID::random();
-        assert!(identity_id != identity_id2);
-        req2.entry_mut().set_identity_id(identity_id2);
-        let res = req2.verify(&new_policy_keypair);
-        assert_eq!(res.err(), Some(Error::CryptoSignatureVerificationFailed));
-    }
-
-    #[test]
-    fn policy_request_reencrypt() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
-        let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
-        let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
-        let identity_id = IdentityID::random();
-        let policy_id = PolicyID::random();
-        let action = PolicyRequestAction::ReplaceKeys {
-            policy: new_policy_keypair.clone(),
-            publish: new_publish_keypair.clone(),
-            root: new_root_keypair.clone(),
-        };
-        let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action);
-        let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
-
-        // i'm detective john kimble
-        let obj = "yeah sure you are.";
-
-        let sig = match req.entry().action() {
-            PolicyRequestAction::ReplaceKeys { policy, .. } => {
-                policy.sign(&master_key, obj.as_bytes()).unwrap()
-            }
-        };
-
-        let new_master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let req2 = req.reencrypt(&master_key, &new_master_key).unwrap();
-
-        match req2.entry().action() {
-            PolicyRequestAction::ReplaceKeys { policy, .. } => {
-                let sig2 = policy.sign(&new_master_key, obj.as_bytes()).unwrap();
-                assert_eq!(sig, sig2);
-                let res = policy.sign(&master_key, obj.as_bytes());
-                assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
-            }
-        }
-    }
-
-    #[test]
-    fn policy_request_strip_private_has_private() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
-        let new_publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
-        let new_root_keypair = RootKeypair::new_ed25519(&master_key).unwrap();
-        let identity_id = IdentityID::random();
-        let policy_id = PolicyID::random();
-        let action = PolicyRequestAction::ReplaceKeys {
-            policy: new_policy_keypair.clone(),
-            publish: new_publish_keypair.clone(),
-            root: new_root_keypair.clone(),
-        };
-        let entry = PolicyRequestEntry::new(identity_id.clone(), policy_id.clone(), action);
-        let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
-
-        assert!(req.has_private());
-        match req.entry().action() {
-            PolicyRequestAction::ReplaceKeys{ policy, publish, root } => {
-                assert!(policy.has_private());
-                assert!(publish.has_private());
-                assert!(root.has_private());
-            }
-        }
-        let req2 = req.strip_private();
-        assert!(!req2.has_private());
-        match req2.entry().action() {
-            PolicyRequestAction::ReplaceKeys { policy, publish, root } => {
-                assert!(!policy.has_private());
-                assert!(!publish.has_private());
-                assert!(!root.has_private());
-            }
-        }
-    }
-
-    #[test]
     fn capability_policy_can() {
         todo!();
     }
 
     #[test]
-    fn capability_policy_validate() {
+    fn capability_policy_validate_transaction() {
         todo!();
     }
 }

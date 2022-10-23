@@ -9,16 +9,14 @@
 use crate::{
     error::{Error, Result},
     identity::{
-        Public,
         stamp::Stamp,
         identity::IdentityID,
     },
     crypto::key::SecretKey,
-    private::MaybePrivate,
-    util::{Timestamp, Date, Url, ser::BinaryVec},
+    private::{MaybePrivate, PrivateWithHmac},
+    util::{Public, Date, Url, ser::BinaryVec},
 };
 use getset;
-#[cfg(test)] use rand::RngCore;
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::convert::TryInto;
@@ -81,14 +79,14 @@ impl<T> Relationship<T> {
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum ClaimSpec {
-    /// A claim that this identity is mine (always public).
+    /// A claim that this identity is mine.
     ///
-    /// This claim should be made any time a new identity is created.
+    /// This claim should be made *publicly* any time a new identity is created.
     ///
-    /// This can also be used to claim ownership of another identity, hopefully
-    /// stamped by that identity.
+    /// This can also be used to claim ownership of another identity, for instance
+    /// if you lost your keys and need to move to a new identity.
     #[rasn(tag(explicit(0)))]
-    Identity(IdentityID),
+    Identity(MaybePrivate<IdentityID>),
     /// A claim that the name attached to this identity is mine.
     #[rasn(tag(explicit(1)))]
     Name(MaybePrivate<String>),
@@ -303,24 +301,28 @@ impl Public for ClaimSpec {
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Claim {
-    /// The unique ID of this claim.
+    /// The ID of this claim (the [transaction id][crate::dag::TransactionID] that created it).
     #[rasn(tag(explicit(0)))]
     id: ClaimID,
     /// The data we're claiming.
     #[rasn(tag(explicit(1)))]
     spec: ClaimSpec,
-    /// The date we created this claim.
+    /// Stamps that have been made on our claim.
     #[rasn(tag(explicit(2)))]
-    created: Timestamp,
+    stamps: Vec<Stamp>,
+    /// This claim's name, can be used for forwarding/redirection.
+    #[rasn(tag(explicit(3)))]
+    name: Option<String>,
 }
 
 impl Claim {
     /// Create a new claim.
-    fn new(id: ClaimID, spec: ClaimSpec, created: Timestamp) -> Self {
+    pub(crate) fn new(id: ClaimID, spec: ClaimSpec, name: Option<String>) -> Self {
         Self {
             id,
             spec,
-            created,
+            stamps: Vec::new(),
+            name,
         }
     }
 
@@ -386,48 +388,13 @@ impl Public for Claim {
     }
 }
 
-/// A wrapper around a `Claim` that stores its stamps.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct ClaimContainer {
-    /// The actual claim data
-    #[rasn(tag(explicit(0)))]
-    claim: Claim,
-    /// Stamps that have been made on our claim.
-    #[rasn(tag(explicit(1)))]
-    stamps: Vec<Stamp>,
-}
-
-impl ClaimContainer {
-    /// Create a new claim, sign it with our signing key, and return a container
-    /// that holds the claim (with an empty set of stamps).
-    pub fn new(claim_id: ClaimID, spec: ClaimSpec, created: Timestamp) -> Self {
-        let claim = Claim::new(claim_id, spec, created);
-        Self {
-            claim,
-            stamps: Vec::new(),
-        }
-    }
-}
-
-impl Public for ClaimContainer {
-    fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        clone.set_claim(clone.claim().strip_private());
-        clone
-    }
-
-    fn has_private(&self) -> bool {
-        self.claim().spec().has_private()
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::{
         error::Error,
         identity::{IdentityID},
+        util::Timestamp,
     };
     use std::convert::TryFrom;
     use std::str::FromStr;
@@ -477,14 +444,7 @@ pub(crate) mod tests {
             };
         }
 
-        let (master_key, _, spec) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
-        let master_key2 = SecretKey::new_xchacha20poly1305().unwrap();
-        let spec2 = spec.clone().reencrypt(&master_key, &master_key2).unwrap();
-        match (spec, spec2) {
-            (ClaimSpec::Identity(id), ClaimSpec::Identity(id2)) => assert_eq!(id, id2),
-            _ => panic!("Bad claim type: Identity"),
-        }
-
+        claim_reenc!{ Identity, IdentityID::random() }
         claim_reenc!{ Name, String::from("Marty Malt") }
         claim_reenc!{ Birthday, Date::from_str("2010-01-03").unwrap() }
         claim_reenc!{ Email, String::from("marty@sids.com") }
@@ -510,14 +470,14 @@ pub(crate) mod tests {
                 let (_master_key, spec, spec2) = make_specs!($claimmaker, $val);
                 assert_eq!(spec.has_private(), true);
                 match $getmaybe(spec.clone()) {
-                    MaybePrivate::Private { data: Some(_), .. } => {},
+                    MaybePrivate::Private(PrivateWithHmac { data: Some(_), .. }) => {},
                     _ => panic!("bad maybe val: {}", stringify!($claimtype)),
                 }
-                let claim = ClaimContainer::new(ClaimID::random(), spec, Timestamp::now());
+                let claim = Claim::new(ClaimID::random(), spec, None);
                 assert_eq!(claim.has_private(), true);
 
                 assert_eq!(spec2.has_private(), false);
-                let claim2 = ClaimContainer::new(ClaimID::random(), spec2, Timestamp::now());
+                let claim2 = Claim::new(ClaimID::random(), spec2, None);
                 assert_eq!(claim2.has_private(), false);
             };
             ($claimty:ident, $val:expr) => {
@@ -530,10 +490,7 @@ pub(crate) mod tests {
             };
         }
 
-        // as usual, Identity is special
-        let spec = ClaimSpec::Identity(IdentityID::random());
-        assert_eq!(spec.has_private(), false);
-
+        claim_pub_priv!{ Identity, IdentityID::random() }
         claim_pub_priv!{ Name, String::from("I LIKE FOOTBALL") }
         claim_pub_priv!{ Birthday, Date::from_str("1990-03-04").unwrap() }
         claim_pub_priv!{ Email, String::from("IT@IS.FUN") }
@@ -578,6 +535,7 @@ pub(crate) mod tests {
             };
         }
 
+        thtrip!{ Identity, IdentityID::random() }
         thtrip!{ Name, String::from("I LIKE FOOTBALL") }
         thtrip!{ Birthday, Date::from_str("1967-12-03").unwrap() }
         thtrip!{ Email, String::from("IT.MAKES@ME.GLAD") }
@@ -593,16 +551,6 @@ pub(crate) mod tests {
             BinaryVec::from(vec![42, 17, 86]),
             |maybe| { ClaimSpec::Extension { key: "best poem ever".into(), value: maybe } }
         }
-
-        // for Identity, nothing will fundamentally change.
-        let claimspec = ClaimSpec::Identity(IdentityID::random());
-        let claimspec2 = claimspec.clone().strip_private();
-        match (&claimspec, &claimspec2) {
-            (ClaimSpec::Identity(id), ClaimSpec::Identity(id2)) => {
-                assert_eq!(id, id2);
-            }
-            _ => panic!("Bad claim type: Identity"),
-        }
     }
 
     #[test]
@@ -612,11 +560,11 @@ pub(crate) mod tests {
                 let identity_id = IdentityID::random();
                 let identity_id_str = String::try_from(&identity_id).unwrap();
                 let identity_id_str_short = IdentityID::short(&identity_id_str);
-                let claim_id_str = String::try_from($container.claim().id()).unwrap();
+                let claim_id_str = String::try_from($container.id()).unwrap();
                 let claim_id_str_short = ClaimID::short(&claim_id_str);
-                match $container.claim().spec() {
+                match $container.spec() {
                     ClaimSpec::Domain(..) | ClaimSpec::Url(..) => {
-                        let instant_vals = $container.claim().instant_verify_allowed_values(&identity_id).unwrap();
+                        let instant_vals = $container.instant_verify_allowed_values(&identity_id).unwrap();
                         let compare: Vec<String> = $expected.into_iter()
                             .map(|x: String| {
                                 x
@@ -629,7 +577,7 @@ pub(crate) mod tests {
                         assert_eq!(instant_vals, compare);
                     }
                     _ => {
-                        let res = $container.claim().instant_verify_allowed_values(&identity_id);
+                        let res = $container.instant_verify_allowed_values(&identity_id);
                         assert_eq!(res, Err(Error::IdentityClaimVerificationNotAllowed));
                     }
                 }
@@ -638,8 +586,8 @@ pub(crate) mod tests {
         macro_rules! assert_instant {
             (raw, $claimmaker:expr, $val:expr, $expected:expr) => {
                 let (_master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
-                let container_private = ClaimContainer::new(ClaimID::random(), spec_private, Timestamp::now());
-                let container_public = ClaimContainer::new(ClaimID::random(), spec_public, Timestamp::now());
+                let container_private = Claim::new(ClaimID::random(), spec_private, None);
+                let container_public = Claim::new(ClaimID::random(), spec_public, None);
 
                 match_container! { container_public, $expected }
                 match_container! { container_private, $expected }
@@ -648,7 +596,7 @@ pub(crate) mod tests {
                 assert_instant!{ raw, |maybe, _| ClaimSpec::$claimty(maybe), $val, $expected }
             };
         }
-        assert_instant!{ raw, |_, val| ClaimSpec::Identity(val), IdentityID::random(), vec![] }
+        assert_instant!{ Identity, IdentityID::random(), vec![] }
         assert_instant!{ Name, String::from("I LIKE FOOTBALL"), vec![] }
         assert_instant!{ Birthday, Date::from_str("1967-12-03").unwrap(), vec![] }
         assert_instant!{ Email, String::from("IT.MAKES@ME.GLAD"), vec![] }
@@ -681,14 +629,14 @@ pub(crate) mod tests {
             (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
                 let (master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
                 let fake_master_key = SecretKey::new_xchacha20poly1305().unwrap();
-                let container_private = ClaimContainer::new(ClaimID::random(), spec_private, Timestamp::now());
-                let container_public = ClaimContainer::new(ClaimID::random(), spec_public, Timestamp::now());
-                let opened_claim = container_private.claim().as_public(&master_key).unwrap();
+                let container_private = Claim::new(ClaimID::random(), spec_private, None);
+                let container_public = Claim::new(ClaimID::random(), spec_public, None);
+                let opened_claim = container_private.as_public(&master_key).unwrap();
                 assert_eq!(container_private.has_private(), true);
                 assert_eq!(container_public.has_private(), false);
                 assert_eq!(opened_claim.spec().has_private(), false);
-                assert_eq!($getmaybe(opened_claim.spec().clone()), $getmaybe(container_public.claim().spec().clone()));
-                assert_eq!(container_private.claim().as_public(&fake_master_key).err(), Some(Error::CryptoOpenFailed));
+                assert_eq!($getmaybe(opened_claim.spec().clone()), $getmaybe(container_public.spec().clone()));
+                assert_eq!(container_private.as_public(&fake_master_key).err(), Some(Error::CryptoOpenFailed));
             };
             ($claimty:ident, $val:expr) => {
                 as_pub!{
@@ -700,15 +648,7 @@ pub(crate) mod tests {
             };
         }
 
-        let (master_key, spec_private, _) = make_specs!(|_, val| ClaimSpec::Identity(val), IdentityID::random());
-        let container_private = ClaimContainer::new(ClaimID::random(), spec_private, Timestamp::now());
-        match (container_private.claim().spec(), container_private.claim().as_public(&master_key).unwrap().spec()) {
-            (ClaimSpec::Identity(val1), ClaimSpec::Identity(val2)) => {
-                assert_eq!(val1, val2);
-            }
-            _ => panic!("weird"),
-        }
-
+        as_pub!{ Identity, IdentityID::random() }
         as_pub!{ Name, String::from("Sassafrass Stevens") }
         as_pub!{ Birthday, Date::from_str("1990-03-04").unwrap() }
         as_pub!{ Email, String::from("MEGATRON@nojerrystopjerry.net") }
@@ -732,8 +672,8 @@ pub(crate) mod tests {
         macro_rules! has_priv {
             (raw, $claimmaker:expr, $val:expr, $haspriv:expr) => {
                 let (_master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
-                let container_private = ClaimContainer::new(ClaimID::random(), spec_private, Timestamp::now());
-                let container_public = ClaimContainer::new(ClaimID::random(), spec_public, Timestamp::now());
+                let container_private = Claim::new(ClaimID::random(), spec_private, None);
+                let container_public = Claim::new(ClaimID::random(), spec_public, None);
                 assert_eq!(container_private.has_private(), $haspriv);
                 assert_eq!(container_public.has_private(), false);
 
@@ -747,7 +687,7 @@ pub(crate) mod tests {
                 has_priv! { raw, |maybe, _| ClaimSpec::$claimty(maybe), $val, $haspriv }
             };
         }
-        has_priv! { raw, |_, val| ClaimSpec::Identity(val), IdentityID::random(), false }
+        has_priv! { Identity, IdentityID::random(), true }
         has_priv! { Name, String::from("Goleen Jundersun"), true }
         has_priv! { Birthday, Date::from_str("1969-12-03").unwrap(), true }
         has_priv! { Email, String::from("jerry@karate.com"), true }
