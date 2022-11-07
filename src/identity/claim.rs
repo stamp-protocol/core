@@ -13,7 +13,7 @@ use crate::{
         identity::IdentityID,
     },
     crypto::key::SecretKey,
-    private::{MaybePrivate, PrivateWithHmac},
+    private::{MaybePrivate},
     util::{Public, Date, Url, ser::BinaryVec},
 };
 use getset;
@@ -223,7 +223,7 @@ impl ClaimSpec {
     /// Re-encrypt this claim spec's private data, if it has any
     pub(crate) fn reencrypt(self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
         let spec = match self.clone() {
-            Self::Identity(val) => Self::Identity(val),
+            Self::Identity(maybe) => Self::Identity(maybe.reencrypt(current_key, new_key)?),
             Self::Name(maybe) => Self::Name(maybe.reencrypt(current_key, new_key)?),
             Self::Birthday(maybe) => Self::Birthday(maybe.reencrypt(current_key, new_key)?),
             Self::Email(maybe) => Self::Email(maybe.reencrypt(current_key, new_key)?),
@@ -243,7 +243,7 @@ impl ClaimSpec {
     /// decrypt key.
     fn into_public(self, open_key: &SecretKey) -> Result<Self> {
         let spec = match self.clone() {
-            Self::Identity(val) => Self::Identity(val),
+            Self::Identity(maybe) => Self::Identity(maybe.into_public(open_key)?),
             Self::Name(maybe) => Self::Name(maybe.into_public(open_key)?),
             Self::Birthday(maybe) => Self::Birthday(maybe.into_public(open_key)?),
             Self::Email(maybe) => Self::Email(maybe.into_public(open_key)?),
@@ -263,7 +263,7 @@ impl ClaimSpec {
 impl Public for ClaimSpec {
     fn strip_private(&self) -> Self {
         match self {
-            Self::Identity(val) => Self::Identity(val.clone()),
+            Self::Identity(val) => Self::Identity(val.strip_private()),
             Self::Name(val) => Self::Name(val.strip_private()),
             Self::Birthday(val) => Self::Birthday(val.strip_private()),
             Self::Email(val) => Self::Email(val.strip_private()),
@@ -280,7 +280,7 @@ impl Public for ClaimSpec {
 
     fn has_private(&self) -> bool {
         match self {
-            Self::Identity(..) => false,
+            Self::Identity(val) => val.has_private(),
             Self::Name(val) => val.has_private(),
             Self::Birthday(val) => val.has_private(),
             Self::Email(val) => val.has_private(),
@@ -394,7 +394,7 @@ pub(crate) mod tests {
     use crate::{
         error::Error,
         identity::{IdentityID},
-        util::Timestamp,
+        private::PrivateWithHmac,
     };
     use std::convert::TryFrom;
     use std::str::FromStr;

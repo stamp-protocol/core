@@ -12,7 +12,7 @@ use crate::{
     util::Public,
 };
 use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag};
-use serde::{Serialize, ser::Serializer, de::DeserializeOwned, de::Deserializer};
+use serde::{Serialize, ser::Serializer, de::Deserializer};
 use zeroize::Zeroize;
 
 pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
@@ -27,10 +27,6 @@ pub(crate) fn serialize_human<T>(obj: &T) -> Result<String>
 
 pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
     Ok(rasn::der::decode(bytes).map_err(|_| Error::ASNDeserialize)?)
-}
-
-pub(crate) fn deserialize_human<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    Ok(serde_yaml::from_slice(bytes)?)
 }
 
 /// Convert bytes to base64

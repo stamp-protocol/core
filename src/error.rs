@@ -130,13 +130,17 @@ pub enum Error {
     #[error("deserialization error")]
     DeserializeBase64(#[from] base64::DecodeError),
 
-    /// A duplicate name was given.
-    #[error("the given name is already in use (names must be unique)")]
-    DuplicateName,
+    /// A duplicate ID was given.
+    #[error("the given ID is already in use")]
+    DuplicateID,
 
-    /// Tried to find a capability policy but it wasn't there.
-    #[error("capability policy not found {0}")]
-    IdentityCapabilityPolicyNotFound(String),
+    /// A duplicate transaction was pushed to the transaction list
+    #[error("a duplicate transaction was pushed to the transaction list")]
+    DuplicateTransaction,
+
+    /// A glob pattern failed to build
+    #[error("glob compilation error")]
+    GlobError(#[from] glob::PatternError),
 
     /// The claim being operated on cannot be verified automatically
     #[error("this claim cannot be automatically verified")]
@@ -159,14 +163,6 @@ pub enum Error {
     /// There were no private keys found in this identity.
     #[error("identity is not owned, but we attempted an operation requiring ownership")]
     IdentityNotOwned,
-
-    /// This stamp is being duplicated
-    #[error("identity stamp already exists")]
-    IdentityStampAlreadyExists,
-
-    /// This stamp revocation is being duplicated
-    #[error("identity stamp revocation already exists")]
-    IdentityStampRevocationAlreadyExists,
 
     /// The stamp being operated on wasn't found
     #[error("identity stamp not found")]
@@ -196,14 +192,18 @@ pub enum Error {
     #[error("keygen failed")]
     KeygenFailed,
 
+    /// The request doesn't satisfy the policy. 20 beats your 5. I'm sorry, sir.
+    #[error("the recovery request does not meet the policy's conditions")]
+    MultisigPolicyConditionMismatch,
+
     /// A given policy does not have the capabilities required to perform the
     /// requested action.
     #[error("the policy does not have the capabilities required to perform that action")]
     PolicyCapabilityMismatch,
 
-    /// The request doesn't satisfy the policy. 20 beats your 5. I'm sorry, sir.
-    #[error("the recovery request does not meet the policy's conditions")]
-    PolicyConditionMismatch,
+    /// A capability matched but the context did not
+    #[error("the policy does not allow that action in the given context")]
+    PolicyContextMismatch,
 
     /// No policy/capability matched the transaction
     #[error("no matching policy/capability found for the given transaction")]

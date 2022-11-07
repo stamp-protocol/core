@@ -5,7 +5,7 @@ use crate::{
         identity::{IdentityID, Identity},
         keychain::{ExtendKeypair, AdminKey, AdminKeypair, Key},
     },
-    policy::{Capability, CapabilityPolicy, Participant, Policy},
+    policy::{Capability, MultisigPolicy, Participant, Policy, PolicyContainer},
     util::Timestamp,
 };
 use std::thread;
@@ -23,13 +23,12 @@ pub(crate) fn create_fake_identity(now: Timestamp) -> (SecretKey, Transactions, 
     let sign = SignKeypair::new_ed25519(&master_key).unwrap();
     let admin = AdminKeypair::from(sign);
     let admin_key = AdminKey::new(admin, "Alpha", None);
-    let capability = CapabilityPolicy::new(
-        "default".into(),
+    let policy = Policy::new(
         vec![Capability::Permissive],
-        Policy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
+        MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
     );
     let trans_id = transactions
-        .create_identity(now, vec![admin_key.clone()], vec![capability]).unwrap()
+        .create_identity(now, vec![admin_key.clone()], vec![policy]).unwrap()
         .sign(&master_key, &admin_key).unwrap();
     let transactions2 = transactions.push_transaction(trans_id).unwrap();
     (master_key, transactions2, admin_key)
@@ -38,13 +37,13 @@ pub(crate) fn create_fake_identity(now: Timestamp) -> (SecretKey, Transactions, 
 pub(crate) fn setup_identity_with_subkeys() -> (SecretKey, Identity) {
     let master_key = SecretKey::new_xchacha20poly1305().unwrap();
     let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
-    let capability = CapabilityPolicy::new(
-        "Test default".into(),
+    let policy = Policy::new(
         vec![Capability::Permissive],
-        Policy::MOfN { must_have: 1, participants: vec![Participant::Key(admin_keypair.clone().into())] }
+        MultisigPolicy::MOfN { must_have: 1, participants: vec![Participant::Key(admin_keypair.clone().into())] }
     );
+    let policy_con = PolicyContainer::try_from(policy).unwrap();
     let admin_key = AdminKey::new(admin_keypair, "Alpha", None);
-    let identity = Identity::create(IdentityID::random(), vec![admin_key], vec![capability], Timestamp::now())
+    let identity = Identity::create(IdentityID::random(), vec![admin_key], vec![policy_con], Timestamp::now())
         .add_subkey(Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap()), "sign", None).unwrap()
         .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap()), "cryptololol", None).unwrap();
     (master_key, identity)

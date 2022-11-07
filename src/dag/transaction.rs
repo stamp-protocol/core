@@ -32,7 +32,7 @@ use crate::{
             StampRevocationEntry,
         },
     },
-    policy::{CapabilityPolicy, Context, PolicySignature},
+    policy::{Context, MultisigPolicySignature, Policy, PolicyContainer, PolicyID},
     util::{
         Public,
         Timestamp,
@@ -57,7 +57,7 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(0)))]
         admin_keys: Vec<AdminKey>,
         #[rasn(tag(explicit(1)))]
-        capabilities: Vec<CapabilityPolicy>,
+        policies: Vec<Policy>,
     },
     /// Replace optionally both the [admin keys][AdminKey] in the [Keychain] and the
     /// [capabilities][CapabilityPolicy] attached to the identity.
@@ -69,7 +69,7 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(0)))]
         admin_keys: Option<Vec<AdminKey>>,
         #[rasn(tag(explicit(1)))]
-        capabilities: Option<Vec<CapabilityPolicy>>,
+        policies: Option<Vec<Policy>>,
     },
     /// Add a new [admin key][AdminKey] to the [Keychain].
     #[rasn(tag(explicit(2)))]
@@ -100,15 +100,15 @@ pub enum TransactionBody {
     },
     /// Add a new [capability policy][CapabilityPolicy] to the identity.
     #[rasn(tag(explicit(5)))]
-    AddCapabilityPolicyV1 {
+    AddPolicyV1 {
         #[rasn(tag(explicit(0)))]
-        capability: CapabilityPolicy,
+        policy: Policy,
     },
     /// Delete (by name) a capability policy from the identity.
     #[rasn(tag(explicit(6)))]
-    DeleteCapabilityPolicyV1 {
+    DeletePolicyV1 {
         #[rasn(tag(explicit(0)))]
-        name: String,
+        id: PolicyID,
     },
     /// Make a new claim on this identity. The [ID][TransactionID] of this
     /// transaction will be the claim's ID.
@@ -215,16 +215,16 @@ impl TransactionBody {
     /// Reencrypt this transaction body
     fn reencrypt(self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let new_self = match self {
-            Self::CreateIdentityV1 { admin_keys, capabilities } => {
+            Self::CreateIdentityV1 { admin_keys, policies } => {
                 let admin_reenc = admin_keys.into_iter()
                     .map(|x| x.reencrypt(old_master_key, new_master_key))
                     .collect::<Result<Vec<_>>>()?;
                 Self::CreateIdentityV1 {
                     admin_keys: admin_reenc,
-                    capabilities,
+                    policies,
                 }
             }
-            Self::ResetIdentityV1 { admin_keys, capabilities } => {
+            Self::ResetIdentityV1 { admin_keys, policies } => {
                 let admin_keys_reenc = admin_keys
                     .map(|keyvec| {
                         keyvec.into_iter()
@@ -234,7 +234,7 @@ impl TransactionBody {
                     .transpose()?;
                 Self::ResetIdentityV1 {
                     admin_keys: admin_keys_reenc,
-                    capabilities,
+                    policies,
                 }
             }
             Self::AddAdminKeyV1 { admin_key } => Self::AddAdminKeyV1 {
@@ -242,8 +242,8 @@ impl TransactionBody {
             },
             Self::EditAdminKeyV1 { id, name, description } => Self::EditAdminKeyV1 { id, name, description },
             Self::RevokeAdminKeyV1 { id, reason, new_name } => Self::RevokeAdminKeyV1 { id, reason, new_name },
-            Self::AddCapabilityPolicyV1 { capability } => Self::AddCapabilityPolicyV1 { capability },
-            Self::DeleteCapabilityPolicyV1 { name } => Self::DeleteCapabilityPolicyV1 { name },
+            Self::AddPolicyV1 { policy } => Self::AddPolicyV1 { policy },
+            Self::DeletePolicyV1 { id } => Self::DeletePolicyV1 { id },
             Self::MakeClaimV1 { spec, name } => Self::MakeClaimV1 {
                 spec: spec.reencrypt(old_master_key, new_master_key)?,
                 name,
@@ -273,26 +273,26 @@ impl TransactionBody {
 impl Public for TransactionBody {
     fn strip_private(&self) -> Self {
         match self.clone() {
-            Self::CreateIdentityV1 { admin_keys, capabilities } => {
+            Self::CreateIdentityV1 { admin_keys, policies } => {
                 let admin_stripped = admin_keys.into_iter()
                     .map(|k| k.strip_private())
                     .collect::<Vec<_>>();
-                Self::CreateIdentityV1 { admin_keys: admin_stripped, capabilities}
+                Self::CreateIdentityV1 { admin_keys: admin_stripped, policies }
             }
-            Self::ResetIdentityV1 { admin_keys, capabilities } => {
+            Self::ResetIdentityV1 { admin_keys, policies } => {
                 let stripped_admin = admin_keys
                     .map(|keys| {
                         keys.into_iter()
                             .map(|k| k.strip_private())
                             .collect::<Vec<_>>()
                     });
-                Self::ResetIdentityV1 { admin_keys: stripped_admin, capabilities }
+                Self::ResetIdentityV1 { admin_keys: stripped_admin, policies }
             }
             Self::AddAdminKeyV1 { admin_key } => Self::AddAdminKeyV1 { admin_key: admin_key.strip_private() },
             Self::EditAdminKeyV1 { id, name, description } => Self::EditAdminKeyV1 { id, name, description },
             Self::RevokeAdminKeyV1 { id, reason, new_name } => Self::RevokeAdminKeyV1 { id, reason, new_name },
-            Self::AddCapabilityPolicyV1 { capability } => Self::AddCapabilityPolicyV1 { capability },
-            Self::DeleteCapabilityPolicyV1 { name } => Self::DeleteCapabilityPolicyV1 { name },
+            Self::AddPolicyV1 { policy } => Self::AddPolicyV1 { policy },
+            Self::DeletePolicyV1 { id } => Self::DeletePolicyV1 { id },
             Self::MakeClaimV1 { spec, name } => Self::MakeClaimV1 { spec: spec.strip_private(), name },
             Self::EditClaimV1 { claim_id, name } => Self::EditClaimV1 { claim_id, name },
             Self::DeleteClaimV1 { claim_id } => Self::DeleteClaimV1 { claim_id },
@@ -321,8 +321,8 @@ impl Public for TransactionBody {
             Self::AddAdminKeyV1 { admin_key } => admin_key.has_private(),
             Self::EditAdminKeyV1 { .. } => false,
             Self::RevokeAdminKeyV1 { .. } => false,
-            Self::AddCapabilityPolicyV1 { .. } => false,
-            Self::DeleteCapabilityPolicyV1 { .. } => false,
+            Self::AddPolicyV1 { .. } => false,
+            Self::DeletePolicyV1 { .. } => false,
             Self::MakeClaimV1 { spec, .. } => spec.has_private(),
             Self::EditClaimV1 { .. } => false,
             Self::DeleteClaimV1 { .. } => false,
@@ -454,7 +454,7 @@ pub struct Transaction {
     entry: TransactionEntry,
     /// The signatures on this transaction's ID.
     #[rasn(tag(explicit(2)))]
-    signatures: Vec<PolicySignature>,
+    signatures: Vec<MultisigPolicySignature>,
 }
 
 impl Transaction {
@@ -471,9 +471,9 @@ impl Transaction {
 
     /// Sign this transaction. This consumes the transaction, adds the signature
     /// to the `signatures` list, then returns the new transaction.
-    pub(crate) fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKey) -> Result<Self> {
+    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKey) -> Result<Self> {
         let sig = admin_key.key().sign(master_key, self.id().deref().deref())?;
-        let policy_sig = PolicySignature::Key {
+        let policy_sig = MultisigPolicySignature::Key {
             key: admin_key.key().clone().into(),
             signature: sig,
         };
@@ -488,7 +488,7 @@ impl Transaction {
         }
         for sig in self.signatures() {
             match sig {
-                PolicySignature::Key { key, signature } => {
+                MultisigPolicySignature::Key { key, signature } => {
                     match key.verify(signature, self.id().deref().deref()) {
                         Err(_) => Err(Error::TransactionSignatureInvalid(key.clone()))?,
                         _ => {}
@@ -517,8 +517,8 @@ impl Transaction {
             ($identity:expr) => {
                 let mut found_match = false;
                 let contexts = Context::contexts_from_transaction(self, $identity);
-                for capability in $identity.capabilities() {
-                    if capability.validate_transaction(self, &contexts).is_ok() {
+                for policy in $identity.policies() {
+                    if policy.validate_transaction(self, &contexts).is_ok() {
                         found_match = true;
                         break;
                     }
@@ -543,10 +543,14 @@ impl Transaction {
             // transaction that creates it.
             None => {
                 match self.entry().body() {
-                    TransactionBody::CreateIdentityV1 { admin_keys, capabilities } => {
+                    TransactionBody::CreateIdentityV1 { admin_keys, policies } => {
                         // create an identity with the given keys/capabilities
                         // and see if it will validate its own genesis transaction
-                        let identity = Identity::create(IdentityID::from(self.id().clone()), admin_keys.clone(), capabilities.clone(), self.entry().created().clone());
+                        let policies_con = policies
+                            .iter()
+                            .map(|x| PolicyContainer::try_from(x.clone()))
+                            .collect::<Result<Vec<PolicyContainer>>>()?;
+                        let identity = Identity::create(IdentityID::from(self.id().clone()), admin_keys.clone(), policies_con, self.entry().created().clone());
                         search_capabilities! { &identity }
                         Ok(())
                     }
@@ -580,46 +584,33 @@ impl Public for Transaction {
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{SignKeypair, CryptoKeypair},
         identity::{
-            claim::{Relationship, RelationshipType},
-            keychain::AdminKeypair,
             stamp::Confidence,
         },
-        policy::Policy,
-        private::{Private, MaybePrivate},
-        util::{Date, Url, ser::BinaryVec, test},
+        policy::{MultisigPolicy, Policy},
+        private::{MaybePrivate},
+        util::test,
     };
-    use std::str::FromStr;
-
-    macro_rules! assert_signkey {
-        ($trans:expr, $keyty:ident) => {
-            match $trans.id() {
-                TransactionID::$keyty(..) => {}
-                _ => panic!("Expected sign key type {}, found {:?}", stringify!($keyty), $trans.id()),
-            }
-        }
-    }
 
     #[test]
     fn trans_body_strip_has_private() {
         fn test_privates(body: &TransactionBody) {
             match body {
-                TransactionBody::CreateIdentityV1 { admin_keys, capabilities } => {
+                TransactionBody::CreateIdentityV1 { admin_keys, policies } => {
                     assert!(body.has_private());
                     assert!(!body.strip_private().has_private());
                     let body2 = TransactionBody::CreateIdentityV1 {
                         admin_keys: admin_keys.clone().into_iter().map(|x| x.strip_private()).collect::<Vec<_>>(),
-                        capabilities: capabilities.clone(),
+                        policies: policies.clone(),
                     };
                     assert!(!body2.has_private());
                 }
-                TransactionBody::ResetIdentityV1 { admin_keys, capabilities } => {
+                TransactionBody::ResetIdentityV1 { admin_keys, policies } => {
                     assert!(body.has_private());
                     assert!(!body.strip_private().has_private());
                     let body2 = TransactionBody::ResetIdentityV1 {
                         admin_keys: admin_keys.clone().map(|x| x.into_iter().map(|y| y.strip_private()).collect::<Vec<_>>()),
-                        capabilities: capabilities.clone(),
+                        policies: policies.clone(),
                     };
                     assert!(!body2.has_private());
                 }
@@ -634,10 +625,10 @@ mod tests {
                 TransactionBody::RevokeAdminKeyV1 { .. } => {
                     assert!(!body.has_private());
                 }
-                TransactionBody::AddCapabilityPolicyV1 { .. } => {
+                TransactionBody::AddPolicyV1 { .. } => {
                     assert!(!body.has_private());
                 }
-                TransactionBody::DeleteCapabilityPolicyV1 { .. } => {
+                TransactionBody::DeletePolicyV1 { .. } => {
                     assert!(!body.has_private());
                 }
                 TransactionBody::MakeClaimV1 { spec, name } => {
@@ -698,15 +689,15 @@ mod tests {
 
         let (master_key, transactions, admin_key) = test::create_fake_identity(Timestamp::now());
 
-        test_privates(&TransactionBody::CreateIdentityV1 { admin_keys: vec![admin_key.clone()], capabilities: Vec::new() });
-        test_privates(&TransactionBody::ResetIdentityV1 { admin_keys: Some(vec![admin_key.clone()]), capabilities: None });
+        test_privates(&TransactionBody::CreateIdentityV1 { admin_keys: vec![admin_key.clone()], policies: Vec::new() });
+        test_privates(&TransactionBody::ResetIdentityV1 { admin_keys: Some(vec![admin_key.clone()]), policies: None });
         test_privates(&TransactionBody::AddAdminKeyV1 { admin_key: admin_key.clone() });
         test_privates(&TransactionBody::EditAdminKeyV1 { id: admin_key.key().key_id(), name: Some("poopy".into()), description: None });
         test_privates(&TransactionBody::RevokeAdminKeyV1 { id: admin_key.key().key_id(), reason: RevocationReason::Compromised, new_name: Some("old key".into()) });
 
-        let policy = CapabilityPolicy::new("omg".into(), vec![], Policy::MOfN { must_have: 0, participants: vec![] });
-        test_privates(&TransactionBody::AddCapabilityPolicyV1 { capability: policy });
-        test_privates(&TransactionBody::DeleteCapabilityPolicyV1 { name: "omg".into() });
+        let policy = Policy::new(vec![], MultisigPolicy::MOfN { must_have: 0, participants: vec![] });
+        test_privates(&TransactionBody::AddPolicyV1 { policy });
+        test_privates(&TransactionBody::DeletePolicyV1 { id: PolicyID::random() });
         test_privates(&TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_public(String::from("Negative Nancy"))), name: None });
         test_privates(&TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_private(&master_key, String::from("Positive Pyotr")).unwrap()), name: Some("Grover".into()) });
         test_privates(&TransactionBody::DeleteClaimV1 { claim_id: ClaimID::random() });
@@ -757,105 +748,43 @@ mod tests {
 
     #[test]
     fn trans_new_verify() {
-        todo!();
-        /*
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
-        let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
-        let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
-        let root_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
-        let identity = Identity::create(IdentityID::random(), alpha_keypair.clone(), policy_keypair.clone(), publish_keypair.clone(), root_keypair.clone(), Timestamp::now());
-
-        let body = TransactionBody::CreateIdentityV1 {
-            alpha: alpha_keypair.clone(),
-            policy: policy_keypair.clone(),
-            publish: publish_keypair.clone(),
-            root: root_keypair.clone(),
-        };
         let now = Timestamp::now();
-        let entry = TransactionEntry::new(now.clone(), vec![], body);
-        let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
-        trans.verify(None).unwrap();
+        let (_master_key, transactions, admin_key) = test::create_fake_identity(now.clone());
+        transactions.transactions()[0].verify(None).unwrap();
 
-        let res = Transaction::new(&master_key, &None, SignWith::Policy, entry.clone());
-        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
+        let (_, transactions_new, _) = test::create_fake_identity(now.clone());
 
-        let res = Transaction::new(&master_key, &None, SignWith::Root, entry.clone());
-        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
+        let create2 = transactions_new.transactions()[0].clone();
 
-        let body2 = TransactionBody::DeleteForwardV1 { name: "blassssstodon".into() };
-        let entry2 = TransactionEntry::new(Timestamp::now(), vec![], body2);
-        let res = Transaction::new(&master_key, &None, SignWith::Alpha, entry2.clone());
-        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
-
-        let res = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Root, entry.clone());
+        let res = transactions.clone().push_transaction(create2);
         assert_eq!(res.err(), Some(Error::DagCreateIdentityOnExistingChain));
 
-        let new_policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
-        assert!(new_policy_keypair != policy_keypair);
-        let action = PolicyRequestAction::ReplaceKeys {
-            policy: new_policy_keypair.clone(),
-            publish: publish_keypair.clone(),
-            root: root_keypair.clone(),
-        };
-        let entry = PolicyRequestEntry::new(IdentityID::random(), PolicyID::random(), action);
-        let req = PolicyRequest::new(&master_key, &new_policy_keypair, entry).unwrap();
-        let body_recover = TransactionBody::ExecuteRecoveryPolicyV1 { request: req };
-        let entry_recover = TransactionEntry::new(Timestamp::now(), vec![], body_recover);
-        let trans_recover = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Policy, entry_recover.clone()).unwrap();
-        trans_recover.verify(Some(&identity)).unwrap();
-        let res = Transaction::new(&master_key, &None, SignWith::Alpha, entry_recover.clone());
-        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
-        let res = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Alpha, entry_recover.clone());
-        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
-        let res = Transaction::new(&master_key, &Some(identity.clone()), SignWith::Root, entry_recover.clone());
-        assert_eq!(res.err(), Some(Error::DagKeyNotFound));
+        let mut trans2 = transactions.transactions()[0].clone();
+        trans2.set_id(TransactionID::random());
+        assert!(matches!(trans2.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
 
-        let mut trans2 = trans.clone();
-        trans2.set_id(TransactionID::random_alpha());
-        assert_eq!(trans2.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
-
-        let mut trans3 = trans.clone();
+        let mut trans3 = transactions.transactions()[0].clone();
         let then = Timestamp::from(now.deref().clone() - chrono::Duration::seconds(2));
         trans3.entry_mut().set_created(then);
-        assert_eq!(trans3.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
+        assert!(matches!(trans3.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
 
-        let mut trans4 = trans.clone();
-        trans4.entry_mut().set_previous_transactions(vec![TransactionID::random_alpha()]);
-        assert_eq!(trans4.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
+        let mut trans4 = transactions.transactions()[0].clone();
+        trans4.entry_mut().set_previous_transactions(vec![TransactionID::random()]);
+        assert!(matches!(trans4.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
 
-        let mut trans5 = trans.clone();
-        let root_keypair2 = AdminKeypair::new_ed25519(&master_key).unwrap();
-        assert!(root_keypair != root_keypair2);
-        let body = TransactionBody::CreateIdentityV1 {
-            alpha: alpha_keypair.clone(),
-            policy: policy_keypair.clone(),
-            publish: publish_keypair.clone(),
-            root: root_keypair2.clone(),
-        };
-        trans5.entry_mut().set_body(body);
-        assert_eq!(trans5.verify(None).err(), Some(Error::CryptoSignatureVerificationFailed));
-        */
+        let mut trans5 = transactions.transactions()[0].clone();
+        trans5.entry_mut().set_body(TransactionBody::CreateIdentityV1 {
+            admin_keys: vec![admin_key.clone()],
+            policies: vec![],
+        });
+        assert!(matches!(trans5.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
     }
 
     #[test]
     fn trans_strip_has_private() {
-        todo!();
-        /*
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let alpha_keypair = AlphaKeypair::new_ed25519(&master_key).unwrap();
-        let policy_keypair = PolicyKeypair::new_ed25519(&master_key).unwrap();
-        let publish_keypair = PublishKeypair::new_ed25519(&master_key).unwrap();
-        let root_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
-
-        let body = TransactionBody::CreateIdentityV1 {
-            alpha: alpha_keypair.clone(),
-            policy: policy_keypair.clone(),
-            publish: publish_keypair.clone(),
-            root: root_keypair.clone(),
-        };
-        let entry = TransactionEntry::new(Timestamp::now(), vec![], body);
-        let trans = Transaction::new(&master_key, &None, SignWith::Alpha, entry.clone()).unwrap();
+        let now = Timestamp::now();
+        let (_master_key, transactions, _admin_key) = test::create_fake_identity(now.clone());
+        let trans = transactions.transactions()[0].clone();
 
         assert!(trans.has_private());
         assert!(trans.entry().has_private());
@@ -864,7 +793,6 @@ mod tests {
         assert!(!trans2.has_private());
         assert!(!trans2.entry().has_private());
         assert!(!trans2.entry().body().has_private());
-        */
     }
 }
 

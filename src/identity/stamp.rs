@@ -190,16 +190,6 @@ impl Stamp {
     pub(crate) fn new(id: StampID, entry: StampEntry) -> Self {
         Self { id, entry }
     }
-
-    /// Serialize this stamp in human-readable form.
-    pub fn serialize(&self) -> Result<String> {
-        ser::serialize_human(self)
-    }
-
-    /// Deserialize this stamp from a byte vector.
-    pub fn deserialize(slice: &[u8]) -> Result<Self> {
-        ser::deserialize_human(slice)
-    }
 }
 
 impl Public for Stamp {
@@ -277,42 +267,14 @@ mod tests {
             keychain::{ExtendKeypair, AdminKey, AdminKeypair, Key, Keychain},
             stamp::Confidence,
         },
-        crypto::key::{self, SecretKey, SignKeypair, CryptoKeypair},
+        crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
         private::MaybePrivate,
         util::{Timestamp, Date, Url, ser::BinaryVec},
     };
-    use std::convert::TryFrom;
     use std::str::FromStr;
 
     #[test]
-    fn stamp_serde() {
-        let id1 = IdentityID::try_from("RUHyjlNbE7u7BCd9kp3_3jhKiC4w-8fpkox3HiTMD7gQDhGNS6dYCpJiU1C029gpqxjvLUmZmsokeQsjSC9gAAA").unwrap();
-        let id2 = IdentityID::try_from("izTWRLHDYRY1qwkgxXgxe1D0Ft-TcJS95OpghVsplpu1S-5rpa7tGvCzmAVP9WhxKALZlOCiijAT1q6AMknuAAA").unwrap();
-        let claim_id = ClaimID::try_from("K9fUQ28tp-azWhlysEyQisdt6qKh4-OEF1-ZYEetSVQuYQpa62DTREgAwtljpOYZZbrrxhBv7XnwBDDd9BFNAAA").unwrap();
-        let ts = Timestamp::from_str("2021-06-06T00:00:00-06:00").unwrap();
-        let entry = StampEntry::new::<Timestamp>(id1, id2, claim_id, Confidence::Low, None);
-        let stamp = Stamp::new(StampID::try_from("LcfZalEKenbS5ClNRTlBMwDalCF7MEqKY4nF3+w7uK8ZMt4UXCv0hrnuBUtcaiJwNY/MmW0UAqjcyL9gobA/QA==").unwrap(), entry);
-        let ser = stamp.serialize().unwrap();
-        assert_eq!(ser.trim(), r#"---
-id:
-  Ed25519: SCnRe6aqLMRo4uXLN4Pki0yeAFQTcQJs3ozNxuSULXTk6PNCv2jZ1A_XKbHQQXuctuMGGPMMuCbku0Wl0Xi5AQ
-entry:
-  stamper:
-    Ed25519: RUHyjlNbE7u7BCd9kp3_3jhKiC4w-8fpkox3HiTMD7gQDhGNS6dYCpJiU1C029gpqxjvLUmZmsokeQsjSC9gAA
-  stampee:
-    Ed25519: izTWRLHDYRY1qwkgxXgxe1D0Ft-TcJS95OpghVsplpu1S-5rpa7tGvCzmAVP9WhxKALZlOCiijAT1q6AMknuAA
-  claim_id:
-    Ed25519: K9fUQ28tp-azWhlysEyQisdt6qKh4-OEF1-ZYEetSVQuYQpa62DTREgAwtljpOYZZbrrxhBv7XnwBDDd9BFNAA
-  confidence: Medium
-  expires: ~"#);
-        let des = Stamp::deserialize(ser.as_bytes()).unwrap();
-        assert_eq!(stamp, des);
-    }
-
-    #[test]
     fn stamp_strip() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let root_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
         let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::None, None);
         let stamp = Stamp::new(StampID::random(), entry);
         let stamp2 = stamp.strip_private();

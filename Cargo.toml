@@ -13,6 +13,7 @@ chrono = { version = "0.4", features = ["serde"] }
 crypto_box = "0.7"
 ed25519-dalek = { path = "../support/ed25519-dalek", features = ["serde"] }
 getset = "0.1"
+glob = "0.3.0"
 hmac = "0.12"
 rand = { version = "0.8", features = ["getrandom"] }
 rand_chacha = "0.2"

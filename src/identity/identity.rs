@@ -13,7 +13,7 @@ use crate::{
         keychain::{ExtendKeypair, AdminKey, RevocationReason, Key, Keychain},
         stamp::{StampID, Stamp, StampRevocation},
     },
-    policy::{CapabilityPolicy},
+    policy::{PolicyID, PolicyContainer},
     private::MaybePrivate,
     util::{
         Public,
@@ -51,18 +51,16 @@ pub struct StampCollection {
 
 impl StampCollection {
     fn add_stamp(&mut self, stamp: Stamp) -> Result<()> {
-        if self.stamps().iter().find(|s| s.id() == stamp.id()).is_some() {
-            Err(Error::IdentityStampAlreadyExists)?;
+        if self.stamps().iter().find(|s| s.id() == stamp.id()).is_none() {
+            self.stamps_mut().push(stamp);
         }
-        self.stamps_mut().push(stamp);
         Ok(())
     }
 
     fn add_revocation(&mut self, revocation: StampRevocation) -> Result<()> {
-        if self.revocations().iter().find(|r| r.id() == revocation.id()).is_some() {
-            Err(Error::IdentityStampRevocationAlreadyExists)?;
+        if self.revocations().iter().find(|r| r.id() == revocation.id()).is_none() {
+            self.revocations_mut().push(revocation);
         }
-        self.revocations_mut().push(revocation);
         Ok(())
     }
 }
@@ -77,7 +75,7 @@ pub struct Identity {
     /// When this identity came into being.
     #[rasn(tag(explicit(1)))]
     created: Timestamp,
-    /// A collection of capabilities, each with a key policy attached to it. The
+    /// A collection of policies, each with a key policy attached to it. The
     /// idea here is that we can specify a capability/action such as "add subkey"
     /// and allow that action to be performed if we have the proper signature(s)
     /// as determined by the key policy.
@@ -88,7 +86,7 @@ pub struct Identity {
     ///
     /// Effectively, this allows group/multisig management of identities.
     #[rasn(tag(explicit(2)))]
-    capabilities: Vec<CapabilityPolicy>,
+    policies: Vec<PolicyContainer>,
     /// Holds the keys for our identity.
     #[rasn(tag(explicit(3)))]
     keychain: Keychain,
@@ -136,7 +134,7 @@ pub struct Identity {
 
 impl Identity {
     /// Create a new identity.
-    pub(crate) fn create(id: IdentityID, admin_keys: Vec<AdminKey>, capabilities: Vec<CapabilityPolicy>, created: Timestamp) -> Self {
+    pub(crate) fn create(id: IdentityID, admin_keys: Vec<AdminKey>, policies: Vec<PolicyContainer>, created: Timestamp) -> Self {
         // create a new keychain from our keys above.
         let keychain = Keychain::new(admin_keys);
 
@@ -144,7 +142,7 @@ impl Identity {
         Self {
             id,
             created,
-            capabilities,
+            policies,
             keychain,
             claims: vec![],
             stamps: StampCollection::default(),
@@ -153,14 +151,14 @@ impl Identity {
     }
 
     /// Reset the admin keys/capabilities in this identity.
-    pub(crate) fn reset(mut self, admin_keys_maybe: Option<Vec<AdminKey>>, capabilities_maybe: Option<Vec<CapabilityPolicy>>) -> Result<Self> {
+    pub(crate) fn reset(mut self, admin_keys_maybe: Option<Vec<AdminKey>>, policies_maybe: Option<Vec<PolicyContainer>>) -> Result<Self> {
         if let Some(admin_keys) = admin_keys_maybe {
             let mut keychain = self.keychain().clone();
             keychain.set_admin_keys(admin_keys);
             self.set_keychain(keychain);
         }
-        if let Some(capabilities) = capabilities_maybe {
-            self.set_capabilities(capabilities);
+        if let Some(policies) = policies_maybe {
+            self.set_policies(policies);
         }
         Ok(self)
     }
@@ -181,20 +179,20 @@ impl Identity {
     }
 
     /// Add a new capability policy
-    pub(crate) fn add_capability_policy(mut self, capability: CapabilityPolicy) -> Result<Self> {
-        if self.capabilities().iter().find(|c| c.name() == capability.name()).is_some() {
-            Err(Error::DuplicateName)?;
+    pub(crate) fn add_policy(mut self, container: PolicyContainer) -> Result<Self> {
+        if self.policies().iter().find(|c| c.id() == container.id()).is_some() {
+            return Ok(self);
         }
-        self.capabilities_mut().push(capability);
+        self.policies_mut().push(container);
         Ok(self)
     }
 
     /// Delete a capability policy by name
-    pub(crate) fn delete_capability_policy(mut self, name: &str) -> Result<Self> {
-        if self.capabilities().iter().find(|c| c.name() == name).is_none() {
-            Err(Error::IdentityCapabilityPolicyNotFound(name.into()))?;
+    pub(crate) fn delete_policy(mut self, id: &PolicyID) -> Result<Self> {
+        if self.policies().iter().find(|c| c.id() == id).is_none() {
+            Err(Error::PolicyNotFound)?;
         }
-        self.capabilities_mut().retain(|c| c.name() != name);
+        self.policies_mut().retain(|c| c.id() != id);
         Ok(self)
     }
 
@@ -211,35 +209,24 @@ impl Identity {
         let claim_maybe = self.claims_mut().iter_mut().find(|x| x.id() == id);
         if let Some(claim) = claim_maybe {
             claim.set_name(name);
-        } else {
-            Err(Error::IdentityClaimNotFound)?;
         }
         Ok(self)
     }
 
     /// Remove a claim from this identity, including any stamps it has received.
     pub(crate) fn delete_claim(mut self, id: &ClaimID) -> Result<Self> {
-        let exists = self.claims().iter().find(|x| x.id() == id);
-        if exists.is_none() {
-            Err(Error::IdentityClaimNotFound)?;
-        }
         self.claims_mut().retain(|x| x.id() != id);
         Ok(self)
     }
 
-    /// MAke a public stamp
+    /// Make a public stamp
     pub(crate) fn make_stamp(mut self, stamp: Stamp) -> Result<Self> {
-        if self.stamps().stamps().iter().find(|s| s.id() == stamp.id()).is_some() {
-            Err(Error::IdentityStampAlreadyExists)?;
-        }
         self.stamps_mut().add_stamp(stamp)?;
         Ok(self)
     }
 
+    /// Revoke a public stamp.
     pub(crate) fn revoke_stamp(mut self, revocation: StampRevocation) -> Result<Self> {
-        if self.stamps().revocations().iter().find(|r| r.id() == revocation.id()).is_some() {
-            Err(Error::IdentityStampRevocationAlreadyExists)?;
-        }
         self.stamps_mut().add_revocation(revocation)?;
         Ok(self)
     }
@@ -249,10 +236,9 @@ impl Identity {
         let claim_id = stamp.entry().claim_id();
         let claim = self.claims_mut().iter_mut().find(|x| x.id() == claim_id)
             .ok_or(Error::IdentityClaimNotFound)?;
-        if claim.stamps().iter().find(|x| x.id() == stamp.id()).is_some() {
-            Err(Error::IdentityStampAlreadyExists)?;
+        if claim.stamps().iter().find(|x| x.id() == stamp.id()).is_none() {
+            claim.stamps_mut().push(stamp);
         }
-        claim.stamps_mut().push(stamp);
         Ok(self)
     }
 
@@ -423,9 +409,9 @@ mod tests {
         dag::TransactionID,
         identity::{
             keychain::AdminKeypair,
-            stamp::{Confidence},
+            stamp::{Confidence, StampEntry, StampRevocationEntry, StampRevocationID},
         },
-        policy::{Capability, Participant, Policy},
+        policy::{Capability, MultisigPolicy, Participant, Policy},
         util,
     };
     use std::str::FromStr;
@@ -440,13 +426,12 @@ mod tests {
         let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
         let pubkey = admin_keypair.clone().into();
         let admin_key = AdminKey::new(admin_keypair, "Default", None);
-        let capability = CapabilityPolicy::new(
-            "default".into(),
+        let capability = Policy::new(
             vec![Capability::Permissive],
-            Policy::MOfN { must_have: 1, participants: vec![Participant::Key(pubkey)] }
+            MultisigPolicy::MOfN { must_have: 1, participants: vec![Participant::Key(pubkey)] }
         );
         let created = Timestamp::now();
-        let identity = Identity::create(id, vec![admin_key], vec![capability], created);
+        let identity = Identity::create(id, vec![admin_key], vec![capability.try_into().unwrap()], created);
         (master_key, identity)
     }
 
@@ -456,18 +441,18 @@ mod tests {
         let id = IdentityID::random();
         let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
         let admin_key = AdminKey::new(admin_keypair, "Default", None);
-        let capability = CapabilityPolicy::new(
-            "default".into(),
+        let capability = Policy::new(
             vec![Capability::Permissive],
-            Policy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
+            MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
         );
+        let container = PolicyContainer::try_from(capability).unwrap();
         let created = Timestamp::now();
-        let identity = Identity::create(id.clone(), vec![admin_key.clone()], vec![capability.clone()], created.clone());
+        let identity = Identity::create(id.clone(), vec![admin_key.clone()], vec![container.clone().try_into().unwrap()], created.clone());
 
         assert_eq!(identity.id(), &id);
         assert_eq!(identity.created(), &created);
         assert_eq!(&identity.keychain().admin_keys().iter().map(|x| x.key()).collect::<Vec<_>>(), &vec![admin_key.key()]);
-        assert_eq!(identity.capabilities(), &vec![capability]);
+        assert_eq!(identity.policies(), &vec![container.clone()]);
     }
 
     #[test]
@@ -496,39 +481,131 @@ mod tests {
         assert_eq!(identity.claims().len(), 1);
         assert_eq!(identity.claims()[0].id(), &claim_id2);
 
-        let res = identity.clone().delete_claim(&claim_id);
-        assert_eq!(res.err(), Some(Error::IdentityClaimNotFound));
+        let identity2 = identity.clone().delete_claim(&claim_id).unwrap();
+        assert_eq!(identity2.claims().len(), 1);
+        assert_eq!(identity2.claims()[0].id(), &claim_id2);
     }
 
     #[test]
     fn identity_stamp_make_revoke() {
-        todo!();
+        let (_master_key1, identity1) = create_identity();
+        let (_master_key2, identity2) = create_identity();
+
+        let identity1 = identity1.make_claim(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_public("Toad".into())), None).unwrap();
+        let claim = identity1.claims()[0].clone();
+
+        assert_eq!(identity2.stamps().stamps().len(), 0);
+        assert_eq!(identity2.stamps().revocations().len(), 0);
+        let entry = StampEntry::new(
+            identity2.id().clone(),
+            identity1.id().clone(),
+            claim.id().clone(),
+            Confidence::Low,
+            None::<Timestamp>
+        );
+        let stamp = Stamp::new(StampID::random(), entry);
+        let identity2_2 = identity2.make_stamp(stamp.clone()).unwrap();
+        assert_eq!(identity2_2.stamps().stamps().len(), 1);
+        assert_eq!(identity2_2.stamps().revocations().len(), 0);
+
+        let identity2_3 = identity2_2.make_stamp(stamp.clone()).unwrap();
+        assert_eq!(identity2_3.stamps().stamps().len(), 1);
+        assert_eq!(identity2_3.stamps().revocations().len(), 0);
+
+        let rev_entry = StampRevocationEntry::new(
+            identity2_3.id().clone(),
+            identity1.id().clone(),
+            identity2_3.stamps().stamps()[0].id().clone()
+        );
+        let rev = StampRevocation::new(StampRevocationID::random(), rev_entry);
+        let identity2_4 = identity2_3.revoke_stamp(rev.clone()).unwrap();
+        assert_eq!(identity2_4.stamps().stamps().len(), 1);
+        assert_eq!(identity2_4.stamps().revocations().len(), 1);
+
+        let identity2_5 = identity2_4.revoke_stamp(rev.clone()).unwrap();
+        assert_eq!(identity2_5.stamps().stamps().len(), 1);
+        assert_eq!(identity2_5.stamps().revocations().len(), 1);
     }
 
     #[test]
     fn identity_stamp_accept_delete() {
-        todo!();
+        let (_master_key1, identity1) = create_identity();
+        let (_master_key2, identity2) = create_identity();
+
+        let identity1 = identity1.make_claim(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_public("Toad".into())), None).unwrap();
+        let claim = identity1.claims()[0].clone();
+        assert_eq!(identity1.claims()[0].stamps().len(), 0);
+
+        let entry = StampEntry::new(
+            identity2.id().clone(),
+            identity1.id().clone(),
+            claim.id().clone(),
+            Confidence::Low,
+            None::<Timestamp>
+        );
+        let mut entry_wrong = entry.clone();
+        entry_wrong.set_claim_id(ClaimID::random());
+        let stamp = Stamp::new(StampID::random(), entry);
+        let stamp_wrong = Stamp::new(stamp.id().clone(), entry_wrong);
+
+        let identity1_2 = identity1.accept_stamp(stamp.clone()).unwrap();
+        assert_eq!(identity1_2.claims()[0].stamps().len(), 1);
+        assert_eq!(identity1_2.claims()[0].stamps()[0].id(), stamp.id());
+
+        let identity1_3 = identity1_2.accept_stamp(stamp.clone()).unwrap();
+        assert_eq!(identity1_3.claims()[0].stamps().len(), 1);
+        assert_eq!(identity1_3.claims()[0].stamps()[0].id(), stamp.id());
+
+        let res = identity1_3.clone().accept_stamp(stamp_wrong.clone());
+        assert_eq!(res.err(), Some(Error::IdentityClaimNotFound));
+
+        let identity1_4 = identity1_3.delete_stamp(stamp.id()).unwrap();
+        assert_eq!(identity1_4.claims()[0].stamps().len(), 0);
+
+        let res = identity1_4.delete_stamp(stamp.id());
+        assert_eq!(res.err(), Some(Error::IdentityStampNotFound));
     }
 
     #[test]
     fn identity_add_remove_admin_keys_brah_whoaaa_shaka_gnargnar_so_pitted_whapow() {
         let (master_key, identity) = create_identity();
-        todo!();
-        /*
-        macro_rules! keytest {
-            ($keyty:ident, $setter:ident, $getter:ident) => {
-                let old_keypair = identity.keychain().$getter().clone();
-                let new_keypair = $keyty::new_ed25519(&master_key).unwrap();
-                assert!(old_keypair != new_keypair);
-                let identity2 = identity.clone().$setter(new_keypair.clone(), RevocationReason::Unspecified).unwrap();
-                assert_eq!(identity2.keychain().$getter(), &new_keypair);
-                assert!(&old_keypair != identity2.keychain().$getter());
-            }
-        }
-        keytest!{ PolicyKeypair, set_policy_key, policy }
-        keytest!{ PublishKeypair, set_publish_key, publish }
-        keytest!{ AdminKeypair, set_root_key, root }
-        */
+        assert_eq!(identity.keychain().subkeys().len(), 0);
+        let admin_key = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "alpha", None::<&str>);
+        let key_id = admin_key.key_id();
+        let identity2 = identity.add_admin_key(admin_key.clone()).unwrap();
+        assert_eq!(identity2.keychain().admin_keys().len(), 2);
+        assert_eq!(identity2.keychain().admin_keys()[1].key_id(), key_id);
+        assert_eq!(identity2.keychain().admin_keys()[1].name(), "alpha");
+        assert_eq!(identity2.keychain().admin_keys()[1].description(), &None);
+        assert_eq!(identity2.keychain().subkeys().len(), 0);
+
+        let identity3 = identity2.clone().add_admin_key(admin_key.clone()).unwrap();
+        assert_eq!(identity3.keychain().admin_keys().len(), 2);
+        assert_eq!(identity3.keychain().admin_keys()[1].key_id(), key_id);
+        assert_eq!(identity3.keychain().admin_keys()[1].name(), "alpha");
+        assert_eq!(identity3.keychain().admin_keys()[1].description(), &None);
+        assert_eq!(identity3.keychain().subkeys().len(), 0);
+
+        let identity4 = identity3.edit_admin_key(&key_id, Some("admin:shutup-parker-thank-you-shutup".into()), Some(Some("send me messages".into()))).unwrap();
+        assert_eq!(identity4.keychain().admin_keys().len(), 2);
+        assert_eq!(identity4.keychain().admin_keys()[1].key_id(), key_id);
+        assert_eq!(identity4.keychain().admin_keys()[1].name(), "admin:shutup-parker-thank-you-shutup");
+        assert_eq!(identity4.keychain().admin_keys()[1].description(), &Some("send me messages".into()));
+        assert_eq!(identity4.keychain().subkeys().len(), 0);
+
+        let identity5 = identity4.revoke_admin_key(&key_id, RevocationReason::Superseded, Some("thank-you-parker".into())).unwrap();
+        assert_eq!(identity5.keychain().admin_keys().len(), 1);
+        assert_eq!(identity5.keychain().subkeys()[0].name(), "thank-you-parker");
+        assert_eq!(identity5.keychain().subkeys()[0].description(), &Some("revoked admin key".into()));
+        assert_eq!(identity5.keychain().subkeys()[0].revocation().is_some(), true);
+        assert_eq!(identity5.keychain().subkeys().len(), 1);
+
+        let identity6 = identity5.revoke_admin_key(&key_id, RevocationReason::Recovery, Some("alright-shutup".into())).unwrap();
+        assert_eq!(identity6.keychain().admin_keys().len(), 1);
+        assert_eq!(identity6.keychain().subkeys()[0].name(), "thank-you-parker");
+        assert_eq!(identity6.keychain().subkeys()[0].description(), &Some("revoked admin key".into()));
+        assert_eq!(identity6.keychain().subkeys()[0].revocation().is_some(), true);
+        assert_eq!(identity6.keychain().subkeys().len(), 1);
     }
 
     #[test]
@@ -547,31 +624,35 @@ mod tests {
 
         let key_id = key.key_id();
         let res = identity.clone().add_subkey(key, "default:sign", Some("get a job"));
-        assert_eq!(res.err(), Some(Error::DuplicateName));
+        assert_eq!(res.err(), None);
         assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), false);
 
         let identity = identity.edit_subkey(&key_id, Some("sign:shutup-parker-thank-you-shutup"), None).unwrap();
         assert_eq!(identity.keychain().subkeys().len(), 1);
         assert_eq!(identity.keychain().subkeys()[0].name(), "sign:shutup-parker-thank-you-shutup");
-        assert_eq!(identity.keychain().subkeys()[0].description(), &None);
+        assert_eq!(identity.keychain().subkeys()[0].description(), &Some("get a job".into()));
         assert_eq!(identity.keychain().subkeys()[0].key().as_signkey(), Some(&signkey));
         assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), false);
 
         let identity = identity.revoke_subkey(&key_id, RevocationReason::Superseded, Some("thank-you".into())).unwrap();
         assert_eq!(identity.keychain().subkeys().len(), 1);
         assert_eq!(identity.keychain().subkeys()[0].name(), "thank-you");
-        assert_eq!(identity.keychain().subkeys()[0].description(), &None);
+        assert_eq!(identity.keychain().subkeys()[0].description(), &Some("get a job".into()));
         assert_eq!(identity.keychain().subkeys()[0].key().as_signkey(), Some(&signkey));
         assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), true);
 
-        let res = identity.clone().revoke_subkey(&key_id, RevocationReason::Superseded, Some("thank-you".into()));
-        assert_eq!(res.err(), Some(Error::KeychainSubkeyAlreadyRevoked));
+        let identity2 = identity.clone().revoke_subkey(&key_id, RevocationReason::Superseded, Some("thank-you".into())).unwrap();
+        assert_eq!(identity2.keychain().subkeys().len(), 1);
+        assert_eq!(identity2.keychain().subkeys()[0].name(), "thank-you");
+        assert_eq!(identity2.keychain().subkeys()[0].description(), &Some("get a job".into()));
+        assert_eq!(identity2.keychain().subkeys()[0].key().as_signkey(), Some(&signkey));
+        assert_eq!(identity2.keychain().subkeys()[0].revocation().is_some(), true);
 
         let identity = identity.delete_subkey(&key_id).unwrap();
         assert_eq!(identity.keychain().subkeys().len(), 0);
 
-        let res = identity.clone().delete_subkey(&key_id);
-        assert_eq!(res.err(), Some(Error::KeychainKeyNotFound(key_id.clone())));
+        let identity3 = identity.clone().delete_subkey(&key_id).unwrap();
+        assert_eq!(identity3.keychain().subkeys().len(), 0);
     }
 
     #[test]
@@ -586,46 +667,17 @@ mod tests {
 
     #[test]
     fn identity_emails_maybe() {
-        let (_master_key, identity) = create_identity();
+        let (master_key, identity) = create_identity();
         assert_eq!(identity.emails().len(), 0);
         assert_eq!(identity.email_maybe(), None);
 
-        let claim_id = ClaimID::random();
         let spec = ClaimSpec::Email(MaybePrivate::new_public(String::from("poopy@butt.com")));
-        let identity = identity.make_claim(claim_id.clone(), spec.clone(), Some("Zing".into())).unwrap();
-        assert_eq!(identity.emails(), vec!["poopy@butt.com".to_string()]);
+        let identity = identity
+            .make_claim(ClaimID::random(), spec.clone(), Some("Zing".into())).unwrap()
+            .make_claim(ClaimID::random(), ClaimSpec::Email(MaybePrivate::new_private(&master_key, "ace@fairweather.com".into()).unwrap()), Some("email2".into())).unwrap()
+            .make_claim(ClaimID::random(), ClaimSpec::Email(MaybePrivate::new_public("zing@radiofree.com".into())), Some("email3".into())).unwrap();
+        assert_eq!(identity.emails(), vec!["poopy@butt.com".to_string(), "zing@radiofree.com".to_string()]);
         assert_eq!(identity.email_maybe(), Some("poopy@butt.com".to_string()));
-
-        todo!("convert forwards to claims");
-
-        /*
-        let forward1 = ForwardType::Social {
-            ty: "matrix".into(),
-            handle: "@jayjay-the-stinky-hippie:matrix.oorg".into(),
-        };
-        let forward2 = ForwardType::Email("dirk@delta.com".into());
-        let forward3 = ForwardType::Email("jabjabjabjab@jabjabjabberjaw.com".into());
-
-        let identity2 = identity.clone().add_forward("matrixlol", forward1.clone(), true).unwrap();
-        let identity3 = identity.clone().add_forward("email", forward2.clone(), true).unwrap();
-        let identity4 = identity3.clone().add_forward("email2", forward3.clone(), true).unwrap();
-
-        assert_eq!(identity2.email_maybe(), Some("poopy@butt.com".to_string()));
-        assert_eq!(identity3.email_maybe(), Some("dirk@delta.com".to_string()));
-        assert_eq!(identity4.email_maybe(), Some("dirk@delta.com".to_string()));
-        assert_eq!(identity3.emails(), vec![
-            "dirk@delta.com".to_string(),
-            "poopy@butt.com".to_string(),
-        ]);
-        assert_eq!(identity4.emails(), vec![
-            "dirk@delta.com".to_string(),
-            "jabjabjabjab@jabjabjabberjaw.com".to_string(),
-            "poopy@butt.com".to_string(),
-        ]);
-
-        let identity5 = identity4.delete_forward("email").unwrap();
-        assert_eq!(identity5.email_maybe(), Some("jabjabjabjab@jabjabjabberjaw.com".to_string()));
-        */
     }
 
     #[test]
@@ -686,39 +738,41 @@ mod tests {
         let admin_key = AdminKey::new(admin.clone(), "alpha", None);
 
         let id = IdentityID::from(TransactionID::from(Sha512::hash(b"get a job").unwrap()));
-        let capability = CapabilityPolicy::new(
-            "default".into(),
+        let capability = Policy::new(
             vec![Capability::Permissive],
-            Policy::MOfN { must_have: 1, participants: vec![Participant::Key(admin.into())] }
+            MultisigPolicy::MOfN { must_have: 1, participants: vec![Participant::Key(admin.into())] }
         );
-        let identity = Identity::create(id.clone(), vec![admin_key], vec![capability], now);
+        let container = PolicyContainer::try_from(capability).unwrap();
+        let identity = Identity::create(id.clone(), vec![admin_key], vec![container], now);
         let ser = identity.serialize().unwrap();
         assert_eq!(ser.trim(), r#"---
-id:
-  Ed25519: fCIX7Z3EiXIanC2819hWhF3oNW9gg6ujZKW8D_Y1lfZJJODmkkjVJlOZKCtM6YMa_fSS4i6Witse0k2UlZ-GAQ
+id: mP7xfZRQY4d4xojzmY-_NRMp0fKhX4pFgH_v_3DAIw6qwp5AFvOq_a-nVLfV945y7E_ACVnMoHpUIgIGgfoIRw
 created: "1977-06-07T04:32:06Z"
+policies:
+  - id: 4slQpy0E9EDl82xC4fyDnRApYqi_xMHrjLxta_za1hPhp7rlYi_M7RgRaVSVTPQJcroP148TrZvNWn47o_5Csw
+    policy:
+      capabilities:
+        - Permissive
+      multisig_policy:
+        MOfN:
+          must_have: 1
+          participants:
+            - Key:
+                Ed25519: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
 keychain:
-  alpha:
-    Ed25519:
-      public: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
-      secret: ~
-  policy:
-    Ed25519:
-      public: s5YuvOaxr4y1qQBzZyJJ0SduYXf8toYfLa2izUgcT2I
-      secret: ~
-  publish:
-    Ed25519:
-      public: B1NXKqP26jGll8tT12CCLbGxo09Do2M-A6VvRJoW87M
-      secret: ~
-  root:
-    Ed25519:
-      public: 75w-F9acRAKDCDdeAiOYTAz9BUoky98lO5rHNSeodQg
-      secret: ~
+  admin_keys:
+    - key:
+        Ed25519:
+          public: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
+          secret: ~
+      name: alpha
+      description: ~
   subkeys: []
 claims: []
-extra_data:
-  nickname: ~
-  forwards: []"#);
+stamps:
+  stamps: []
+  revocations: []
+nickname: ~"#);
     }
 
     #[test]

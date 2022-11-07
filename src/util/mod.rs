@@ -301,7 +301,7 @@ mod tests {
     use crate::{
         crypto::key::{Sha512},
         dag::TransactionID,
-        util::ser::{self, Binary},
+        util::ser,
     };
     use std::convert::{TryFrom, TryInto};
     use std::ops::Deref;
@@ -317,7 +317,7 @@ mod tests {
         let id = TestID(TransactionID::from(hash));
 
         let string_id = String::try_from(&id).unwrap();
-        assert_eq!(&string_id, "PS8l_4IxKjw3992SlQ0b4xfkBqpnsbgDfGa0lORDHoysO1pe3HuP72GkutWN2a4ruhC47KaCJgWwIRYFb6s5AgA");
+        assert_eq!(&string_id, "mP7xfZRQY4d4xojzmY-_NRMp0fKhX4pFgH_v_3DAIw6qwp5AFvOq_a-nVLfV945y7E_ACVnMoHpUIgIGgfoIRw");
 
         let id2 = TestID::try_from(string_id.as_str()).unwrap();
         assert_eq!(id, id2);

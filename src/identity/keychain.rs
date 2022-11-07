@@ -537,13 +537,19 @@ impl Keychain {
 
     /// Add an admin key but check for dupes
     fn add_admin_key_impl(&mut self, admin_key: AdminKey) -> Result<()> {
-        self.admin_keys_mut().push(admin_key);
+        let admin_key_id = admin_key.key_id();
+        if self.admin_keys().iter().find(|x| x.key_id() == admin_key_id).is_none() {
+            self.admin_keys_mut().push(admin_key);
+        }
         Ok(())
     }
 
     /// Add a subkey but check for dupes
     fn add_subkey_impl(&mut self, subkey: Subkey) -> Result<()> {
-        self.subkeys_mut().push(subkey);
+        let key_id = subkey.key_id();
+        if self.subkeys().iter().find(|x| x.key_id() == key_id).is_none() {
+            self.subkeys_mut().push(subkey);
+        }
         Ok(())
     }
 
@@ -554,29 +560,30 @@ impl Keychain {
     }
 
     /// Update some info about an admin key
-    pub(crate) fn edit_admin_key<T: Into<String>>(mut self, id: &KeyID, name: Option<T>, description: Option<Option<String>>) -> Result<Self> {
-        let mut key = self.admin_key_by_keyid_mut(id)
-            .ok_or_else(|| Error::KeychainKeyNotFound(id.clone()))?
-            .clone();
-        if let Some(set_name) = name {
-            key.set_name(set_name.into());
-        }
-        if let Some(desc) = description {
-            key.set_description(desc.map(|x| x.into()));
+    pub(crate) fn edit_admin_key<T: Into<String>>(mut self, id: &KeyID, name: Option<T>, description: Option<Option<T>>) -> Result<Self> {
+        if let Some(key) = self.admin_key_by_keyid_mut(id) {
+            if let Some(set_name) = name {
+                key.set_name(set_name.into());
+            }
+            if let Some(desc) = description {
+                key.set_description(desc.map(|x| x.into()));
+            }
         }
         Ok(self)
     }
 
     /// Revoke an [Admin key][AdminKeypair].
-    pub(crate) fn revoke_admin_key(mut self, id: &KeyID, reason: RevocationReason, new_name: Option<String>) -> Result<Self> {
-        let key = self.admin_key_by_keyid(id)
-            .ok_or_else(|| Error::KeychainKeyNotFound(id.clone()))?
-            .clone();
-        self.admin_keys_mut().retain(|k| k.key() != key.key());
-        let new_name = new_name.unwrap_or_else(|| format!("revoked/admin/{}", key.key().key_id().as_string()));
-        let mut subkey = Subkey::new(Key::Admin(key.key().clone()), new_name, Some("revoked admin key".into()));
-        subkey.revoke(reason, None);
-        self.add_subkey_impl(subkey)?;
+    pub(crate) fn revoke_admin_key<T: Into<String>>(mut self, id: &KeyID, reason: RevocationReason, new_name: Option<T>) -> Result<Self> {
+        if let Some(key) = self.admin_key_by_keyid(id) {
+            let new_name: String = new_name
+                .map(|x| x.into())
+                .unwrap_or_else(|| format!("revoked/admin/{}", key.key().key_id().as_string()));
+            let mut subkey = Subkey::new(Key::Admin(key.key().clone()), new_name, Some("revoked admin key".into()));
+            subkey.revoke(reason, None);
+            drop(key);
+            self.add_subkey_impl(subkey)?;
+            self.admin_keys_mut().retain(|k| &k.key_id() != id);
+        }
         Ok(self)
     }
 
@@ -602,22 +609,19 @@ impl Keychain {
 
     /// Revoke a subkey.
     pub(crate) fn revoke_subkey(mut self, id: &KeyID, reason: RevocationReason, new_name: Option<String>) -> Result<Self> {
-        let mut key = self.subkey_by_keyid_mut(id)
-            .ok_or_else(|| Error::KeychainKeyNotFound(id.clone()))?
-            .clone();
-        if key.revocation().is_some() {
-            Err(Error::KeychainSubkeyAlreadyRevoked)?;
+        if let Some(subkey) = self.subkey_by_keyid_mut(id) {
+            if subkey.revocation().is_none() {
+                subkey.revoke(reason, new_name);
+            }
         }
-        key.revoke(reason, new_name);
         Ok(self)
     }
 
     /// Delete a key from the keychain.
     pub(crate) fn delete_subkey(mut self, id: &KeyID) -> Result<Self> {
-        let key = self.subkey_by_keyid(id)
-            .ok_or_else(|| Error::KeychainKeyNotFound(id.clone()))?
-            .clone();
-        self.subkeys_mut().retain(|x| &x.key_id() != id);
+        if self.subkey_by_keyid(id).is_some() {
+            self.subkeys_mut().retain(|x| &x.key_id() != id);
+        }
         Ok(self)
     }
 }
@@ -803,13 +807,40 @@ mod tests {
     }
 
     #[test]
-    fn keychain_add_admin_key() {
-        todo!();
-    }
+    fn keychain_add_edit_revoke_admin_key() {
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let admin_key = AdminKey::new(admin_keypair, "Default", None);
+        let key_id = admin_key.key_id();
 
-    #[test]
-    fn keychain_remove_admin_key() {
-        todo!();
+        let keychain = Keychain::new(vec![]);
+        assert_eq!(keychain.admin_keys().len(), 0);
+
+        let keychain2 = keychain.add_admin_key(admin_key.clone()).unwrap();
+        assert_eq!(keychain2.admin_keys().len(), 1);
+        assert_eq!(keychain2.admin_keys()[0].name(), "Default");
+        assert_eq!(keychain2.admin_keys()[0].description(), &None::<String>);
+
+        let keychain3 = keychain2.add_admin_key(admin_key.clone()).unwrap();
+        assert_eq!(keychain3.admin_keys().len(), 1);
+        assert_eq!(keychain3.admin_keys()[0].name(), "Default");
+        assert_eq!(keychain3.admin_keys()[0].description(), &None::<String>);
+
+        let keychain4 = keychain3.edit_admin_key(&key_id, Some("frizzy"), Some(Some("SO IT'S CONTINENTAL?"))).unwrap();
+        assert_eq!(keychain4.admin_keys().len(), 1);
+        assert_eq!(keychain4.admin_keys()[0].name(), "frizzy");
+        assert_eq!(keychain4.admin_keys()[0].description(), &Some("SO IT'S CONTINENTAL?".into()));
+
+        let keychain5 = keychain4.edit_admin_key(&KeyID::random_sign(), Some("GERRRR"), Some(None)).unwrap();
+        assert_eq!(keychain5.admin_keys().len(), 1);
+        assert_eq!(keychain5.admin_keys()[0].name(), "frizzy");
+        assert_eq!(keychain5.admin_keys()[0].description(), &Some("SO IT'S CONTINENTAL?".into()));
+
+        let keychain6 = keychain5.revoke_admin_key(&key_id, RevocationReason::Superseded, Some("WROOONG")).unwrap();
+        assert_eq!(keychain6.admin_keys().len(), 0);
+        assert_eq!(keychain6.subkeys().len(), 1);
+        assert_eq!(keychain6.subkeys()[0].name(), "WROOONG");
+        assert_eq!(keychain6.subkeys()[0].description(), &Some("revoked admin key".into()));
     }
 
     #[test]
@@ -905,7 +936,7 @@ mod tests {
         assert_eq!(keychain.admin_keys().iter().fold(false, |acc, x| acc || x.has_private()), false);
         assert_eq!(keychain.subkey_by_name("sign").unwrap().key().has_private(), false);
         assert_eq!(keychain.subkey_by_name("crypto").unwrap().key().has_private(), false);
-        assert!(keychain.subkey_by_name("secret").is_none());
+        assert_eq!(keychain.subkey_by_name("secret").unwrap().key().has_private(), false);
     }
 }
 

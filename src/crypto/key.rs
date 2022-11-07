@@ -795,11 +795,6 @@ pub(crate) mod tests {
     use super::*;
     use crate::util;
 
-    pub(crate) fn secret_from_vec(bytes: Vec<u8>) -> SecretKey {
-        let arr = bytes.try_into().unwrap();
-        SecretKey::XChaCha20Poly1305(BinarySecret::new(arr))
-    }
-
     #[test]
     fn secretkey_xchacha20poly1305_enc_dec() {
         let key = SecretKey::new_xchacha20poly1305().unwrap();
