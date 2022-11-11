@@ -25,7 +25,7 @@ use crate::{
         sign::Signable,
     },
 };
-use ed25519_dalek::{Digest as Ed25519Digest, Signer, generic_array::GenericArray};
+use ed25519_consensus;
 use hmac::{
     Mac,
     digest::{
@@ -36,6 +36,7 @@ use rand::{RngCore, rngs::OsRng};
 use rand_chacha::rand_core::{RngCore as RngCoreChaCha, SeedableRng};
 use rasn::{Encode, Decode, AsnType};
 use serde_derive::{Serialize, Deserialize};
+use sha2::{self, digest::generic_array::GenericArray};
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
 
@@ -212,7 +213,7 @@ impl SignKeypairSignature {
     /// once it's constructed? I prefer the latter.
     pub fn blank(sign_keypair: &SignKeypair) -> Self {
         match sign_keypair {
-            SignKeypair::Ed25519 { .. } => Self::Ed25519(Binary::new([0u8; ed25519_dalek::SIGNATURE_LENGTH])),
+            SignKeypair::Ed25519 { .. } => Self::Ed25519(Binary::new([0u8; 64])),
         }
     }
 }
@@ -253,41 +254,29 @@ impl Clone for SignKeypair {
 }
 
 impl SignKeypair {
-    /// Create a new ed25519 keypair
-    pub fn new_ed25519(master_key: &SecretKey) -> Result<Self> {
-        let mut randbuf = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
-        OsRng.fill_bytes(&mut randbuf);
-        let secret = ed25519_dalek::SecretKey::from_bytes(&randbuf[..])
-            .map_err(|_| Error::KeygenFailed)?;
-        let public: ed25519_dalek::PublicKey = (&secret).into();
-        Ok(Self::Ed25519 { 
-            public: Binary::new(public.to_bytes()),
-            secret: Some(Private::seal(master_key, &BinarySecret::new(randbuf))?),
-        })
-    }
-
-    /// Create a new ed25519 keypair
-    pub fn new_ed25519_from_seed(master_key: &SecretKey, seed_bytes: &[u8; 32]) -> Result<Self> {
-        let mut rng = rand_chacha::ChaCha20Rng::from_seed(*seed_bytes);
-        let mut randbuf = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
-        rng.fill_bytes(&mut randbuf);
-        let secret = ed25519_dalek::SecretKey::from_bytes(&randbuf[..])
-            .map_err(|_| Error::KeygenFailed)?;
-        let public: ed25519_dalek::PublicKey = (&secret).into();
+    fn new_ed25519_from_secret(master_key: &SecretKey, secret: ed25519_consensus::SigningKey) -> Result<Self> {
+        let public = secret.verification_key();
         Ok(Self::Ed25519 { 
             public: Binary::new(public.to_bytes()),
             secret: Some(Private::seal(master_key, &BinarySecret::new(secret.to_bytes()))?),
         })
     }
 
-    /// Create a new ed25519 keypair from a [SecretKey]
-    pub fn new_ed25519_from_secret_key(master_key: &SecretKey, seckey: &SecretKey) -> Result<Self> {
-        let bytes: &[u8] = seckey.as_ref();
-        if bytes.len() < 32 {
-            Err(Error::BadLength)?;
-        }
-        let seed: [u8; 32] = bytes[0..32].try_into().map_err(|_| Error::BadLength)?;
-        Self::new_ed25519_from_seed(master_key, &seed)
+    /// Create a new ed25519 keypair
+    pub fn new_ed25519(master_key: &SecretKey) -> Result<Self> {
+        let mut randbuf = [0u8; 32];
+        OsRng.fill_bytes(&mut randbuf);
+        let secret = ed25519_consensus::SigningKey::from(randbuf);
+        Self::new_ed25519_from_secret(master_key, secret)
+    }
+
+    /// Create a new ed25519 keypair from a cryptographic seed
+    pub fn new_ed25519_from_seed(master_key: &SecretKey, seed_bytes: &[u8; 32]) -> Result<Self> {
+        let mut rng = rand_chacha::ChaCha20Rng::from_seed(*seed_bytes);
+        let mut randbuf = [0u8; 32];
+        rng.fill_bytes(&mut randbuf);
+        let secret = ed25519_consensus::SigningKey::from(randbuf);
+        Self::new_ed25519_from_secret(master_key, secret)
     }
 
     /// Hash a value then sign it, returning the hash and the signature. This is
@@ -297,11 +286,9 @@ impl SignKeypair {
         match self {
             Self::Ed25519 { secret: ref sec_locked_opt, .. } => {
                 let sec_locked = sec_locked_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let seckey = ed25519_dalek::SecretKey::from_bytes(sec_locked.open(master_key)?.expose_secret().as_ref())
-                    .map_err(|_| Error::CryptoSignatureFailed)?;
-                let pubkey: ed25519_dalek::PublicKey = (&seckey).into();
-                let keypair = ed25519_dalek::Keypair { public: pubkey, secret: seckey };
-                let sig_obj = keypair.sign(data);
+                let sec_bytes: [u8; 32] = sec_locked.open(master_key)?.expose_secret().clone();
+                let seckey = ed25519_consensus::SigningKey::from(sec_bytes);
+                let sig_obj = seckey.sign(data);
                 let sig = SignKeypairSignature::Ed25519(Binary::new(sig_obj.to_bytes()));
                 Ok(sig)
             }
@@ -313,12 +300,11 @@ impl SignKeypair {
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
         match (self, signature) {
             (Self::Ed25519 { public: ref pubkey_bytes, .. }, SignKeypairSignature::Ed25519(ref sig_bytes)) => {
-                let pubkey = ed25519_dalek::PublicKey::from_bytes(&pubkey_bytes[..])
+                let pubkey = ed25519_consensus::VerificationKey::try_from(pubkey_bytes.deref().clone())
                     .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
-                let sig_arr: [u8; 64] = sig_bytes.deref().clone().try_into()
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
-                let sig = ed25519_dalek::Signature::from(sig_arr);
-                pubkey.verify_strict(data, &sig)
+                let sig_arr: [u8; 64] = sig_bytes.deref().clone();
+                let sig = ed25519_consensus::Signature::from(sig_arr);
+                pubkey.verify(&sig, data)
                     .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
                 Ok(())
             }
@@ -646,14 +632,16 @@ pub const SHA512_LEN: usize = 64;
 pub struct Sha512(Binary<SHA512_LEN>);
 
 impl Sha512 {
-    /// How bany bytes are in this Sha512? HMMM I WONDER
+    /// How bany bytes are in this Sha512? HMMM. HMMMMMMMMMM. HMMM I WONDER
     pub fn len() -> usize {
         SHA512_LEN
     }
 
     /// Create a new SHA512 hash from binary data
     pub fn hash(input: &[u8]) -> Result<Self> {
-        let genarr = ed25519_dalek::Sha512::digest(input);
+        let mut hasher = sha2::Sha512::new();
+        hasher.update(input);
+        let genarr = hasher.finalize();
         let hash_arr: [u8; 64] = genarr.as_slice().try_into()
             .map_err(|_| Error::CryptoHashFailed)?;
         Ok(Self(Binary::new(hash_arr)))
@@ -855,7 +843,9 @@ pub(crate) mod tests {
         let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let seed: [u8; 32] = vec![111, 229, 76, 13, 231, 38, 253, 27, 53, 2, 235, 174, 151, 186, 192, 33, 16, 2, 57, 32, 170, 23, 13, 47, 44, 234, 231, 35, 38, 107, 93, 198].try_into().unwrap();
         let seckey = SecretKey::new_xchacha20poly1305_from_slice(&seed[..]).expect("bad seed");
-        let our_keypair = SignKeypair::new_ed25519_from_secret_key(&master_key, &seckey).unwrap();
+        let bytes: &[u8] = seckey.as_ref();
+        let seed: [u8; 32] = bytes[0..32].try_into().unwrap();
+        let our_keypair = SignKeypair::new_ed25519_from_seed(&master_key, &seed).unwrap();
 
         let msg_real = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
         let msg_fake = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...");
@@ -897,7 +887,7 @@ pub(crate) mod tests {
         let blank1 = SignKeypairSignature::blank(&keypair1);
         let blank2 = SignKeypairSignature::blank(&keypair2);
         assert_eq!(blank1, blank2);
-        assert_eq!(blank1.as_ref(), vec![0; ed25519_dalek::SIGNATURE_LENGTH].as_slice());
+        assert_eq!(blank1.as_ref(), vec![0; 64].as_slice());
     }
 
     #[test]
