@@ -19,7 +19,6 @@ use crate::{
 use getset;
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
-use std::convert::TryInto;
 use std::ops::Deref;
 
 object_id! {
@@ -346,16 +345,16 @@ impl Claim {
     pub fn instant_verify_allowed_values(&self, identity_id: &IdentityID) -> Result<Vec<String>> {
         match self.spec() {
             ClaimSpec::Domain(_) => {
-                let identity_id_str = String::from(identity_id);
-                let claim_id_str = String::from(self.id());
+                let identity_id_str = String::try_from(identity_id)?;
+                let claim_id_str = String::try_from(self.id())?;
                 Ok(vec![
                     format!("stamp://{}/claim/{}", identity_id_str, claim_id_str),
                     format!("stamp://{}/claim/{}", IdentityID::short(&identity_id_str), ClaimID::short(&claim_id_str)),
                 ])
             }
             ClaimSpec::Url(_) => {
-                let identity_id_str = String::from(identity_id);
-                let claim_id_str = String::from(self.id());
+                let identity_id_str = String::try_from(identity_id)?;
+                let claim_id_str = String::try_from(self.id())?;
                 Ok(vec![
                     format!("stamp:{}", claim_id_str),
                     format!("stamp:{}", ClaimID::short(&claim_id_str)),
@@ -394,7 +393,7 @@ pub(crate) mod tests {
     use crate::{
         error::Error,
         identity::{IdentityID},
-        private::PrivateWithHmac,
+        private::PrivateWithMac,
     };
     use std::convert::TryFrom;
     use std::str::FromStr;
@@ -470,7 +469,7 @@ pub(crate) mod tests {
                 let (_master_key, spec, spec2) = make_specs!($claimmaker, $val);
                 assert_eq!(spec.has_private(), true);
                 match $getmaybe(spec.clone()) {
-                    MaybePrivate::Private(PrivateWithHmac { data: Some(_), .. }) => {},
+                    MaybePrivate::Private(PrivateWithMac { data: Some(_), .. }) => {},
                     _ => panic!("bad maybe val: {}", stringify!($claimtype)),
                 }
                 let claim = Claim::new(ClaimID::random(), spec, None);

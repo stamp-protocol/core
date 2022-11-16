@@ -25,11 +25,10 @@ use getset;
 use rand::{RngCore, rngs::OsRng};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
-use std::convert::TryInto;
 use std::ops::Deref;
 
 object_id! {
-    /// The identity's unique ID. This is the SHA512 hash of the
+    /// The identity's unique ID. This is the Hash of the
     /// [initial transaction][crate::dag::TransactionBody::CreateIdentityV1].
     IdentityID
 }
@@ -405,7 +404,7 @@ impl Public for Identity {
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{Sha512, SignKeypair},
+        crypto::key::{Hash, SignKeypair},
         dag::TransactionID,
         identity::{
             keychain::AdminKeypair,
@@ -737,7 +736,7 @@ mod tests {
         let admin = AdminKeypair::new_ed25519_from_seed(&master_key, seeds[0]).unwrap();
         let admin_key = AdminKey::new(admin.clone(), "alpha", None);
 
-        let id = IdentityID::from(TransactionID::from(Sha512::hash(b"get a job").unwrap()));
+        let id = IdentityID::from(TransactionID::from(Hash::new_blake2b(b"get a job").unwrap()));
         let capability = Policy::new(
             vec![Capability::Permissive],
             MultisigPolicy::MOfN { must_have: 1, participants: vec![Participant::Key(admin.into())] }
@@ -746,10 +745,12 @@ mod tests {
         let identity = Identity::create(id.clone(), vec![admin_key], vec![container], now);
         let ser = identity.serialize().unwrap();
         assert_eq!(ser.trim(), r#"---
-id: mP7xfZRQY4d4xojzmY-_NRMp0fKhX4pFgH_v_3DAIw6qwp5AFvOq_a-nVLfV945y7E_ACVnMoHpUIgIGgfoIRw
+id:
+  Blake2b: emMTrxVrn5BZ4rM75UN20fFYurs3883OwVgDL62RkAjOv_ikAXNrGVpgiVKuYe_5nrL-j0N-XaZ66c6eEvVTVA
 created: "1977-06-07T04:32:06Z"
 policies:
-  - id: 4slQpy0E9EDl82xC4fyDnRApYqi_xMHrjLxta_za1hPhp7rlYi_M7RgRaVSVTPQJcroP148TrZvNWn47o_5Csw
+  - id:
+      Blake2b: J-H_t7U80226X2F6yklU8UKSdbA1ETNUY8c_tq2CXTggxC9v8em2olfJ0Qd_kfzHii26oEE5E0_960d1HLoSwA
     policy:
       capabilities:
         - Permissive

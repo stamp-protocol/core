@@ -10,7 +10,7 @@
 //! not just by keys it owns, but by trusted third parties as well.
 
 use crate::{
-    crypto::key::{KeyID, Sha512},
+    crypto::key::{KeyID, Hash},
     dag::{TransactionBody, TransactionID, Transaction},
     error::{Error, Result},
     identity::{
@@ -589,7 +589,7 @@ impl Policy {
     /// Generate a [PolicyID] for this policy.
     pub fn gen_id(&self) -> Result<PolicyID> {
         let ser = ser::serialize(self)?;
-        let hash = Sha512::hash(&ser[..])?;
+        let hash = Hash::new_blake2b(&ser[..])?;
         let tid = TransactionID::from(hash);
         Ok(PolicyID::from(tid))
     }

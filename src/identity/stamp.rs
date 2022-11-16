@@ -24,7 +24,6 @@ use crate::{
 use getset;
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
-use std::convert::TryInto;
 use std::ops::Deref;
 
 object_id! {

@@ -1,14 +1,14 @@
 //! A `Transaction` models a single change against an identity, and is one node
 //! inside of the identity DAG.
 //!
-//! Transactions have a [TransactionBody], an ID (sha512 of the transaction's body,
+//! Transactions have a [TransactionBody], an ID ([Hash] of the transaction's body,
 //! timestamp, and previously-referenced transactions), and a collection of one or
 //! more signatures on the transaction's ID that validate that transaction.
 
 use crate::{
     error::{Error, Result},
     crypto::{
-        key::{KeyID, SecretKey, Sha512},
+        key::{KeyID, SecretKey, Hash},
     },
     dag::Transactions,
     identity::{
@@ -42,7 +42,7 @@ use crate::{
 use getset;
 use rasn::{Encode, Decode, AsnType};
 use serde_derive::{Serialize, Deserialize};
-use std::hash::{Hash, Hasher};
+use std::hash::{Hash as StdHash, Hasher};
 use std::ops::Deref;
 
 /// This is all of the possible transactions that can be performed on an
@@ -340,18 +340,18 @@ impl Public for TransactionBody {
     }
 }
 
-/// The TransactionID is a SHA512 hash of the transaction body
+/// The TransactionID is a [Hash] of the transaction body
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
-pub struct TransactionID(Sha512);
+pub struct TransactionID(Hash);
 
-impl From<Sha512> for TransactionID {
-    fn from(sha: Sha512) -> Self {
-        Self(sha)
+impl From<Hash> for TransactionID {
+    fn from(hash: Hash) -> Self {
+        Self(hash)
     }
 }
 
 impl Deref for TransactionID {
-    type Target = Sha512;
+    type Target = Hash;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -359,19 +359,19 @@ impl Deref for TransactionID {
 
 impl From<TransactionID> for String {
     fn from(id: TransactionID) -> Self {
-        ser::base64_encode(&id.deref().deref())
+        format!("{}", id.deref())
     }
 }
 
 impl From<&TransactionID> for String {
     fn from(id: &TransactionID) -> Self {
-        ser::base64_encode(&id.deref().deref())
+        format!("{}", id.deref())
     }
 }
 
-impl Hash for TransactionID {
+impl StdHash for TransactionID {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.deref().hash(state);
+        self.deref().as_bytes().hash(state);
     }
 }
 
@@ -379,14 +379,14 @@ impl Eq for TransactionID {}
 
 impl std::fmt::Display for TransactionID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", ser::base64_encode(self.deref().deref()))
+        write!(f, "{}", self.deref())
     }
 }
 
 #[cfg(test)]
 impl TransactionID {
     pub(crate) fn random() -> Self {
-        Self(Sha512::random())
+        Self(Hash::random_blake2b())
     }
 }
 
@@ -445,7 +445,7 @@ impl Public for TransactionEntry {
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transaction {
-    /// This is a SHA512 hash of the transaction's `entry`
+    /// This is a hash of the transaction's `entry`
     #[rasn(tag(explicit(0)))]
     id: TransactionID,
     /// This holds our transaction body: any references to previous
@@ -461,7 +461,7 @@ impl Transaction {
     /// Create a new Transaction from a [TransactionEntry].
     pub(crate) fn new(entry: TransactionEntry) -> Result<Self> {
         let serialized = ser::serialize(&entry.strip_private())?;
-        let id = TransactionID::from(Sha512::hash(&serialized)?);
+        let id = TransactionID::from(Hash::new_blake2b(&serialized)?);
         Ok(Self {
             id,
             entry,
@@ -472,7 +472,8 @@ impl Transaction {
     /// Sign this transaction. This consumes the transaction, adds the signature
     /// to the `signatures` list, then returns the new transaction.
     pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKey) -> Result<Self> {
-        let sig = admin_key.key().sign(master_key, self.id().deref().deref())?;
+        let serialized = ser::serialize(self.id().deref())?;
+        let sig = admin_key.key().sign(master_key, &serialized[..])?;
         let policy_sig = MultisigPolicySignature::Key {
             key: admin_key.key().clone().into(),
             signature: sig,
@@ -486,10 +487,11 @@ impl Transaction {
         if self.signatures().len() == 0 {
             Err(Error::TransactionNoSignatures)?;
         }
+        let ver_sig = ser::serialize(self.id().deref())?;
         for sig in self.signatures() {
             match sig {
                 MultisigPolicySignature::Key { key, signature } => {
-                    match key.verify(signature, self.id().deref().deref()) {
+                    match key.verify(signature, &ver_sig[..]) {
                         Err(_) => Err(Error::TransactionSignatureInvalid(key.clone()))?,
                         _ => {}
                     }
@@ -505,7 +507,7 @@ impl Transaction {
     pub(crate) fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
         let serialized = ser::serialize(&self.entry().strip_private())?;
         // first verify the transaction's hash.
-        let transaction_hash = Sha512::hash(&serialized[..])?;
+        let transaction_hash = Hash::new_blake2b(&serialized[..])?;
         if &transaction_hash != self.id().deref() {
             Err(Error::TransactionIDMismatch(self.id().clone()))?;
         }
@@ -738,7 +740,7 @@ mod tests {
             spec: ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Jackie Chrome".into()).unwrap()),
             name: None,
         };
-        let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::from(Sha512::random())], body);
+        let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::from(Hash::random_blake2b())], body);
         assert!(entry.has_private());
         assert!(entry.body().has_private());
         let entry2 = entry.strip_private();

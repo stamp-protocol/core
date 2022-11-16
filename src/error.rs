@@ -41,13 +41,13 @@ pub enum Error {
     #[error("failed to create a hash")]
     CryptoHashFailed,
 
-    /// HMAC failed to build properly
-    #[error("HMAC failed to build properly")]
-    CryptoHmacBuildFailure,
+    /// MAC failed to build properly
+    #[error("MAC failed to build properly")]
+    CryptoMacBuildFailure,
 
-    /// An HMAC failed to verify.
-    #[error("the given HMAC combo does not verify")]
-    CryptoHmacVerificationFailed,
+    /// An MAC failed to verify.
+    #[error("the given MAC combo does not verify")]
+    CryptoMacVerificationFailed,
 
     /// Could not generate key from password
     #[error("key derivation from password failed")]
@@ -239,7 +239,7 @@ pub enum Error {
     #[error("signature missing on a value")]
     SignatureMissing,
 
-    /// The SHA512 of a transaction's body does not match its ID. He's tampered
+    /// The hash of a transaction's body does not match its ID. He's tampered
     /// with it.
     #[error("transaction ID mismatch: {0}")]
     TransactionIDMismatch(crate::dag::TransactionID),

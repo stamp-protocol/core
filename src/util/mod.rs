@@ -1,6 +1,5 @@
 //! Utilities. OBVIOUSLY.
 
-use blake2::Digest;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc, Local, TimeZone};
 use crate::{
     error::Result,
@@ -40,13 +39,13 @@ macro_rules! object_id {
         #[allow(dead_code)]
         impl $name {
             pub(crate) fn blank() -> Self {
-                let hash = crate::crypto::key::Sha512::from([0u8; crate::crypto::key::SHA512_LEN]);
+                let hash = crate::crypto::key::Hash::Blake2b(crate::util::ser::Binary::new([0u8; 64]));
                 $name(crate::dag::TransactionID::from(hash))
             }
 
             #[cfg(test)]
             pub(crate) fn random() -> Self {
-                let hash = crate::crypto::key::Sha512::random();
+                let hash = crate::crypto::key::Hash::random_blake2b();
                 $name(crate::dag::TransactionID::from(hash))
             }
         }
@@ -64,10 +63,11 @@ macro_rules! object_id {
             }
         }
 
-        impl std::convert::From<&$name> for String {
-            fn from(id: &$name) -> String {
-                let bytes = id.deref().deref().deref();
-                crate::util::ser::base64_encode(bytes)
+        impl std::convert::TryFrom<&$name> for String {
+            type Error = crate::error::Error;
+            fn try_from(id: &$name) -> std::result::Result<Self, Self::Error>  {
+                let bytes = crate::util::ser::serialize(id.deref().deref())?;
+                Ok(crate::util::ser::base64_encode(bytes))
             }
         }
 
@@ -75,21 +75,11 @@ macro_rules! object_id {
             type Error = crate::error::Error;
             fn try_from(id_str: &str) -> std::result::Result<Self, Self::Error> {
                 let bytes = crate::util::ser::base64_decode(id_str.as_bytes())?;
-                let hash_bytes: [u8; crate::crypto::key::SHA512_LEN] = bytes.try_into()
-                    .map_err(|_| crate::error::Error::BadLength)?;
-                let hash = crate::crypto::key::Sha512::from(hash_bytes);
+                let hash: crate::crypto::key::Hash = crate::util::ser::deserialize(&bytes[..])?;
                 Ok(Self(crate::dag::TransactionID::from(hash)))
             }
         }
     }
-}
-
-/// Hash arbitrary data using blake2b
-pub fn hash(data: &[u8]) -> Result<Vec<u8>> {
-    let mut hasher = blake2::Blake2b512::new();
-    hasher.update(data);
-    let genarr = hasher.finalize();
-    Ok(Vec::from(genarr.as_slice()))
 }
 
 /// A library-local representation of a time. I can hear you groaning already:
@@ -299,11 +289,11 @@ impl std::fmt::Display for Url {
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{Sha512},
+        crypto::key::{Hash},
         dag::TransactionID,
         util::ser,
     };
-    use std::convert::{TryFrom, TryInto};
+    use std::convert::TryFrom;
     use std::ops::Deref;
 
     #[test]
@@ -312,12 +302,12 @@ mod tests {
             TestID
         }
 
-        let hash = Sha512::hash(b"get a job").unwrap();
+        let hash = Hash::new_blake2b(b"get a job").unwrap();
 
         let id = TestID(TransactionID::from(hash));
 
         let string_id = String::try_from(&id).unwrap();
-        assert_eq!(&string_id, "mP7xfZRQY4d4xojzmY-_NRMp0fKhX4pFgH_v_3DAIw6qwp5AFvOq_a-nVLfV945y7E_ACVnMoHpUIgIGgfoIRw");
+        assert_eq!(&string_id, "oEIEQHpjE68Va5-QWeKzO-VDdtHxWLq7N_PNzsFYAy-tkZAIzr_4pAFzaxlaYIlSrmHv-Z6y_o9Dfl2meunOnhL1U1Q");
 
         let id2 = TestID::try_from(string_id.as_str()).unwrap();
         assert_eq!(id, id2);

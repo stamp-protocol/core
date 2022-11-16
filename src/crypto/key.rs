@@ -10,7 +10,7 @@
 //! cryptographic primitives used without needing to build new interfaces around
 //! them.
 
-use blake2::Digest;
+use blake2::{Digest, digest::{FixedOutput, Mac as DigestMac, crypto_common::generic_array::GenericArray}};
 use chacha20poly1305::aead::{self, Aead, NewAead};
 use crate::{
     error::{Error, Result},
@@ -26,17 +26,10 @@ use crate::{
     },
 };
 use ed25519_consensus;
-use hmac::{
-    Mac,
-    digest::{
-        FixedOutput,
-    },
-};
 use rand::{RngCore, rngs::OsRng};
 use rand_chacha::rand_core::{RngCore as RngCoreChaCha, SeedableRng};
-use rasn::{Encode, Decode, AsnType};
+use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
-use sha2::{self, digest::generic_array::GenericArray};
 use std::convert::{TryFrom, TryInto};
 use std::ops::Deref;
 
@@ -64,7 +57,7 @@ pub enum KeyID {
     #[rasn(tag(explicit(1)))]
     CryptoKeypair(CryptoKeypairPublic),
     #[rasn(tag(explicit(2)))]
-    SecretKey(Hmac),
+    SecretKey(Mac),
 }
 
 impl KeyID {
@@ -76,8 +69,8 @@ impl KeyID {
             Self::CryptoKeypair(CryptoKeypairPublic::Curve25519XChaCha20Poly1305(pubkey)) => {
                 ser::base64_encode(pubkey.as_ref())
             }
-            Self::SecretKey(hmac) => {
-                ser::base64_encode(hmac.deref())
+            Self::SecretKey(mac) => {
+                ser::base64_encode(mac.deref())
             }
         }
     }
@@ -99,7 +92,7 @@ impl KeyID {
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn random_secret() -> Self {
-        Self::SecretKey(Hmac::new_sha512(&HmacKey::new_sha512().unwrap(), b"get a job").unwrap())
+        Self::SecretKey(Mac::new_blake2b(&MacKey::new_blake2b().unwrap(), b"get a job").unwrap())
     }
 }
 
@@ -622,139 +615,157 @@ impl From<CryptoKeypair> for CryptoKeypairPublic {
     }
 }
 
-pub const SHA512_LEN: usize = 64;
-
-/// Holds a sha512 signature. We could just use Binary<64> directly but this
-/// sets a more clear intention, and these days I'm all about clear intentions
-/// and open communication (as long as it's securely encrypted between
-/// participants, of course).
+/// A cryptographic hash. By defining this as an enum, we allow expansion of
+/// hash algorithms in the future.
+///
+/// When stringified, the hash is in the format `base64([<hash bytes>|<u8 tag>])`
+/// where the `tag` is the specific hash algorithm we use. This allows the hash
+/// to shine on its own without the tag getting inthe way. Yes, it's vain.
 #[derive(Clone, Debug, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
-pub struct Sha512(Binary<SHA512_LEN>);
+#[rasn(choice)]
+pub enum Hash {
+    /// Blake2b hash
+    #[rasn(tag(explicit(0)))]
+    Blake2b(Binary<64>),
+}
 
-impl Sha512 {
-    /// How bany bytes are in this Sha512? HMMM. HMMMMMMMMMM. HMMM I WONDER
-    pub fn len() -> usize {
-        SHA512_LEN
-    }
-
-    /// Create a new SHA512 hash from binary data
-    pub fn hash(input: &[u8]) -> Result<Self> {
-        let mut hasher = sha2::Sha512::new();
-        hasher.update(input);
+impl Hash {
+    /// Create a new blake2b hash from a message
+    pub fn new_blake2b(message: &[u8]) -> Result<Self> {
+        let mut hasher = blake2::Blake2b512::new();
+        hasher.update(message);
         let genarr = hasher.finalize();
-        let hash_arr: [u8; 64] = genarr.as_slice().try_into()
-            .map_err(|_| Error::CryptoHashFailed)?;
-        Ok(Self(Binary::new(hash_arr)))
+        let arr: [u8; 64] = genarr.as_slice().try_into()
+            .map_err(|_| Error::BadLength)?;
+        Ok(Self::Blake2b(Binary::new(arr)))
     }
 
     #[cfg(test)]
-    pub(crate) fn random() -> Self {
+    pub(crate) fn random_blake2b() -> Self {
         let mut randbuf = [0u8; 64];
         OsRng.fill_bytes(&mut randbuf);
-        Self(Binary::new(randbuf))
-    }
-}
-
-impl From<[u8; 64]> for Sha512 {
-    fn from(arr: [u8; 64]) -> Self {
-        Self(Binary::new(arr))
-    }
-}
-
-impl Deref for Sha512 {
-    type Target = [u8; 64];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0.deref()
-    }
-}
-
-impl std::fmt::Display for Sha512 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", ser::base64_encode(self.deref()))
-    }
-}
-
-/// A key for deriving an HMAC
-#[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(choice)]
-pub enum HmacKey {
-    /// Sha512 HMAC key
-    #[rasn(tag(explicit(0)))]
-    Sha512(BinarySecret<32>),
-}
-
-impl HmacKey {
-    /// Create a new sha512 HMAC key
-    pub fn new_sha512() -> Result<Self> {
-        let mut randbuf = [0u8; 32];
-        OsRng.fill_bytes(&mut randbuf);
-        Ok(Self::Sha512(BinarySecret::new(randbuf)))
+        Self::Blake2b(Binary::new(randbuf))
     }
 
-    /// Create a new sha512 HMAC key from a byte array
-    pub fn new_sha512_from_bytes(keybytes: [u8; 32]) -> Self {
-        Self::Sha512(BinarySecret::new(keybytes))
-    }
-}
-
-impl TryFrom<SecretKey> for HmacKey {
-    type Error = Error;
-
-    fn try_from(key: SecretKey) -> core::result::Result<Self, Self::Error> {
-        match key {
-            SecretKey::XChaCha20Poly1305(binsec) => {
-                Ok(Self::Sha512(binsec))
-            }
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Blake2b(bin) => bin.deref(),
         }
     }
 }
 
-/// An HMAC hash
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(choice)]
-pub enum Hmac {
-    /// Sha512 HMAC
-    #[rasn(tag(explicit(0)))]
-    Sha512(Binary<64>),
+impl TryFrom<&Hash> for String {
+    type Error = Error;
+
+    fn try_from(hash: &Hash) -> std::result::Result<Self, Self::Error> {
+        fn bin_with_tag<const N: usize>(bin: &Binary<N>, tag: u8) -> Vec<u8> {
+            let mut vec = Vec::from(bin.deref().as_slice());
+            vec.push(tag);
+            vec
+        }
+        let enc = match hash {
+            Hash::Blake2b(bin) => {
+                bin_with_tag(bin, 0)
+            }
+        };
+        Ok(ser::base64_encode(&enc[..]))
+    }
 }
 
-impl Deref for Hmac {
+impl TryFrom<&str> for Hash {
+    type Error = Error;
+
+    fn try_from(string: &str) -> std::result::Result<Self, Self::Error> {
+        let dec = ser::base64_decode(string)?;
+        let tag = dec[dec.len() - 1];
+        let bytes = &dec[0..dec.len() - 1];
+        let hash = match tag {
+            0 => {
+                let arr: [u8; 64] = bytes.try_into()
+                    .map_err(|_| Error::BadLength)?;
+                Self::Blake2b(Binary::new(arr))
+            },
+            _ => Err(Error::CryptoAlgoMismatch)?,
+        };
+        Ok(hash)
+    }
+}
+
+impl std::fmt::Display for Hash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", String::try_from(self).map_err(|_| std::fmt::Error)?)
+    }
+}
+
+/// A key for deriving a MAC
+#[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum MacKey {
+    /// Blake2b MAC key
+    #[rasn(tag(explicit(0)))]
+    Blake2b(BinarySecret<64>),
+}
+
+impl MacKey {
+    /// Create a new blacke2b MAC key
+    pub fn new_blake2b() -> Result<Self> {
+        let mut randbuf = [0u8; 64];
+        OsRng.fill_bytes(&mut randbuf);
+        Ok(Self::Blake2b(BinarySecret::new(randbuf)))
+    }
+
+    /// Create a new blake2b MAC key from a byte array
+    pub fn new_blake2b_from_bytes(keybytes: [u8; 64]) -> Self {
+        Self::Blake2b(BinarySecret::new(keybytes))
+    }
+}
+
+/// A MAC
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum Mac {
+    /// Blake2b MAC
+    #[rasn(tag(explicit(0)))]
+    Blake2b(Binary<64>),
+}
+
+impl Deref for Mac {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Hmac::Sha512(bytes) => &(bytes.deref())[..],
+            Mac::Blake2b(bytes) => &(bytes.deref())[..],
         }
     }
 }
 
-impl Hmac {
-    /// Create a new HMACSHA512 from a key and a set of data.
-    pub fn new_sha512(hmac_key: &HmacKey, data: &[u8]) -> Result<Self> {
-        match hmac_key {
-            HmacKey::Sha512(hmac_key) => {
-                let mut mac = hmac::SimpleHmac::<sha2::Sha512>::new_from_slice(hmac_key.expose_secret().deref())
+impl Mac {
+    /// Create a new MAC-blake2b from a key and a set of data.
+    pub fn new_blake2b(mac_key: &MacKey, data: &[u8]) -> Result<Self> {
+        match mac_key {
+            MacKey::Blake2b(mac_key) => {
+                let mut mac = blake2::Blake2bMac512::new_with_salt_and_personal(mac_key.expose_secret().as_slice(), &[], b"stamp-protocol")
                     .map_err(|_| Error::CryptoBadKey)?;
                 mac.update(data);
                 let arr: [u8; 64] = mac.finalize_fixed().as_slice().try_into()
                     .map_err(|_| Error::BadLength)?;
-                Ok(Hmac::Sha512(Binary::new(arr)))
+                Ok(Mac::Blake2b(Binary::new(arr)))
             }
         }
     }
 
-    /// Verify an HMAC against a set of data.
-    pub fn verify(&self, hmac_key: &HmacKey, data: &[u8]) -> Result<()> {
-        match (self, hmac_key) {
-            (Self::Sha512(hmac), HmacKey::Sha512(hmac_key)) => {
-                let mut mac_ver = hmac::SimpleHmac::<sha2::Sha512>::new_from_slice(&hmac_key.expose_secret()[..])
+    /// Verify a MAC against a set of data.
+    pub fn verify(&self, mac_key: &MacKey, data: &[u8]) -> Result<()> {
+        match (self, mac_key) {
+            (Self::Blake2b(mac), MacKey::Blake2b(mac_key)) => {
+                let mut mac_ver = blake2::Blake2bMac512::new_with_salt_and_personal(mac_key.expose_secret().as_slice(), &[], b"stamp-protocol")
                     .map_err(|_| Error::CryptoBadKey)?;
                 mac_ver.update(data);
-                let ct_out = hmac::digest::CtOutput::new(GenericArray::from_slice(hmac.deref()).clone());
-                if ct_out != mac_ver.finalize() {
+                let arr: [u8; 64] = mac_ver.finalize_fixed().as_slice().try_into()
+                    .map_err(|_| Error::BadLength)?;
+                if mac != &Binary::new(arr) {
                     // the data has been tampered with, my friend.
-                    Err(Error::CryptoHmacVerificationFailed)?;
+                    Err(Error::CryptoMacVerificationFailed)?;
                 }
             }
         }
@@ -781,7 +792,6 @@ pub fn derive_secret_key(passphrase: &[u8], salt_bytes: &[u8], ops: u32, mem: u3
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::util;
 
     #[test]
     fn secretkey_xchacha20poly1305_enc_dec() {
@@ -990,40 +1000,71 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn hash_blake2b_encode_decode_fmt() {
+        let msg = b"that kook dropped in on me. we need to send him a (cryptographically hashed) message.";
+        let hash = Hash::new_blake2b(&msg[..]).unwrap();
+        match &hash {
+            Hash::Blake2b(bin) => {
+                assert_eq!(bin.deref(), &vec![243, 64, 239, 85, 96, 25, 23, 71, 194, 134, 56, 85, 159, 71, 57, 211, 109, 253, 219, 151, 200, 67, 151, 95, 99, 68, 251, 52, 88, 37, 134, 63, 169, 104, 190, 112, 71, 235, 90, 125, 25, 122, 63, 198, 27, 40, 69, 145, 173, 13, 190, 238, 237, 236, 183, 80, 47, 131, 70, 200, 61, 26, 202, 161][..]);
+            }
+        }
+        let bytes = ser::serialize(&hash).unwrap();
+        assert_eq!(ser::base64_encode(&bytes[..]), String::from("oEIEQPNA71VgGRdHwoY4VZ9HOdNt_duXyEOXX2NE-zRYJYY_qWi-cEfrWn0Zej_GGyhFka0Nvu7t7LdQL4NGyD0ayqE"));
+        assert_eq!(format!("{}", hash), String::from("80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQA"));
+        let hash2: Hash = ser::deserialize(&bytes).unwrap();
+        match &hash2 {
+            Hash::Blake2b(bin) => {
+                assert_eq!(bin.deref(), &vec![243, 64, 239, 85, 96, 25, 23, 71, 194, 134, 56, 85, 159, 71, 57, 211, 109, 253, 219, 151, 200, 67, 151, 95, 99, 68, 251, 52, 88, 37, 134, 63, 169, 104, 190, 112, 71, 235, 90, 125, 25, 122, 63, 198, 27, 40, 69, 145, 173, 13, 190, 238, 237, 236, 183, 80, 47, 131, 70, 200, 61, 26, 202, 161][..]);
+            }
+        }
+
+        let hash3 = Hash::try_from("80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQA").unwrap();
+        match &hash3 {
+            Hash::Blake2b(bin) => {
+                assert_eq!(bin.deref(), &vec![243, 64, 239, 85, 96, 25, 23, 71, 194, 134, 56, 85, 159, 71, 57, 211, 109, 253, 219, 151, 200, 67, 151, 95, 99, 68, 251, 52, 88, 37, 134, 63, 169, 104, 190, 112, 71, 235, 90, 125, 25, 122, 63, 198, 27, 40, 69, 145, 173, 13, 190, 238, 237, 236, 183, 80, 47, 131, 70, 200, 61, 26, 202, 161][..]);
+            }
+        }
+    }
+
+    #[test]
     fn derives_secret_key() {
-        let id = util::hash("my key".as_bytes()).unwrap();
-        let salt = util::hash(id.as_ref()).unwrap();
-        let master_key = derive_secret_key("ZONING IS COMMUNISM".as_bytes(), &salt.as_ref(), KDF_OPS_INTERACTIVE, KDF_MEM_INTERACTIVE).unwrap();
+        let id = Hash::new_blake2b("my key".as_bytes()).unwrap();
+        let salt = Hash::new_blake2b(id.as_bytes()).unwrap();
+        let master_key = derive_secret_key("ZONING IS COMMUNISM".as_bytes(), &salt.as_bytes(), KDF_OPS_INTERACTIVE, KDF_MEM_INTERACTIVE).unwrap();
         assert_eq!(master_key.as_ref(), &[148, 34, 57, 50, 168, 111, 176, 114, 120, 168, 159, 158, 96, 119, 14, 194, 52, 224, 58, 194, 77, 44, 168, 25, 54, 138, 172, 91, 164, 86, 190, 89]);
     }
 
     #[test]
-    fn hmac_result() {
+    fn mac_result() {
         let data = String::from("PARDON ME GOOD SIR DO YOU HAVE ANY goats FOR SALE!!!!!!?");
-        let hmac_key = HmacKey::new_sha512_from_bytes([
+        let mac_key = MacKey::new_blake2b_from_bytes([
+            0, 1, 2, 3, 4, 5, 6, 7,
+            1, 2, 3, 4, 5, 6, 7, 8,
+            2, 3, 4, 5, 6, 7, 8, 9,
+            3, 4, 5, 6, 7, 8, 9, 9,
             0, 1, 2, 3, 4, 5, 6, 7,
             1, 2, 3, 4, 5, 6, 7, 8,
             2, 3, 4, 5, 6, 7, 8, 9,
             3, 4, 5, 6, 7, 8, 9, 9,
         ]);
-        let hmac = Hmac::new_sha512(&hmac_key, data.as_bytes()).unwrap();
-        assert_eq!(hmac, Hmac::Sha512(Binary::new([156, 55, 129, 245, 223, 131, 164, 169, 16, 253, 155, 213, 86, 246, 186, 151, 64, 222, 116, 203, 60, 141, 238, 58, 243, 10, 108, 239, 195, 253, 44, 24, 162, 111, 160, 243, 22, 144, 143, 251, 26, 48, 68, 19, 157, 53, 120, 83, 58, 193, 183, 100, 30, 220, 65, 80, 32, 47, 141, 1, 48, 195, 198, 0])));
+        let mac = Mac::new_blake2b(&mac_key, data.as_bytes()).unwrap();
+        assert_eq!(mac, Mac::Blake2b(Binary::new([180, 48, 36, 120, 45, 212, 97, 54, 140, 236, 63, 242, 120, 88, 177, 237, 196, 173, 110, 201, 8, 226, 18, 152, 29, 146, 33, 174, 39, 63, 156, 136, 82, 242, 221, 143, 179, 198, 47, 69, 223, 118, 96, 49, 42, 73, 86, 138, 147, 204, 67, 201, 217, 32, 145, 204, 138, 128, 101, 84, 115, 69, 173, 180])));
     }
 
     #[test]
-    fn hmac_verify() {
+    fn mac_verify() {
         let data1 = String::from("hai plz verify me. oh and could you verify my cousin too? he's just over there, with his wife and four children...if it's not too much trouble, maybe you could verify them as we...");
         let data2 = String::from("hai plz verify me. oh and could you verify my cousin too? he's just over there, with his wife and seven children...if it's not too much trouble, maybe you could verify them as we...");
-        let hmac_key1 = HmacKey::new_sha512().unwrap();
-        let hmac_key2 = HmacKey::new_sha512().unwrap();
-        let hmac = Hmac::new_sha512(&hmac_key1, data1.as_bytes()).unwrap();
-        hmac.verify(&hmac_key1, data1.as_bytes()).unwrap();
-        let res = hmac.verify(&hmac_key2, data1.as_bytes());
-        assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
-        let res = hmac.verify(&hmac_key1, data2.as_bytes());
-        assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
-        let res = hmac.verify(&hmac_key2, data2.as_bytes());
-        assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
+        let mac_key1 = MacKey::new_blake2b().unwrap();
+        let mac_key2 = MacKey::new_blake2b().unwrap();
+        let mac = Mac::new_blake2b(&mac_key1, data1.as_bytes()).unwrap();
+        mac.verify(&mac_key1, data1.as_bytes()).unwrap();
+        let res = mac.verify(&mac_key2, data1.as_bytes());
+        assert_eq!(res, Err(Error::CryptoMacVerificationFailed));
+        let res = mac.verify(&mac_key1, data2.as_bytes());
+        assert_eq!(res, Err(Error::CryptoMacVerificationFailed));
+        let res = mac.verify(&mac_key2, data2.as_bytes());
+        assert_eq!(res, Err(Error::CryptoMacVerificationFailed));
     }
 }
 

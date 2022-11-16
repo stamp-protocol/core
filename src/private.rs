@@ -12,7 +12,7 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::key::{SecretKey, SecretKeyNonce, Hmac, HmacKey},
+    crypto::key::{SecretKey, SecretKeyNonce, Mac, MacKey},
     util::{Public, ser::{self, BinaryVec}},
 };
 use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag, types::Class};
@@ -27,7 +27,7 @@ pub struct Private<T> {
     #[serde(skip)]
     _phantom: PhantomData<T>,
     /// The encrypted data stored in this container, created using a
-    /// `PrivateVerifiableInner` struct (the actual data alongside an HMAC key).
+    /// `PrivateVerifiableInner` struct (the actual data alongside a MAC key).
     sealed: BinaryVec,
     /// A nonce used to decrypt our heroic data (given the correct secret key).
     nonce: SecretKeyNonce,
@@ -109,31 +109,31 @@ struct PrivateVerifiableInner<T> {
     /// The value we're storing.
     #[rasn(tag(explicit(0)))]
     value: T,
-    /// The HMAC key we use to hash the data.
+    /// The MAC key we use to hash the data.
     #[rasn(tag(explicit(1)))]
-    hmac_key: HmacKey,
+    mac_key: MacKey,
 }
 
-/// Holds private data along with an HMAC of the data being stored, allowing
-/// the HMAC to be signed for verification without leaking information about the
+/// Holds private data along with a MAC of the data being stored, allowing
+/// the MAC to be signed for verification without leaking information about the
 /// private data itself.
 ///
 /// This works such that:
 ///
-/// - The private data is stored alonside an HMAC key (both encrypted)
-/// - The HMAC key can be used to derive a hash of the data
+/// - The private data is stored alonside a MAC key (both encrypted)
+/// - The MAC key can be used to derive a hash of the data
 ///
 /// This allows anybody who has access to the private data to verify that the
-/// HMAC matches the data, but makes it nearly impossible for someone who only
-/// has a (public) signature of the HMAC to determine what the private data
+/// MAC matches the data, but makes it nearly impossible for someone who only
+/// has a (public) signature of the MAC to determine what the private data
 /// actually is.
 ///
-/// The idea here is that someone can stamp the *HMAC* of a private claim, and
-/// others can verify that stamp against the HMAC, but the signature of the
-/// HMAC itself reveals no information about the private data.
+/// The idea here is that someone can stamp the *MAC* of a private claim, and
+/// others can verify that stamp against the MAC, but the signature of the
+/// MAC itself reveals no information about the private data.
 ///
 /// This also allows the key that protects the private data to be rotated
-/// without the HMAC (and therefor the stamps) on that data being deprecated.
+/// without the MAC (and therefor the stamps) on that data being deprecated.
 #[derive(Debug, PartialEq, AsnType, Serialize, Deserialize)]
 pub struct PrivateVerifiable<T> {
     /// Allows us to cast this container to T without this container ever
@@ -141,7 +141,7 @@ pub struct PrivateVerifiable<T> {
     #[serde(skip)]
     _phantom: PhantomData<T>,
     /// The encrypted data stored in this container, created using a
-    /// `PrivateVerifiableInner` struct (the actual data alongside an HMAC key).
+    /// `PrivateVerifiableInner` struct (the actual data alongside a MAC key).
     sealed: BinaryVec,
     /// A nonce used to decrypt our heroic data (given the correct secret key).
     nonce: SecretKeyNonce,
@@ -172,30 +172,30 @@ impl<T: Encode + Decode> PrivateVerifiable<T> {
     /// Create a new verifiable private container from a given serializable data
     /// object and an encrypting key.
     ///
-    /// We generate a random HMAC key and do two things:
+    /// We generate a random MAC key and do two things:
     ///
-    /// 1. HMAC the data being stored with the HMAC key, then store the data and
-    ///    the HMAC key together in a `PrivateVerifiableInner` container before
+    /// 1. MAC the data being stored with the MAC key, then store the data and
+    ///    the MAC key together in a `PrivateVerifiableInner` container before
     ///    encrypting the container.
-    /// 2. Sign the generated HMAC with our private key, then throw away the
-    ///    HMAC and *only store the signature*.
+    /// 2. Sign the generated MAC with our private key, then throw away the
+    ///    MAC and *only store the signature*.
     ///
     /// Using this scheme, anybody who knows the stored secret can recreate the
-    /// HMAC and thus verify the public signature on the secret. However, the
-    /// signature itself reveals nothing about the secret data because the HMAC
+    /// MAC and thus verify the public signature on the secret. However, the
+    /// signature itself reveals nothing about the secret data because the MAC
     /// obscures the data behind an encrypted key.
-    pub fn seal(seal_key: &SecretKey, data: &T) -> Result<(Hmac, Self)> {
-        // create a new random key and use it to HMAC our data
-        let hmac_key = HmacKey::new_sha512()?;
-        let hmac = Hmac::new_sha512(&hmac_key, &ser::serialize(data)?)?;
-        // store our data alongside our HMAC key, allowing anybody with access
-        // to this container to regenerate the HMAC.
-        let inner = PrivateVerifiableInner { value: data, hmac_key: hmac_key };
+    pub fn seal(seal_key: &SecretKey, data: &T) -> Result<(Mac, Self)> {
+        // create a new random key and use it to MAC our data
+        let mac_key = MacKey::new_blake2b()?;
+        let mac = Mac::new_blake2b(&mac_key, &ser::serialize(data)?)?;
+        // store our data alongside our MAC key, allowing anybody with access
+        // to this container to regenerate the MAC.
+        let inner = PrivateVerifiableInner { value: data, mac_key: mac_key };
         let serialized_inner = ser::serialize(&inner)?;
         let nonce = seal_key.gen_nonce()?;
-        // encrypt the data+hmac_key combo
+        // encrypt the data+mac_key combo
         let sealed = seal_key.seal(&serialized_inner, &nonce)?;
-        Ok((hmac, Self {
+        Ok((mac, Self {
             _phantom: PhantomData,
             sealed: BinaryVec::from(sealed),
             nonce,
@@ -203,20 +203,20 @@ impl<T: Encode + Decode> PrivateVerifiable<T> {
     }
 
     /// Open and return the secret stored in this container, provided that the
-    /// HMAC stored with this secret is the same as the one we generate when we
-    /// HMAC the decrypted data with the decrypted HMAC key.
+    /// MAC stored with this secret is the same as the one we generate when we
+    /// MAC the decrypted data with the decrypted MAC key.
     ///
-    /// If the data has been tampered with and the HMACs don't verify, then we
+    /// If the data has been tampered with and the MACs don't verify, then we
     /// return an error.
-    pub fn open_and_verify(&self, seal_key: &SecretKey, hmac: &Hmac) -> Result<T> {
+    pub fn open_and_verify(&self, seal_key: &SecretKey, mac: &Mac) -> Result<T> {
         // decrypt the secret value
         let open_bytes = seal_key.open(&self.sealed, &self.nonce)
             .map_err(|_| Error::CryptoOpenFailed)?;
-        // deserialize our secret to give us the stored data and the HMAC key.
+        // deserialize our secret to give us the stored data and the MAC key.
         let obj: PrivateVerifiableInner<T> = ser::deserialize(&open_bytes[..])?;
-        let PrivateVerifiableInner { value, hmac_key } = obj;
-        // verify our hmac against our decrypted data/hmac key
-        hmac.verify(&hmac_key, &ser::serialize(&value)?)?;
+        let PrivateVerifiableInner { value, mac_key } = obj;
+        // verify our mac against our decrypted data/mac key
+        mac.verify(&mac_key, &ser::serialize(&value)?)?;
         // success!
         Ok(value)
     }
@@ -245,69 +245,69 @@ impl<T> Clone for PrivateVerifiable<T> {
     }
 }
 
-/// A container that holds an (encrypted) HMAC key, a set of (encrypted) data
-/// of type `T`, and an [Hmac] of the unencrypted data.
+/// A container that holds an (encrypted) MAC key, a set of (encrypted) data
+/// of type `T`, and an [Mac] of the unencrypted data.
 ///
 /// The idea here is to allow verification of private data such that:
 ///
-/// 1. When the data is unlocked, it can be verified against the HMAC to ensure
+/// 1. When the data is unlocked, it can be verified against the MAC to ensure
 /// is has not been tampered with.
 /// 1. If multiple people can access the private data of the identity, one
 /// cannot maliciously replace the private contents of a transaction without
-/// breaking the signature of the HMAC on that content.
+/// breaking the signature of the MAC on that content.
 #[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct PrivateWithHmac<T> {
-    /// Holds the HMAC for this private data so it can be verified without
+pub struct PrivateWithMac<T> {
+    /// Holds the MAC for this private data so it can be verified without
     /// revealing the data itself
     #[rasn(tag(explicit(0)))]
-    pub(crate) hmac: Hmac,
-    /// The (encrypted) data AND HMAC key.
+    pub(crate) mac: Mac,
+    /// The (encrypted) data AND MAC key.
     #[rasn(tag(explicit(1)))]
     pub(crate) data: Option<PrivateVerifiable<T>>,
 }
 
-impl<T> PrivateWithHmac<T> {
-    /// Create a new private hmac container
-    pub fn new(hmac: Hmac, data: Option<PrivateVerifiable<T>>) -> Self {
-        Self { hmac, data }
+impl<T> PrivateWithMac<T> {
+    /// Create a new private mac container
+    pub fn new(mac: Mac, data: Option<PrivateVerifiable<T>>) -> Self {
+        Self { mac, data }
     }
 }
 
-impl<T: Encode + Decode> PrivateWithHmac<T> {
-    /// Create a new `PrivateWithHmac` container around our data.
+impl<T: Encode + Decode> PrivateWithMac<T> {
+    /// Create a new `PrivateWithMac` container around our data.
     pub fn seal(seal_key: &SecretKey, val: T) -> Result<Self> {
-        let (hmac, private_verifiable) = PrivateVerifiable::seal(seal_key, &val)?;
-        Ok(Self { hmac, data: Some(private_verifiable) })
+        let (mac, private_verifiable) = PrivateVerifiable::seal(seal_key, &val)?;
+        Ok(Self { mac, data: Some(private_verifiable) })
     }
 
-    /// Unlock the data held within, and verify it against our heroic HMAC.
+    /// Unlock the data held within, and verify it against our heroic MAC.
     pub fn open_and_verify(&self, seal_key: &SecretKey) -> Result<T> {
         match self.data() {
-            Some(prv) => prv.open_and_verify(seal_key, self.hmac()),
+            Some(prv) => prv.open_and_verify(seal_key, self.mac()),
             None => Err(Error::PrivateDataMissing)?,
         }
     }
 
-    /// Reencrypt this PrivateWithHmac container with a new key.
+    /// Reencrypt this PrivateWithMac container with a new key.
     pub(crate) fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let res = match self {
-            Self {hmac, data: Some(prv)} => {
+            Self {mac, data: Some(prv)} => {
                 Self {
-                    hmac,
+                    mac,
                     data: Some(prv.reencrypt(previous_seal_key, new_seal_key)?),
                 }
             }
-            Self {hmac, data: None} => Self {hmac, data: None},
+            Self {mac, data: None} => Self {mac, data: None},
         };
         Ok(res)
     }
 }
 
-impl<T> Public for PrivateWithHmac<T> {
+impl<T> Public for PrivateWithMac<T> {
     fn strip_private(&self) -> Self {
         Self {
-            hmac: self.hmac().clone(),
+            mac: self.mac().clone(),
             data: None,
         }
     }
@@ -317,16 +317,16 @@ impl<T> Public for PrivateWithHmac<T> {
     }
 }
 
-impl<T> PartialEq for PrivateWithHmac<T> {
+impl<T> PartialEq for PrivateWithMac<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.hmac() == other.hmac()
+        self.mac() == other.mac()
     }
 }
 
-impl<T> Clone for PrivateWithHmac<T> {
+impl<T> Clone for PrivateWithMac<T> {
     fn clone(&self) -> Self {
         Self {
-            hmac: self.hmac.clone(),
+            mac: self.mac.clone(),
             data: self.data.clone(),
         }
     }
@@ -339,11 +339,11 @@ pub enum MaybePrivate<T> {
     /// Any publicly-viewable data
     Public(T),
     /// Secret data, which can only be opened with the corresponding decryption
-    /// key, stored alongside a public signature of an HMAC of the secret data.
+    /// key, stored alongside a public signature of a MAC of the secret data.
     ///
     /// Make sure to check if this object has data via <MaybePrivate::has_data()>
     /// before trying to use it.
-    Private(PrivateWithHmac<T>)
+    Private(PrivateWithMac<T>)
 }
 
 impl<T: Encode + Decode + Clone> MaybePrivate<T> {
@@ -354,14 +354,14 @@ impl<T: Encode + Decode + Clone> MaybePrivate<T> {
 
     /// Create a new private MaybePrivate value.
     pub fn new_private(seal_key: &SecretKey, val: T) -> Result<Self> {
-        let container = PrivateWithHmac::seal(seal_key, val)?;
+        let container = PrivateWithMac::seal(seal_key, val)?;
         Ok(Self::Private(container))
     }
 
-    /// Get the HMAC for this MaybePrivate, if it has one.
-    pub fn hmac(&self) -> Option<&Hmac> {
+    /// Get the MAC for this MaybePrivate, if it has one.
+    pub fn mac(&self) -> Option<&Mac> {
         match self {
-            Self::Private(container) => Some(container.hmac()),
+            Self::Private(container) => Some(container.mac()),
             _ => None,
         }
     }
@@ -424,7 +424,7 @@ impl<T> AsnType for MaybePrivate<T> {
 #[derive(AsnType, Encode, Decode)]
 struct PrivateInner<T> {
     #[rasn(tag(explicit(0)))]
-    hmac: Hmac,
+    mac: Mac,
     #[rasn(tag(explicit(1)))]
     data: Option<PrivateVerifiable<T>>,
 }
@@ -437,9 +437,9 @@ impl<T> Encode for MaybePrivate<T>
             Self::Public(data) => {
                 encoder.encode_explicit_prefix(Tag::new(Class::Context, 0), data)?;
             }
-            Self::Private(PrivateWithHmac { ref hmac, ref data }) => {
+            Self::Private(PrivateWithMac { ref mac, ref data }) => {
                 let inner = PrivateInner {
-                    hmac: hmac.clone(),
+                    mac: mac.clone(),
                     data: data.clone(),
                 };
                 encoder.encode_explicit_prefix(Tag::new(Class::Context, 1), &inner)?;
@@ -458,7 +458,7 @@ impl<T> Decode for MaybePrivate<T>
             .or_else(|_| {
                 decoder.decode_explicit_prefix(Tag::new(Class::Context, 1))
                     .map(|inner: PrivateInner<T>| {
-                        Self::Private(PrivateWithHmac::new(inner.hmac.clone(), inner.data.clone()))
+                        Self::Private(PrivateWithMac::new(inner.mac.clone(), inner.data.clone()))
                     })
             })
     }
@@ -468,13 +468,13 @@ impl<T: Clone> Public for MaybePrivate<T> {
     fn strip_private(&self) -> Self {
         match self {
             Self::Public(x) => Self::Public(x.clone()),
-            Self::Private(PrivateWithHmac { hmac, .. }) => Self::Private(PrivateWithHmac::new(hmac.clone(), None)),
+            Self::Private(PrivateWithMac { mac, .. }) => Self::Private(PrivateWithMac::new(mac.clone(), None)),
         }
     }
 
     fn has_private(&self) -> bool {
         match self {
-            Self::Private(PrivateWithHmac { data: Some(_), .. }) => true,
+            Self::Private(PrivateWithMac { data: Some(_), .. }) => true,
             _ => false,
         }
     }
@@ -511,28 +511,28 @@ mod tests {
     #[test]
     fn private_verifiable_seal_open() {
         let key = SecretKey::new_xchacha20poly1305().unwrap();
-        let (hmac, sealed) = PrivateVerifiable::<String>::seal(&key, &String::from("get a job")).unwrap();
-        let opened: String = sealed.open_and_verify(&key, &hmac).unwrap();
+        let (mac, sealed) = PrivateVerifiable::<String>::seal(&key, &String::from("get a job")).unwrap();
+        let opened: String = sealed.open_and_verify(&key, &mac).unwrap();
         assert_eq!(&opened, "get a job");
         let key2 = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(key != key2);
-        let res: Result<String> = sealed.open_and_verify(&key2, &hmac);
+        let res: Result<String> = sealed.open_and_verify(&key2, &mac);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
-        let hmac2 = Hmac::new_sha512(&HmacKey::new_sha512().unwrap(), b"hello there").unwrap();
-        assert!(hmac != hmac2);
-        let res: Result<String> = sealed.open_and_verify(&key, &hmac2);
-        assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
+        let mac2 = Mac::new_blake2b(&MacKey::new_blake2b().unwrap(), b"hello there").unwrap();
+        assert!(mac != mac2);
+        let res: Result<String> = sealed.open_and_verify(&key, &mac2);
+        assert_eq!(res, Err(Error::CryptoMacVerificationFailed));
     }
 
     #[test]
     fn private_verifiable_reencrypt() {
         let key1 = SecretKey::new_xchacha20poly1305().unwrap();
         let key2 = SecretKey::new_xchacha20poly1305().unwrap();
-        let (hmac, sealed) = PrivateVerifiable::<String>::seal(&key1, &String::from("get a job")).unwrap();
+        let (mac, sealed) = PrivateVerifiable::<String>::seal(&key1, &String::from("get a job")).unwrap();
         let sealed2 = sealed.reencrypt(&key1, &key2).unwrap();
-        let opened: String = sealed2.open_and_verify(&key2, &hmac).unwrap();
+        let opened: String = sealed2.open_and_verify(&key2, &mac).unwrap();
         assert_eq!(&opened, "get a job");
-        let res: Result<String> = sealed2.open_and_verify(&key1, &hmac);
+        let res: Result<String> = sealed2.open_and_verify(&key1, &mac);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
     }
 
@@ -554,18 +554,18 @@ mod tests {
         let mut fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
         while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305().unwrap(); }
-        let fake_hmac_key = HmacKey::new_sha512().unwrap();
+        let fake_mac_key = MacKey::new_blake2b().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
-            Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(),
+        let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithMac::new(
+            Mac::new_blake2b(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             None,
         ));
         let maybe2_tampered = match maybe2.clone() {
-            MaybePrivate::Private(PrivateWithHmac { data, .. }) => {
-                MaybePrivate::Private(PrivateWithHmac::new(
-                    Hmac::new_sha512(&fake_hmac_key, String::from("loool").as_bytes()).unwrap(),
+            MaybePrivate::Private(PrivateWithMac { data, .. }) => {
+                MaybePrivate::Private(PrivateWithMac::new(
+                    Mac::new_blake2b(&fake_mac_key, String::from("loool").as_bytes()).unwrap(),
                     data
                 ))
             }
@@ -578,7 +578,7 @@ mod tests {
         assert_eq!(maybe1.has_data(), true);
 
         assert_eq!(maybe2.open(&seal_key), Ok(String::from("omg")));
-        assert_eq!(maybe2_tampered.open(&seal_key), Err(Error::CryptoHmacVerificationFailed));
+        assert_eq!(maybe2_tampered.open(&seal_key), Err(Error::CryptoMacVerificationFailed));
         // fake key cannot open 
         assert_eq!(maybe2.open(&fake_key), Err(Error::CryptoOpenFailed));
         assert_eq!(maybe2.has_data(), true);
@@ -594,12 +594,12 @@ mod tests {
         let mut fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
         while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305().unwrap(); }
-        let fake_hmac_key = HmacKey::new_sha512().unwrap();
+        let fake_mac_key = MacKey::new_blake2b().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
-            Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(),
+        let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithMac::new(
+            Mac::new_blake2b(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             None,
         ));
 
@@ -613,12 +613,12 @@ mod tests {
         let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
         let fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(seal_key != fake_key);
-        let fake_hmac_key = HmacKey::new_sha512().unwrap();
+        let fake_mac_key = MacKey::new_blake2b().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
-            Hmac::new_sha512(&fake_hmac_key, Vec::new().as_slice()).unwrap(),
+        let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithMac::new(
+            Mac::new_blake2b(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             None,
         ));
 
@@ -633,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn maybe_private_reencrypt_hmac() {
+    fn maybe_private_reencrypt_mac() {
         let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
         let seal_key2 = SecretKey::new_xchacha20poly1305().unwrap();
 
@@ -655,11 +655,11 @@ mod tests {
         assert_eq!(maybe2_2.open(&seal_key2), Ok(String::from("omg")));
         assert_eq!(maybe3_2.open(&seal_key2), Err(Error::PrivateDataMissing));
 
-        // make sure the HMAC stays the same, if present
-        assert_eq!(maybe1.hmac(), None);
-        assert_eq!(maybe1_2.hmac(), None);
-        assert_eq!(maybe2.hmac().unwrap(), maybe2_2.hmac().unwrap());
-        assert_eq!(maybe3.hmac().unwrap(), maybe3_2.hmac().unwrap());
+        // make sure the MAC stays the same, if present
+        assert_eq!(maybe1.mac(), None);
+        assert_eq!(maybe1_2.mac(), None);
+        assert_eq!(maybe2.mac().unwrap(), maybe2_2.mac().unwrap());
+        assert_eq!(maybe3.mac().unwrap(), maybe3_2.mac().unwrap());
     }
 
     #[test]
@@ -668,11 +668,11 @@ mod tests {
         let maybe: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
         assert!(maybe.has_data());
         let maybe2 = maybe.strip_private();
-        let hmac = match &maybe {
-            MaybePrivate::Private(PrivateWithHmac { hmac, .. }) => hmac.clone(),
+        let mac = match &maybe {
+            MaybePrivate::Private(PrivateWithMac { mac, .. }) => mac.clone(),
             _ => panic!("weird"),
         };
-        assert_eq!(maybe2, MaybePrivate::Private(PrivateWithHmac { hmac, data: None }));
+        assert_eq!(maybe2, MaybePrivate::Private(PrivateWithMac { mac, data: None }));
         assert!(!maybe2.has_data());
     }
 }
