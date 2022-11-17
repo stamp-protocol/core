@@ -36,7 +36,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{self},
+        ser::{self, BinaryVec},
     },
 };
 use getset;
@@ -50,7 +50,7 @@ use std::ops::Deref;
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum TransactionBody {
-    /// Create a new identity. The [ID][TranscationID] of this transaction will
+    /// Create a new identity. The [ID][TransactionID] of this transaction will
     /// be the identity's public ID forever after.
     #[rasn(tag(explicit(0)))]
     CreateIdentityV1 {
@@ -208,7 +208,30 @@ pub enum TransactionBody {
     PublishV1 {
         #[rasn(tag(explicit(0)))]
         transactions: Box<Transactions>,
-    }
+    },
+    /// Create a transaction for use in an external network. This allows Stamp to act
+    /// as a transactional medium for other networks. If the members of that network
+    /// can speak Stamp, they can use it to create and sign custom transactions.
+    /// `Ext` transactions can also benefit not just from signatures and formatting,
+    /// but from the `previous_transactions` field which allows DAG-based causal
+    /// ordering.
+    ///
+    /// `Ext` allows specifying an optional transaction type and optional set of
+    /// binary contexts, which can be used for matching in the policy system. This
+    /// makes it so a policy can determine which [admin keys][AdminKey] can create
+    /// valid external transactions.
+    ///
+    /// Note that `Ext` transactions cannot be applied to the identity...Stamp allows
+    /// their creation but provides no methods for executing them.
+    #[rasn(tag(explicit(20)))]
+    ExtV1 {
+        #[rasn(tag(explicit(0)))]
+        ty: Option<BinaryVec>,
+        #[rasn(tag(explicit(1)))]
+        context: Option<Vec<BinaryVec>>,
+        #[rasn(tag(explicit(2)))]
+        payload: BinaryVec,
+    },
 }
 
 impl TransactionBody {
@@ -265,6 +288,7 @@ impl TransactionBody {
             Self::PublishV1 { transactions } => Self::PublishV1 {
                 transactions: Box::new(transactions.reencrypt(old_master_key, new_master_key)?),
             },
+            Self::ExtV1 { ty, context, payload } => Self::ExtV1 { ty, context, payload },
         };
         Ok(new_self)
     }
@@ -306,6 +330,7 @@ impl Public for TransactionBody {
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
             Self::SetNicknameV1 { nickname } => Self::SetNicknameV1 { nickname },
             Self::PublishV1 { transactions } => Self::PublishV1 { transactions: Box::new(transactions.strip_private()) },
+            Self::ExtV1 { ty, context, payload } => Self::ExtV1 { ty, context, payload },
         }
     }
 
@@ -336,6 +361,7 @@ impl Public for TransactionBody {
             Self::DeleteSubkeyV1 { .. } => false,
             Self::SetNicknameV1 { .. } => false,
             Self::PublishV1 { transactions } => transactions.has_private(),
+            Self::ExtV1 { .. } => false,
         }
     }
 }
@@ -686,6 +712,8 @@ mod tests {
                 }
                 // blehhhh...
                 TransactionBody::PublishV1 { .. } => { }
+                // blehhhh...
+                TransactionBody::ExtV1 { .. } => { }
             }
         }
 

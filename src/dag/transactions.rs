@@ -196,6 +196,10 @@ impl Transactions {
                 // NOPE
                 Err(Error::TransactionInvalid("Publish transactions cannot be applied to identities".into()))
             }
+            TransactionBody::ExtV1 { .. } => {
+                // NOPE
+                Err(Error::TransactionInvalid("Ext transactions cannot be applied to identities".into()))
+            }
         }
     }
 

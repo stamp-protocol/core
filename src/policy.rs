@@ -76,6 +76,8 @@ pub enum TransactionBodyType {
     SetNicknameV1,
     #[rasn(tag(explicit(19)))]
     PublishV1,
+    #[rasn(tag(explicit(20)))]
+    ExtV1,
 }
 
 impl From<&TransactionBody> for TransactionBodyType {
@@ -103,6 +105,7 @@ impl From<&TransactionBody> for TransactionBodyType {
             TransactionBody::DeleteSubkeyV1 { .. } => Self::DeleteSubkeyV1,
             TransactionBody::SetNicknameV1 { .. } => Self::SetNicknameV1,
             TransactionBody::PublishV1 { .. } => Self::PublishV1,
+            TransactionBody::ExtV1 { .. } => Self::ExtV1,
         }
     }
 }
@@ -197,6 +200,16 @@ pub enum Context {
     /// Allows actions on claims where the claim is of a particular type
     #[rasn(tag(explicit(8)))]
     ClaimType(ContextClaimType),
+    /// Allows actions on external transactions of a certain type
+    #[rasn(tag(explicit(9)))]
+    ExtType(BinaryVec),
+    /// Allows actions on external transactions containing a certain context
+    #[rasn(tag(explicit(10)))]
+    ExtContext(BinaryVec),
+    /// Allows actions on external transactions containing a context matching a
+    /// *prefix*, ie [1, 4, 8] matches [1, 4, 8, 42, 122]
+    #[rasn(tag(explicit(11)))]
+    ExtContextPrefix(BinaryVec),
 }
 
 impl Context {
@@ -287,6 +300,14 @@ impl Context {
             }
             TransactionBody::SetNicknameV1 { .. } => {}
             TransactionBody::PublishV1 { .. } => {}
+            TransactionBody::ExtV1 { ty, context, .. } => {
+                ty.as_ref().map(|t| contexts.push(Self::ExtType(t.clone())));
+                context.as_ref().map(|c| {
+                    for con in c {
+                        contexts.push(Self::ExtContext(con.clone()))
+                    }
+                });
+            }
         }
         contexts
     }
@@ -357,6 +378,11 @@ impl Context {
                 glob.matches(&name2)
             }
             (Self::ClaimType(ty1), Self::ClaimType(ty2)) => ty1 == ty2,
+            (Self::ExtType(ty1), Self::ExtType(ty2)) => ty1 == ty2,
+            (Self::ExtContext(c1), Self::ExtContext(c2)) => c1 == c2,
+            (Self::ExtContextPrefix(prefix), Self::ExtContext(context)) => {
+                context.starts_with(prefix.deref())
+            }
             _ => false,
         };
         if test {
@@ -397,6 +423,13 @@ pub enum Capability {
     ///
     /// This allows harnessing the identity and its policy system for participating
     /// in protocols outside of Stamp.
+    ///
+    /// There is some overlap between `Capability::Extension` and `[TransactionBody::ExtV1]`,
+    /// however capability extensions allow setting very fine-grained permissions (by
+    /// externalizing them to the caller, which also means just speaking Stamp doesn't
+    /// mean you can validate capability extensions) and transaction extensions allow
+    /// a very quick and easy way to leverage Stamp's transactional system that might
+    /// be somewhat crude but allow built-in transaction creation and verification.
     #[rasn(tag(explicit(2)))]
     Extension {
         #[rasn(tag(explicit(0)))]
@@ -649,6 +682,8 @@ mod tests {
             Context::Name("frothy".into()),
             Context::NameGlob("GANDALFFFF-*".into()),
             Context::ClaimType(ContextClaimType::Email),
+            Context::ExtType(BinaryVec::from(Vec::from("order-create".as_bytes()))),
+            Context::ExtContext(BinaryVec::from(Vec::from("dept-receiving".as_bytes()))),
         ];
 
         for round1 in combos.iter() {   // FIGHT
@@ -686,7 +721,24 @@ mod tests {
         conglob2.test(&Context::Name("policies/purchasing/inventory".into())).unwrap();
         conglob2.test(&Context::Name("actions/purchasing/shipping".into())).unwrap();
         assert_eq!(
+            conglob2.test(&Context::NameGlob("policies/purchasing/inventory".into())),
+            Err(Error::PolicyContextMismatch)
+        );
+        assert_eq!(
             conglob2.test(&Context::Name("policies/marketing/inventory".into())),
+            Err(Error::PolicyContextMismatch)
+        );
+
+        let conextprefix = Context::ExtContextPrefix(Vec::from("inventory/".as_bytes()).into());
+        conextprefix.test(&Context::ExtContext(Vec::from("inventory/".as_bytes()).into())).unwrap();
+        conextprefix.test(&Context::ExtContext(Vec::from("inventory/orders".as_bytes()).into())).unwrap();
+        conextprefix.test(&Context::ExtContext(Vec::from("inventory/widgets/incoming".as_bytes()).into())).unwrap();
+        assert_eq!(
+            conextprefix.test(&Context::ExtContextPrefix(Vec::from("inventory/orders".as_bytes()).into())),
+            Err(Error::PolicyContextMismatch)
+        );
+        assert_eq!(
+            conextprefix.test(&Context::ExtContext(Vec::from("zing/".as_bytes()).into())),
             Err(Error::PolicyContextMismatch)
         );
 
@@ -1013,6 +1065,37 @@ mod tests {
         });
         let policy3 = Policy::new(capabilities3.clone(), multisig1.clone());
         assert!(policy3.can(&testcap));
+
+        let testcap2 = Capability::Transaction {
+            body_type: TransactionBodyType::ExtV1,
+            context: Context::Any(vec![
+                Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
+                Context::ExtContext(Vec::from("department:inventory".as_bytes()).into()),
+                Context::ExtContext(Vec::from("budget:production/inventory/widgets".as_bytes()).into()),
+            ]),
+        };
+        let testcap3 = Capability::Transaction {
+            body_type: TransactionBodyType::ExtV1,
+            context: Context::Any(vec![
+                Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
+                Context::ExtContext(Vec::from("department:inventory".as_bytes()).into()),
+                Context::ExtContext(Vec::from("budget:current/not-the-capital-account".as_bytes()).into()), // thank you, we do our best
+            ]),
+        };
+        let capabilities4 = vec![
+            Capability::Transaction {
+                body_type: TransactionBodyType::ExtV1,
+                context: Context::All(vec![
+                    Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
+                    Context::ExtContext(Vec::from("department:inventory".as_bytes()).into()),
+                    Context::ExtContextPrefix(Vec::from("budget:production/inventory/".as_bytes()).into()),
+                ]),
+            },
+        ];
+        let policy4 = Policy::new(capabilities4.clone(), multisig1.clone());
+        assert!(!policy4.can(&testcap));
+        assert!(policy4.can(&testcap2));
+        assert!(!policy4.can(&testcap3));
     }
 
     #[test]
