@@ -36,7 +36,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{self, BinaryVec},
+        ser::{self, BinaryVec, KeyValEntry},
     },
 };
 use getset;
@@ -228,7 +228,7 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(0)))]
         ty: Option<BinaryVec>,
         #[rasn(tag(explicit(1)))]
-        context: Option<Vec<BinaryVec>>,
+        context: Option<Vec<KeyValEntry>>,
         #[rasn(tag(explicit(2)))]
         payload: BinaryVec,
     },

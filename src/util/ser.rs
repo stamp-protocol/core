@@ -12,7 +12,7 @@ use crate::{
     util::Public,
 };
 use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag};
-use serde::{Serialize, ser::Serializer, de::Deserializer};
+use serde::{Serialize, Deserialize, ser::Serializer, de::Deserializer};
 use zeroize::Zeroize;
 
 pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
@@ -246,6 +246,25 @@ macro_rules! asn_encdec_newtype {
                 Ok(Self(inner))
             }
         }
+    }
+}
+
+/// A struct that represents a single entry in a key-value table.
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct KeyValEntry {
+    /// The key
+    #[rasn(tag(explicit(0)))]
+    key: BinaryVec,
+    /// The value
+    #[rasn(tag(explicit(1)))]
+    val: BinaryVec,
+}
+
+impl KeyValEntry {
+    /// Quick onstructor for KeyValEntry
+    pub fn new(key: BinaryVec, val: BinaryVec) -> Self {
+        Self { key, val }
     }
 }
 
