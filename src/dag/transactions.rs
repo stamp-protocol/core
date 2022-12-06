@@ -72,8 +72,6 @@ impl Transactions {
     /// Run a transaction and return the output
     fn apply_transaction(identity: Option<Identity>, transaction: &Transaction) -> Result<Identity> {
         match transaction.entry().body().clone() {
-            // if this is a private transaction, just pass the identity
-            // back as-is
             TransactionBody::CreateIdentityV1 { admin_keys, policies } => {
                 if identity.is_some() {
                     Err(Error::DagCreateIdentityOnExistingChain)?;

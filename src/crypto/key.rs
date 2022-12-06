@@ -48,7 +48,8 @@ pub const KDF_OPS_SENSITIVE: u32 = 4;
 /// A constant that provides a default for mem difficulty for sensitive key derivation
 pub const KDF_MEM_SENSITIVE: u32 = 1048576;
 
-/// A value that lets us reference asymmetric keypairs by their public key.
+/// A value that lets us reference keys by a unique identifier (pubkey for asymc keypairs
+/// and MAC for secret keys).
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum KeyID {
@@ -193,22 +194,6 @@ impl PartialEq for SecretKey {
 pub enum SignKeypairSignature {
     #[rasn(tag(explicit(0)))]
     Ed25519(Binary<64>),
-}
-
-impl SignKeypairSignature {
-    /// Given a signing keypair, return a blank (ie, 0x0000000000...) signature
-    /// that matches the key type.
-    ///
-    /// This is useful when an object NEEDS a signature to be constructed, but
-    /// there is a method on that object specifically for signing itself. So, do
-    /// we duplicate the signing code in two places? Or do we give the object a
-    /// blank signature just to construct it, then call the signature method
-    /// once it's constructed? I prefer the latter.
-    pub fn blank(sign_keypair: &SignKeypair) -> Self {
-        match sign_keypair {
-            SignKeypair::Ed25519 { .. } => Self::Ed25519(Binary::new([0u8; 64])),
-        }
-    }
 }
 
 impl AsRef<[u8]> for SignKeypairSignature {
@@ -887,17 +872,6 @@ pub(crate) mod tests {
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
         let res = keypair.sign(&master_key1, data.as_slice());
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
-    }
-
-    #[test]
-    fn signkeypair_ed25519_blank() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let keypair1 = SignKeypair::new_ed25519(&master_key).unwrap();
-        let keypair2 = SignKeypair::new_ed25519(&master_key).unwrap();
-        let blank1 = SignKeypairSignature::blank(&keypair1);
-        let blank2 = SignKeypairSignature::blank(&keypair2);
-        assert_eq!(blank1, blank2);
-        assert_eq!(blank1.as_ref(), vec![0; 64].as_slice());
     }
 
     #[test]

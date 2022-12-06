@@ -233,6 +233,12 @@ pub enum Context {
     ///         BinaryVec::from(vec![4, 5, 6, 42, 83, 129])
     ///     ))
     /// ).unwrap_err();
+    /// context.test(
+    ///     &Context::ExtContext(KeyValEntry::new(
+    ///         BinaryVec::from(vec![1, 2, 3]),
+    ///         BinaryVec::from(vec![4, 5, 7])
+    ///     ))
+    /// ).unwrap_err();
     /// ```
     ///
     /// As you can see, the *value* is matched via prefis, but the key must be an
