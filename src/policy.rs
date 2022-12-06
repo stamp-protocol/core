@@ -16,7 +16,7 @@ use crate::{
     identity::{
         claim::ClaimSpec,
         identity::{Identity, IdentityID},
-        keychain::{ExtendKeypair, AdminKeypair, AdminKeypairPublic, AdminKeypairSignature},
+        keychain::{AdminKeyID, AdminKeypair, AdminKeypairPublic, AdminKeypairSignature},
     },
     util::ser::{self, BinaryVec, KeyValEntry},
 };
@@ -185,8 +185,10 @@ pub enum Context {
     /// instance, a claim that was created by transaction 0x03fd913)
     #[rasn(tag(explicit(4)))]
     ObjectID(TransactionID),
-    /// Allows an action on a keypair that has a public key matching the given
-    /// ID.
+    /// Allows an action on an admin key with the given ID.
+    AdminKeyID(AdminKeyID),
+    /// Allows an action on a key with the given ID. This can match Admin keys, although
+    /// using the `AdminKeyID` variant might be more useful.
     #[rasn(tag(explicit(5)))]
     KeyID(KeyID),
     /// Allows an action in the context of items with an exact name match. This
@@ -255,18 +257,21 @@ impl Context {
             TransactionBody::CreateIdentityV1 { .. } => {}
             TransactionBody::ResetIdentityV1 { .. } => {}
             TransactionBody::AddAdminKeyV1 { admin_key } => {
-                contexts.push(Self::KeyID(admin_key.key().key_id()));
+                contexts.push(Self::AdminKeyID(admin_key.key_id()));
+                contexts.push(Self::KeyID(admin_key.key_id().into()));
                 contexts.push(Self::Name(admin_key.name().clone()));
             }
             TransactionBody::EditAdminKeyV1 { id, .. } => {
                 identity.keychain().admin_key_by_keyid(id)
                     .map(|admin_key| contexts.push(Self::Name(admin_key.name().clone())));
-                contexts.push(Self::KeyID(id.clone()));
+                contexts.push(Self::AdminKeyID(id.clone()));
+                contexts.push(Self::KeyID(id.clone().into()));
             }
             TransactionBody::RevokeAdminKeyV1 { id, .. } => {
                 identity.keychain().admin_key_by_keyid(id)
                     .map(|admin_key| contexts.push(Self::Name(admin_key.name().clone())));
-                contexts.push(Self::KeyID(id.clone()));
+                contexts.push(Self::AdminKeyID(id.clone()));
+                contexts.push(Self::KeyID(id.clone().into()));
             }
             TransactionBody::AddPolicyV1 { .. } => { }
             TransactionBody::DeletePolicyV1 { id } => {
@@ -406,6 +411,7 @@ impl Context {
             }
             (Self::IdentityID(id1), Self::IdentityID(id2)) => id1 == id2,
             (Self::ObjectID(id1), Self::ObjectID(id2)) => id1 == id2,
+            (Self::AdminKeyID(id1), Self::AdminKeyID(id2)) => id1 == id2,
             (Self::KeyID(id1), Self::KeyID(id2)) => id1 == id2,
             (Self::Name(name1), Self::Name(name2)) => name1 == name2,
             (Self::NameGlob(glob1), Self::Name(name2)) => {
@@ -703,7 +709,7 @@ mod tests {
     use super::*;
     use crate::{
         crypto::key::{SecretKey},
-        identity::keychain::{AdminKey, AdminKeypair},
+        identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
         private::MaybePrivate,
         util::{self, Timestamp, Url},
     };
@@ -713,6 +719,7 @@ mod tests {
         let combos = vec![
             Context::IdentityID(IdentityID::random()),
             Context::ObjectID(TransactionID::random()),
+            Context::AdminKeyID(KeyID::random_sign().into()),
             Context::KeyID(KeyID::random_sign()),
             Context::Name("frothy".into()),
             Context::NameGlob("GANDALFFFF-*".into()),

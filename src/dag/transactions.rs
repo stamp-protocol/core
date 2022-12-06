@@ -18,6 +18,7 @@ use crate::{
         },
         keychain::{
             AdminKey,
+            AdminKeyID,
             Key,
             RevocationReason,
         },
@@ -573,7 +574,7 @@ impl Transactions {
     }
 
     /// Edit an [admin key][AdminKey].
-    pub fn edit_admin_key<T, S>(&self, now: T, id: KeyID, name: Option<S>, description: Option<Option<S>>) -> Result<Transaction>
+    pub fn edit_admin_key<T, S>(&self, now: T, id: AdminKeyID, name: Option<S>, description: Option<Option<S>>) -> Result<Transaction>
         where T: Into<Timestamp> + Clone,
               S: Into<String>,
     {
@@ -587,7 +588,7 @@ impl Transactions {
 
     /// Revokes an [AdminKey] key and moves it into the subkeys, optionally
     /// renaming it.
-    pub fn revoke_admin_key<T, S>(&self, now: T, id: KeyID, reason: RevocationReason, new_name: Option<S>) -> Result<Transaction>
+    pub fn revoke_admin_key<T, S>(&self, now: T, id: AdminKeyID, reason: RevocationReason, new_name: Option<S>) -> Result<Transaction>
         where T: Into<Timestamp> + Clone,
               S: Into<String>,
     {
@@ -864,7 +865,7 @@ mod tests {
         let identity2 = branch2.build_identity().unwrap();
         assert_eq!(identity1.nickname(), Some(&String::from("dirk-delta")));
         assert_eq!(identity1.keychain().admin_keys().len(), 1);
-        assert_eq!(identity1.keychain().subkeys()[0].key_id(), admin_key_2.key_id());
+        assert_eq!(identity1.keychain().subkeys()[0].key_id(), admin_key_2.key_id().into());
         assert_eq!(identity2.nickname(), Some(&String::from("liberal hokes")));
         assert_eq!(identity2.keychain().admin_keys()[1].key_id(), admin_key_3.key_id());
         assert_eq!(identity2.keychain().admin_keys().len(), 2);
@@ -882,7 +883,7 @@ mod tests {
         assert_eq!(identity3.keychain().admin_keys().len(), 2);
         assert_eq!(identity3.keychain().admin_keys()[1].key_id(), admin_key_3.key_id());
         assert_eq!(identity3.keychain().subkeys().len(), 1);
-        assert_eq!(identity3.keychain().subkeys()[0].key_id(), admin_key_2.key_id());
+        assert_eq!(identity3.keychain().subkeys()[0].key_id(), admin_key_2.key_id().into());
     }
 
     #[test]

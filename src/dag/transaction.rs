@@ -22,6 +22,7 @@ use crate::{
         },
         keychain::{
             AdminKey,
+            AdminKeyID,
             ExtendKeypair,
             Key,
             RevocationReason,
@@ -81,7 +82,7 @@ pub enum TransactionBody {
     #[rasn(tag(explicit(3)))]
     EditAdminKeyV1 {
         #[rasn(tag(explicit(0)))]
-        id: KeyID,
+        id: AdminKeyID,
         #[rasn(tag(explicit(1)))]
         name: Option<String>,
         #[rasn(tag(explicit(2)))]
@@ -92,7 +93,7 @@ pub enum TransactionBody {
     #[rasn(tag(explicit(4)))]
     RevokeAdminKeyV1 {
         #[rasn(tag(explicit(0)))]
-        id: KeyID,
+        id: AdminKeyID,
         #[rasn(tag(explicit(1)))]
         reason: RevocationReason,
         #[rasn(tag(explicit(2)))]
@@ -722,8 +723,8 @@ mod tests {
         test_privates(&TransactionBody::CreateIdentityV1 { admin_keys: vec![admin_key.clone()], policies: Vec::new() });
         test_privates(&TransactionBody::ResetIdentityV1 { admin_keys: Some(vec![admin_key.clone()]), policies: None });
         test_privates(&TransactionBody::AddAdminKeyV1 { admin_key: admin_key.clone() });
-        test_privates(&TransactionBody::EditAdminKeyV1 { id: admin_key.key().key_id(), name: Some("poopy".into()), description: None });
-        test_privates(&TransactionBody::RevokeAdminKeyV1 { id: admin_key.key().key_id(), reason: RevocationReason::Compromised, new_name: Some("old key".into()) });
+        test_privates(&TransactionBody::EditAdminKeyV1 { id: admin_key.key_id(), name: Some("poopy".into()), description: None });
+        test_privates(&TransactionBody::RevokeAdminKeyV1 { id: admin_key.key_id(), reason: RevocationReason::Compromised, new_name: Some("old key".into()) });
 
         let policy = Policy::new(vec![], MultisigPolicy::MOfN { must_have: 0, participants: vec![] });
         test_privates(&TransactionBody::AddPolicyV1 { policy });

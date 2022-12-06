@@ -10,7 +10,7 @@ use crate::{
     crypto::key::{KeyID, SecretKey},
     identity::{
         claim::{ClaimID, ClaimSpec, Claim},
-        keychain::{ExtendKeypair, AdminKey, RevocationReason, Key, Keychain},
+        keychain::{AdminKey, AdminKeyID, ExtendKeypair, RevocationReason, Key, Keychain},
         stamp::{StampID, Stamp, StampRevocation},
     },
     policy::{PolicyID, PolicyContainer},
@@ -167,12 +167,12 @@ impl Identity {
         Ok(self)
     }
 
-    pub(crate) fn edit_admin_key(mut self, id: &KeyID, name: Option<String>, description: Option<Option<String>>) -> Result<Self> {
+    pub(crate) fn edit_admin_key(mut self, id: &AdminKeyID, name: Option<String>, description: Option<Option<String>>) -> Result<Self> {
         self.set_keychain(self.keychain().clone().edit_admin_key(id, name, description)?);
         Ok(self)
     }
 
-    pub(crate) fn revoke_admin_key(mut self, id: &KeyID, reason: RevocationReason, new_name: Option<String>) -> Result<Self> {
+    pub(crate) fn revoke_admin_key(mut self, id: &AdminKeyID, reason: RevocationReason, new_name: Option<String>) -> Result<Self> {
         self.set_keychain(self.keychain().clone().revoke_admin_key(id, reason, new_name)?);
         Ok(self)
     }

@@ -71,7 +71,7 @@ pub trait ExtendKeypair: From<SignKeypair> + Clone + PartialEq + Deref<Target = 
 }
 
 macro_rules! make_keytype {
-    ($keytype:ident, $keytype_public:ident, $signaturetype:ident) => {
+    ($keytype:ident, $keytype_public:ident, $signaturetype:ident, $keyid:ident) => {
         #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
         pub struct $signaturetype(SignKeypairSignature);
 
@@ -166,10 +166,39 @@ macro_rules! make_keytype {
         impl ExtendKeypair for $keytype {
             type Signature = $signaturetype;
         }
+
+        #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+        pub struct $keyid(KeyID);
+
+        impl From<KeyID> for $keyid {
+            fn from(id: KeyID) -> Self {
+                Self(id)
+            }
+        }
+
+        impl From<$keyid> for KeyID {
+            fn from(id: $keyid) -> Self {
+                let $keyid(inner) = id;
+                inner
+            }
+        }
+
+        impl From<SignKeypairPublic> for $keyid {
+            fn from(pubkey: SignKeypairPublic) -> Self {
+                KeyID::SignKeypair(pubkey).into()
+            }
+        }
+
+        impl Deref for $keyid {
+            type Target = KeyID;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
     }
 }
 
-make_keytype! { AdminKeypair, AdminKeypairPublic, AdminKeypairSignature }
+make_keytype! { AdminKeypair, AdminKeypairPublic, AdminKeypairSignature, AdminKeyID }
 
 /// Why we are revoking a key.
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
@@ -409,6 +438,11 @@ impl AdminKey {
         let Self { key, name, description } = self;
         Ok(Self::new(key.reencrypt(previous_master_key, new_master_key)?, name, description))
     }
+
+    /// Grab this key's [AdminKeyID].
+    pub fn key_id(&self) -> AdminKeyID {
+        self.key().key_id().into()
+    }
 }
 
 impl Deref for AdminKey {
@@ -466,18 +500,18 @@ impl Keychain {
     }
 
     /// Find an admin key by key id.
-    pub fn admin_key_by_keyid(&self, key_id: &KeyID) -> Option<&AdminKey> {
+    pub fn admin_key_by_keyid(&self, key_id: &AdminKeyID) -> Option<&AdminKey> {
         self.admin_keys().iter().find(|x| &x.key_id() == key_id)
     }
 
     /// Find an admin key by string key id.
     pub fn admin_key_by_keyid_str(&self, keyid_str: &str) -> Option<&AdminKey> {
-        self.admin_keys().iter().find(|x| x.key().key_id().as_string() == keyid_str)
+        self.admin_keys().iter().find(|x| x.key_id().as_string() == keyid_str)
     }
 
     /// Find an admin key by key id.
-    pub fn admin_key_by_keyid_mut(&mut self, keyid: &KeyID) -> Option<&mut AdminKey> {
-        self.admin_keys_mut().iter_mut().find(|x| &x.key().key_id() == keyid)
+    pub fn admin_key_by_keyid_mut(&mut self, keyid: &AdminKeyID) -> Option<&mut AdminKey> {
+        self.admin_keys_mut().iter_mut().find(|x| &x.key_id() == keyid)
     }
 
     /// Find an admin key by name.
@@ -560,7 +594,7 @@ impl Keychain {
     }
 
     /// Update some info about an admin key
-    pub(crate) fn edit_admin_key<T: Into<String>>(mut self, id: &KeyID, name: Option<T>, description: Option<Option<T>>) -> Result<Self> {
+    pub(crate) fn edit_admin_key<T: Into<String>>(mut self, id: &AdminKeyID, name: Option<T>, description: Option<Option<T>>) -> Result<Self> {
         if let Some(key) = self.admin_key_by_keyid_mut(id) {
             if let Some(set_name) = name {
                 key.set_name(set_name.into());
@@ -573,7 +607,7 @@ impl Keychain {
     }
 
     /// Revoke an [Admin key][AdminKeypair].
-    pub(crate) fn revoke_admin_key<T: Into<String>>(mut self, id: &KeyID, reason: RevocationReason, new_name: Option<T>) -> Result<Self> {
+    pub(crate) fn revoke_admin_key<T: Into<String>>(mut self, id: &AdminKeyID, reason: RevocationReason, new_name: Option<T>) -> Result<Self> {
         if let Some(key) = self.admin_key_by_keyid(id) {
             let new_name: String = new_name
                 .map(|x| x.into())
@@ -831,7 +865,7 @@ mod tests {
         assert_eq!(keychain4.admin_keys()[0].name(), "frizzy");
         assert_eq!(keychain4.admin_keys()[0].description(), &Some("SO IT'S CONTINENTAL?".into()));
 
-        let keychain5 = keychain4.edit_admin_key(&KeyID::random_sign(), Some("GERRRR"), Some(None)).unwrap();
+        let keychain5 = keychain4.edit_admin_key(&AdminKeyID::from(KeyID::random_sign()), Some("GERRRR"), Some(None)).unwrap();
         assert_eq!(keychain5.admin_keys().len(), 1);
         assert_eq!(keychain5.admin_keys()[0].name(), "frizzy");
         assert_eq!(keychain5.admin_keys()[0].description(), &Some("SO IT'S CONTINENTAL?".into()));
