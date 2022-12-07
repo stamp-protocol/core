@@ -41,8 +41,72 @@
 //! 1. To be easy to use by choosing sensible defaults, providing good UX
 //! wherever possible, and being opinionated wherever needed.
 //! 1. To define paths for recovery that advertise their risks and benefits.
+//! 1. To act as a foundational layer for other protocols where identity is required.
 //! 1. To act as a useful mechanism for discovery in other distributed or
 //! decentralized systems.
+//!
+//! # Usage
+//!
+//! "Sounds perfect in every way...how do I use it?" you might be wondering.
+//!
+//! First, let's create an identity:
+//!
+//! ```
+//! use stamp_core::{
+//!     crypto::key::{derive_secret_key, Hash, KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
+//!     dag::Transactions,
+//!     identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
+//!     policy::{Capability, MultisigPolicy, Policy},
+//!     util::Timestamp,
+//! };
+//! use std::ops::Deref;
+//! 
+//! // Let's create a master key. This key locks/unlocks the sensitive data within the
+//! // identity, such as private keys. Generally, you'd create this using a passphrase:
+//! let salt = Hash::new_blake2b("2022-12-06T11:59:59-0800".as_bytes()).unwrap();
+//! let passphrase = "lumpy coal makes good sandwhiches";
+//! let master_key = derive_secret_key(passphrase.as_bytes(), salt.as_bytes(), KDF_OPS_MODERATE, KDF_MEM_MODERATE).unwrap();
+//!
+//! // Next, we'll create an admin key. Admin keys are how we sign changes to our identity,
+//! // including its creation.
+//! let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
+//! let admin_key = AdminKey::new(admin_keypair, "Alpha", Some("Our primary admin key"));
+//!
+//! // Admin keys by themselves cannot actually do anything. They need a policy that describes
+//! // what capabilities they have.
+//! let policy = Policy::new(
+//!     // Each policy can have any number of Capabilities, which additively allow access
+//!     // to certain portions of the identity. Here, we grant access to everything.
+//!     vec![Capability::Permissive],
+//!     // A multisig policy controls which keys can satisfy this policy.
+//!     MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
+//! );
+//!
+//! // An identity is a collection of transactions. Later transactions reference previous
+//! // transactions, creating a DAG (Directed Acyclic Graph) of changes that, when applied
+//! // in order, create your final identity.
+//! let transactions = Transactions::new();
+//!
+//! // Ok, now to the fun stuff. We author a transaction that creates our identity: a genesis
+//! // transaction.
+//! let genesis = transactions
+//!     // when creating the identity, we pass in our initial set of admin keys and our
+//!     // initial policies.
+//!     .create_identity(Timestamp::now(), vec![admin_key.clone()], vec![policy]).unwrap()
+//!     // then we sign the transaction, generally with an admin key that's in the policy
+//!     // list.
+//!     .sign(&master_key, &admin_key).unwrap();
+//!
+//! // Fantastic! Now we apply the genesis transaction to our transaction set...
+//! let transactions_new = transactions.push_transaction(genesis).unwrap();
+//!
+//! // That's it! Easy right? A child could do it. If we want to get the actual, finished
+//! // Identity object from the transaction set, we do:
+//! let identity = transactions_new.build_identity().unwrap();
+//!
+//! // The identity id is always the hash of the genesis transaction.
+//! assert_eq!(identity.id().deref(), transactions_new.transactions()[0].id());
+//! ```
 
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMN$IF*******FV$MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM

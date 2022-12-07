@@ -632,7 +632,8 @@ impl Hash {
         Self::Blake2b(Binary::new(randbuf))
     }
 
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    /// Return the byte slice representing this hash.
+    pub fn as_bytes(&self) -> &[u8] {
         match self {
             Self::Blake2b(bin) => bin.deref(),
         }
