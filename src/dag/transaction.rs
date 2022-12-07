@@ -37,7 +37,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{self, BinaryVec, KeyValEntry},
+        ser::{self, BinaryVec, KeyValEntry, SerdeBinary},
     },
 };
 use getset;
@@ -609,6 +609,8 @@ impl Public for Transaction {
     }
 }
 
+impl SerdeBinary for Transaction {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -824,6 +826,18 @@ mod tests {
         assert!(!trans2.has_private());
         assert!(!trans2.entry().has_private());
         assert!(!trans2.entry().body().has_private());
+    }
+
+    #[test]
+    fn trans_serde_binary() {
+        let now = Timestamp::now();
+        let (_master_key, transactions, _admin_key) = test::create_fake_identity(now.clone());
+        let trans = transactions.transactions()[0].clone();
+
+        let ser = trans.serialize_binary().unwrap();
+        let des = Transaction::deserialize_binary(ser.as_slice()).unwrap();
+
+        assert_eq!(trans.id(), des.id());
     }
 }
 
