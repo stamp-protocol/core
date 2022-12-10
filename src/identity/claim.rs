@@ -12,7 +12,7 @@ use crate::{
         stamp::Stamp,
         identity::IdentityID,
     },
-    crypto::key::SecretKey,
+    crypto::base::SecretKey,
     private::{MaybePrivate},
     util::{Public, Date, Url, ser::BinaryVec},
 };
@@ -145,13 +145,13 @@ pub enum ClaimSpec {
     /// that URL and prepended with "stamp:" (a 16-character shortened ID can be
     /// used if space is limited).
     ///
-    /// For instance, if you want to claim ownership of https://killtheradio.net/
+    /// For instance, if you want to claim ownership of <https://killtheradio.net/>
     /// then you would create a Url claim with that URL as the value. Let's say
     /// the resulting claim ID is:
     ///
     ///   0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
     ///
-    /// You would then publish on https://killtheradio.net/ a string somewhere
+    /// You would then publish on <https://killtheradio.net/> a string somewhere
     /// on the homepage
     ///
     ///   stamp:0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA

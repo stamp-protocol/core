@@ -14,7 +14,7 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::key::{KeyID, SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
+    crypto::base::{KeyID, SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
     private::{PrivateWithMac},
     util::{Public, sign::Signable, ser},
 };
@@ -690,7 +690,7 @@ impl Public for Keychain {
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{Hash, SecretKey},
+        crypto::base::{Hash, SecretKey},
         util,
     };
 

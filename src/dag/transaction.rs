@@ -1,15 +1,14 @@
 //! A `Transaction` models a single change against an identity, and is one node
 //! inside of the identity DAG.
 //!
-//! Transactions have a [TransactionBody], an ID ([Hash] of the transaction's body,
-//! timestamp, and previously-referenced transactions), and a collection of one or
-//! more signatures on the transaction's ID that validate that transaction.
+//! Transactions have a [TransactionBody], an ID ([Hash][crate::crypto::base::Hash]
+//! of the transaction's body, timestamp, and previously-referenced transactions),
+//! and a collection of one or more signatures on the transaction's ID that validate
+//! that transaction.
 
 use crate::{
     error::{Error, Result},
-    crypto::{
-        key::{KeyID, SecretKey, Hash},
-    },
+    crypto::base::{KeyID, SecretKey, Hash},
     dag::Transactions,
     identity::{
         claim::{
@@ -60,8 +59,8 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(1)))]
         policies: Vec<Policy>,
     },
-    /// Replace optionally both the [admin keys][AdminKey] in the [Keychain] and the
-    /// [capabilities][CapabilityPolicy] attached to the identity.
+    /// Replace optionally both the [admin keys][AdminKey] in the [Keychain][crate::identity::keychain::Keychain]
+    /// and the [policies][Policy] attached to the identity.
     ///
     /// This is more or less a hailmary recovery option that allows gaining
     /// access to identity after some kind of catastrophic event.
@@ -72,7 +71,7 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(1)))]
         policies: Option<Vec<Policy>>,
     },
-    /// Add a new [admin key][AdminKey] to the [Keychain].
+    /// Add a new [admin key][AdminKey] to the [Keychain][crate::identity::keychain::Keychain].
     #[rasn(tag(explicit(2)))]
     AddAdminKeyV1 {
         #[rasn(tag(explicit(0)))]
@@ -99,7 +98,7 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(2)))]
         new_name: Option<String>,
     },
-    /// Add a new [capability policy][CapabilityPolicy] to the identity.
+    /// Add a new [Policy] to the identity.
     #[rasn(tag(explicit(5)))]
     AddPolicyV1 {
         #[rasn(tag(explicit(0)))]
@@ -367,7 +366,7 @@ impl Public for TransactionBody {
     }
 }
 
-/// The TransactionID is a [Hash] of the transaction body
+/// The TransactionID is a [Hash][crate::crypto::base::Hash] of the transaction body
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 pub struct TransactionID(Hash);
 

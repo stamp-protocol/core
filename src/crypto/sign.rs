@@ -4,7 +4,7 @@
 use crate::{
     crypto::{
         SignedObject,
-        key::{SecretKey, SignKeypairSignature},
+        base::{SecretKey, SignKeypairSignature},
     },
     error::{Error, Result},
     identity::{
@@ -104,7 +104,7 @@ pub fn verify_attached(signing_key: &Subkey, signature: &Signature) -> Result<()
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::SignKeypair,
+        crypto::base::SignKeypair,
         identity::Key,
         util::test,
     };

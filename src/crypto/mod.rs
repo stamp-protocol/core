@@ -1,13 +1,12 @@
 //! The crypto module contains all of our cryptographic primitives for key
 //! generation, signing, messaging, and encrypting private data.
 
-pub mod key;
+pub mod base;
 pub mod message;
 pub mod sign;
-pub mod secret;
 
 use crate::{
-    crypto::key::KeyID,
+    crypto::base::KeyID,
     identity::{
         IdentityID,
     },
@@ -15,7 +14,7 @@ use crate::{
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 
-/// A signature or object containing a signatur that lists the identity and key
+/// A signature or object containing a signature that lists the identity and key
 /// that created the signature.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]

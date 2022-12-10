@@ -53,7 +53,7 @@
 //!
 //! ```
 //! use stamp_core::{
-//!     crypto::key::{derive_secret_key, Hash, KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
+//!     crypto::base::{derive_secret_key, Hash, KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
 //!     dag::Transactions,
 //!     identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
 //!     policy::{Capability, MultisigPolicy, Policy},
@@ -100,13 +100,22 @@
 //! // Fantastic! Now we apply the genesis transaction to our transaction set...
 //! let transactions_new = transactions.push_transaction(genesis).unwrap();
 //!
-//! // That's it! Easy right? A child could do it. If we want to get the actual, finished
-//! // Identity object from the transaction set, we do:
+//! // If we want to get the actual, finished Identity object from the transaction set, we do:
 //! let identity = transactions_new.build_identity().unwrap();
 //!
 //! // The identity id is always the hash of the genesis transaction.
 //! assert_eq!(identity.id().deref(), transactions_new.transactions()[0].id());
 //! ```
+//!
+//! See? Easy. *A child could do it.* While this approach is seemingly complicated, it
+//! allows for a lot of flexibility. Where this really shines is if multiple people want
+//! to manage a shared group identity. The [policy system][crate::policy] allows for a lot
+//! of flexibility in deciding how various key owners can perform certain operation on the
+//! identity.
+//!
+//! And Stamp doesn't stop at the identity itself! It allows fine-grained control of
+//! publishing [transactions for external protocols][crate::dag::TransactionBody::ExtV1] as well.
+//! Stamp can act as a foundational identity and permission system in your own p2p protocol!
 
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMN$IF*******FV$MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM

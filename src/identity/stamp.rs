@@ -12,7 +12,7 @@ use crate::{
         keychain::{Subkey},
     },
     crypto::{
-        key::SecretKey,
+        base::SecretKey,
         message::{self, Message},
     },
     util::{
@@ -125,7 +125,7 @@ pub enum Confidence {
 }
 
 /// An inner struct type created when making a stamp. This is what is wrapped in a
-/// [transaction][crate::dag::transaction::Transaction] for signing (and possibly
+/// [transaction][crate::dag::Transaction] for signing (and possibly
 /// publishing).
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
@@ -266,7 +266,7 @@ mod tests {
             keychain::{ExtendKeypair, AdminKey, AdminKeypair, Key, Keychain},
             stamp::Confidence,
         },
-        crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
+        crypto::base::{SecretKey, SignKeypair, CryptoKeypair},
         private::MaybePrivate,
         util::{Timestamp, Date, Url, ser::BinaryVec},
     };

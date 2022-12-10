@@ -1,4 +1,4 @@
-//! The private module locks data away via a [SecretKey](crate::crypto::key::SecretKey)
+//! The private module locks data away via a [SecretKey](crate::crypto::base::SecretKey)
 //! while never storing or serializing or displaying the locked (private) data.
 //! It can only be retrieved via the [open](crate::private::Private::open)
 //! method, given the correct unlocking key.
@@ -12,7 +12,7 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::key::{SecretKey, SecretKeyNonce, Mac, MacKey},
+    crypto::base::{SecretKey, SecretKeyNonce, Mac, MacKey},
     util::{Public, ser::{self, BinaryVec}},
 };
 use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag, types::Class};

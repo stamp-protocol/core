@@ -3,9 +3,7 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::{
-        key::{KeyID, SecretKey},
-    },
+    crypto::base::{KeyID, SecretKey},
     dag::{TransactionBody, TransactionID, TransactionEntry, Transaction},
     identity::{
         claim::{
@@ -542,7 +540,7 @@ impl Transactions {
     // The actual transaction builder methods
     // -------------------------------------------------------------------------
 
-    /// Create a new identity. The [ID][TranscationID] of this transaction will
+    /// Create a new identity. The [ID][TransactionID] of this transaction will
     /// be the identity's public ID forever after.
     pub fn create_identity<T: Into<Timestamp> + Clone>(&self, now: T, admin_keys: Vec<AdminKey>, policies: Vec<Policy>) -> Result<Transaction> {
         let body = TransactionBody::CreateIdentityV1 {
@@ -552,8 +550,9 @@ impl Transactions {
         self.stage_transaction(now, body)
     }
 
-    /// Replace optionally both the [admin keys][AdminKey] in the [Keychain] and the
-    /// [capabilities][CapabilityPolicy] attached to the identity.
+    /// Replace optionally both the [admin keys][AdminKey] in the
+    /// [Keychain][crate::identity::keychain::Keychain]
+    /// and the [policies][Policy] attached to the identity.
     ///
     /// This is more or less a hailmary recovery option that allows gaining
     /// access to identity after some kind of catastrophic event.
@@ -565,7 +564,7 @@ impl Transactions {
         self.stage_transaction(now, body)
     }
 
-    /// Add a new [admin key][AdminKey] to the [Keychain].
+    /// Add a new [admin key][AdminKey] to the [Keychain][crate::identity::keychain::Keychain].
     pub fn add_admin_key<T: Into<Timestamp> + Clone>(&self, now: T, admin_key: AdminKey) -> Result<Transaction> {
         let body = TransactionBody::AddAdminKeyV1 {
             admin_key,
@@ -600,7 +599,7 @@ impl Transactions {
         self.stage_transaction(now, body)
     }
 
-    /// Add a new [capability policy][CapabilityPolicy] to the identity.
+    /// Add a new [policy][Policy] to the identity.
     pub fn add_policy<T: Into<Timestamp> + Clone>(&self, now: T, policy: Policy) -> Result<Transaction> {
         let body = TransactionBody::AddPolicyV1 {
             policy,
@@ -608,7 +607,7 @@ impl Transactions {
         self.stage_transaction(now, body)
     }
 
-    /// Delete (by name) a capability policy from the identity.
+    /// Delete (by name) a [Policy] from the identity.
     pub fn delete_policy<T: Into<Timestamp> + Clone>(&self, now: T, id: PolicyID) -> Result<Transaction> {
         let body = TransactionBody::DeletePolicyV1 {
             id,
@@ -616,7 +615,7 @@ impl Transactions {
         self.stage_transaction(now, body)
     }
 
-    /// Make a new claim.
+    /// Make a new [Claim][ClaimSpec].
     pub fn make_claim<T, S>(&self, now: T, spec: ClaimSpec, name: Option<S>) -> Result<Transaction>
         where T: Into<Timestamp> + Clone,
               S: Into<String>,
@@ -787,7 +786,7 @@ impl SerdeBinary for Transactions {}
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{SignKeypair, CryptoKeypair},
+        crypto::base::{SignKeypair, CryptoKeypair},
         identity::{
             claim::{Relationship, RelationshipType},
             keychain::{AdminKeypair, ExtendKeypair},

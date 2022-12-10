@@ -178,7 +178,7 @@ pub enum Error {
 
     /// Key not found in [Keychain][crate::identity::keychain::Keychain].
     #[error("keychain key not found: {0}")]
-    KeychainKeyNotFound(crate::crypto::key::KeyID),
+    KeychainKeyNotFound(crate::crypto::base::KeyID),
 
     /// This subkey is already revoked.
     #[error("subkey is already revoked")]

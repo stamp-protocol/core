@@ -4,7 +4,7 @@
 use crate::{
     crypto::{
         SignedObject,
-        key::{SecretKey, CryptoKeypairMessage},
+        base::{SecretKey, CryptoKeypairMessage},
     },
     error::{Error, Result},
     identity::{
@@ -108,7 +108,7 @@ pub fn open_anonymous(recipient_master_key: &SecretKey, recipient_key: &Subkey, 
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{KeyID, CryptoKeypair},
+        crypto::base::{KeyID, CryptoKeypair},
         identity::{
             Key,
         },

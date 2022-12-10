@@ -39,13 +39,13 @@ macro_rules! object_id {
         #[allow(dead_code)]
         impl $name {
             pub(crate) fn blank() -> Self {
-                let hash = crate::crypto::key::Hash::Blake2b(crate::util::ser::Binary::new([0u8; 64]));
+                let hash = crate::crypto::base::Hash::Blake2b(crate::util::ser::Binary::new([0u8; 64]));
                 $name(crate::dag::TransactionID::from(hash))
             }
 
             #[cfg(test)]
             pub(crate) fn random() -> Self {
-                let hash = crate::crypto::key::Hash::random_blake2b();
+                let hash = crate::crypto::base::Hash::random_blake2b();
                 $name(crate::dag::TransactionID::from(hash))
             }
         }
@@ -75,7 +75,7 @@ macro_rules! object_id {
             type Error = crate::error::Error;
             fn try_from(id_str: &str) -> std::result::Result<Self, Self::Error> {
                 let bytes = crate::util::ser::base64_decode(id_str.as_bytes())?;
-                let hash: crate::crypto::key::Hash = crate::util::ser::deserialize(&bytes[..])?;
+                let hash: crate::crypto::base::Hash = crate::util::ser::deserialize(&bytes[..])?;
                 Ok(Self(crate::dag::TransactionID::from(hash)))
             }
         }
@@ -289,7 +289,7 @@ impl std::fmt::Display for Url {
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{Hash},
+        crypto::base::{Hash},
         dag::TransactionID,
         util::ser,
     };

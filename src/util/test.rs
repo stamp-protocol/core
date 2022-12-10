@@ -1,5 +1,5 @@
 use crate::{
-    crypto::key::{SecretKey, SignKeypair, CryptoKeypair},
+    crypto::base::{SecretKey, SignKeypair, CryptoKeypair},
     dag::Transactions,
     identity::{
         identity::{IdentityID, Identity},

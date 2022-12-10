@@ -7,7 +7,7 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::key::{KeyID, SecretKey},
+    crypto::base::{KeyID, SecretKey},
     identity::{
         claim::{ClaimID, ClaimSpec, Claim},
         keychain::{AdminKey, AdminKeyID, ExtendKeypair, RevocationReason, Key, Keychain},
@@ -404,7 +404,7 @@ impl Public for Identity {
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{Hash, SignKeypair},
+        crypto::base::{Hash, SignKeypair},
         dag::TransactionID,
         identity::{
             keychain::AdminKeypair,

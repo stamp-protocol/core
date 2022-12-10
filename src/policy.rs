@@ -10,7 +10,7 @@
 //! not just by keys it owns, but by trusted third parties as well.
 
 use crate::{
-    crypto::key::{KeyID, Hash},
+    crypto::base::{KeyID, Hash},
     dag::{TransactionBody, TransactionID, Transaction},
     error::{Error, Result},
     identity::{
@@ -615,8 +615,8 @@ impl MultisigPolicy {
     }
 }
 
-/// Matches a set of [Capabilities][Capability] to a multisig [Policy], making
-/// it so the policy must be fulfilled in order to perform those capabilities.
+/// Matches a set of [Capabilities][Capability] to a [multisig policy][MultisigPolicy],
+/// making it so the policy must be fulfilled in order to perform those capabilities.
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Policy {
@@ -708,7 +708,7 @@ impl TryFrom<Policy> for PolicyContainer {
 mod tests {
     use super::*;
     use crate::{
-        crypto::key::{SecretKey},
+        crypto::base::{SecretKey},
         identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
         private::MaybePrivate,
         util::{self, Timestamp, Url},
