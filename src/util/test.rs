@@ -39,7 +39,12 @@ pub(crate) fn setup_identity_with_subkeys() -> (SecretKey, Identity) {
     let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
     let policy = Policy::new(
         vec![Capability::Permissive],
-        MultisigPolicy::MOfN { must_have: 1, participants: vec![Participant::Key(admin_keypair.clone().into())] }
+        MultisigPolicy::MOfN {
+            must_have: 1,
+            participants: vec![
+                Participant::Key { name: Some("Default".into()), key: admin_keypair.clone().into() },
+            ],
+        }
     );
     let policy_con = PolicyContainer::try_from(policy).unwrap();
     let admin_key = AdminKey::new(admin_keypair, "Alpha", None);

@@ -77,6 +77,8 @@ pub enum TransactionBodyType {
     #[rasn(tag(explicit(19)))]
     PublishV1,
     #[rasn(tag(explicit(20)))]
+    SignV1,
+    #[rasn(tag(explicit(21)))]
     ExtV1,
 }
 
@@ -105,6 +107,7 @@ impl From<&TransactionBody> for TransactionBodyType {
             TransactionBody::DeleteSubkeyV1 { .. } => Self::DeleteSubkeyV1,
             TransactionBody::SetNicknameV1 { .. } => Self::SetNicknameV1,
             TransactionBody::PublishV1 { .. } => Self::PublishV1,
+            TransactionBody::SignV1 { .. } => Self::SignV1,
             TransactionBody::ExtV1 { .. } => Self::ExtV1,
         }
     }
@@ -340,6 +343,7 @@ impl Context {
             }
             TransactionBody::SetNicknameV1 { .. } => {}
             TransactionBody::PublishV1 { .. } => {}
+            TransactionBody::SignV1 { .. } => {}
             TransactionBody::ExtV1 { ty, context, .. } => {
                 ty.as_ref().map(|t| contexts.push(Self::ExtType(t.clone())));
                 context.as_ref().map(|c| {
@@ -517,18 +521,21 @@ pub enum Participant {
     /// This participant is a specific key, and policy signatures must come from
     /// this exact key.
     #[rasn(tag(explicit(0)))]
-    Key(AdminKeypairPublic),
+    Key {
+        name: Option<String>,
+        key: AdminKeypairPublic,
+    }
 }
 
 impl From<AdminKeypairPublic> for Participant {
     fn from(admin_pubkey: AdminKeypairPublic) -> Self {
-        Participant::Key(admin_pubkey)
+        Participant::Key { name: None, key: admin_pubkey }
     }
 }
 
 impl From<AdminKeypair> for Participant {
     fn from(admin_pubkey: AdminKeypair) -> Self {
-        Participant::Key(admin_pubkey.into())
+        Participant::Key { name: None, key: admin_pubkey.into() }
     }
 }
 
@@ -593,7 +600,7 @@ impl MultisigPolicy {
                     .filter_map(|participant| {
                         for sig in signatures {
                             match (participant, sig) {
-                                (Participant::Key(ref pubkey), MultisigPolicySignature::Key { key, .. }) => {
+                                (Participant::Key { key: ref pubkey, .. }, MultisigPolicySignature::Key { key, .. }) => {
                                     // NOTE: all signatures have already been validated
                                     // upstreeaaaaam so all we need to do is verify that
                                     // the participant's key matches the signing key.

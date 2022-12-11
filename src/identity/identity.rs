@@ -410,7 +410,7 @@ mod tests {
             keychain::AdminKeypair,
             stamp::{Confidence, StampEntry, StampRevocationEntry, StampRevocationID},
         },
-        policy::{Capability, MultisigPolicy, Participant, Policy},
+        policy::{Capability, MultisigPolicy, Policy},
         util,
     };
     use std::str::FromStr;
@@ -423,11 +423,13 @@ mod tests {
         let master_key = gen_master_key();
         let id = IdentityID::random();
         let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
-        let pubkey = admin_keypair.clone().into();
-        let admin_key = AdminKey::new(admin_keypair, "Default", None);
+        let admin_key = AdminKey::new(admin_keypair.clone(), "Default", None);
         let capability = Policy::new(
             vec![Capability::Permissive],
-            MultisigPolicy::MOfN { must_have: 1, participants: vec![Participant::Key(pubkey)] }
+            MultisigPolicy::MOfN {
+                must_have: 1,
+                participants: vec![admin_keypair.into()],
+            }
         );
         let created = Timestamp::now();
         let identity = Identity::create(id, vec![admin_key], vec![capability.try_into().unwrap()], created);
@@ -739,7 +741,7 @@ mod tests {
         let id = IdentityID::from(TransactionID::from(Hash::new_blake2b(b"get a job").unwrap()));
         let capability = Policy::new(
             vec![Capability::Permissive],
-            MultisigPolicy::MOfN { must_have: 1, participants: vec![Participant::Key(admin.into())] }
+            MultisigPolicy::MOfN { must_have: 1, participants: vec![admin.into()] }
         );
         let container = PolicyContainer::try_from(capability).unwrap();
         let identity = Identity::create(id.clone(), vec![admin_key], vec![container], now);
@@ -750,7 +752,7 @@ id:
 created: "1977-06-07T04:32:06Z"
 policies:
   - id:
-      Blake2b: J-H_t7U80226X2F6yklU8UKSdbA1ETNUY8c_tq2CXTggxC9v8em2olfJ0Qd_kfzHii26oEE5E0_960d1HLoSwA
+      Blake2b: CNDdzY9DCt5YcvtrdO2zvxdtZNQ-AuuOBQzdzYb8w_veQNA28dOqsTKqZ8dzptmT6paIf11IjxFi-YFKC0PERQ
     policy:
       capabilities:
         - Permissive
@@ -759,7 +761,9 @@ policies:
           must_have: 1
           participants:
             - Key:
-                Ed25519: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
+                name: ~
+                key:
+                  Ed25519: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
 keychain:
   admin_keys:
     - key:

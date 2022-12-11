@@ -209,6 +209,20 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(0)))]
         transactions: Box<Transactions>,
     },
+    /// Sign a message. The usual Stamp policy process applies here, so an official
+    /// identity signing transaction must match an existing policy to be valid. This
+    /// allows creating group signatures that are policy-validated.
+    ///
+    /// To create detached signatures, set `body` to None after signing.
+    ///
+    /// `Sign` transactions cannot be applied to the identity!
+    #[rasn(tag(explicit(20)))]
+    SignV1 {
+        #[rasn(tag(explicit(0)))]
+        creator: IdentityID,
+        #[rasn(tag(explicit(1)))]
+        body: Option<BinaryVec>,
+    },
     /// Create a transaction for use in an external network. This allows Stamp to act
     /// as a transactional medium for other networks. If the members of that network
     /// can speak Stamp, they can use it to create and sign custom transactions.
@@ -223,13 +237,15 @@ pub enum TransactionBody {
     ///
     /// Note that `Ext` transactions cannot be applied to the identity...Stamp allows
     /// their creation but provides no methods for executing them.
-    #[rasn(tag(explicit(20)))]
+    #[rasn(tag(explicit(21)))]
     ExtV1 {
         #[rasn(tag(explicit(0)))]
-        ty: Option<BinaryVec>,
+        creator: IdentityID,
         #[rasn(tag(explicit(1)))]
-        context: Option<Vec<KeyValEntry>>,
+        ty: Option<BinaryVec>,
         #[rasn(tag(explicit(2)))]
+        context: Option<Vec<KeyValEntry>>,
+        #[rasn(tag(explicit(3)))]
         payload: BinaryVec,
     },
 }
@@ -288,7 +304,8 @@ impl TransactionBody {
             Self::PublishV1 { transactions } => Self::PublishV1 {
                 transactions: Box::new(transactions.reencrypt(old_master_key, new_master_key)?),
             },
-            Self::ExtV1 { ty, context, payload } => Self::ExtV1 { ty, context, payload },
+            Self::SignV1 { creator, body } => Self::SignV1 { creator, body },
+            Self::ExtV1 { creator, ty, context, payload } => Self::ExtV1 { creator, ty, context, payload },
         };
         Ok(new_self)
     }
@@ -330,7 +347,8 @@ impl Public for TransactionBody {
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
             Self::SetNicknameV1 { nickname } => Self::SetNicknameV1 { nickname },
             Self::PublishV1 { transactions } => Self::PublishV1 { transactions: Box::new(transactions.strip_private()) },
-            Self::ExtV1 { ty, context, payload } => Self::ExtV1 { ty, context, payload },
+            Self::SignV1 { creator, body } => Self::SignV1 { creator, body },
+            Self::ExtV1 { creator, ty, context, payload } => Self::ExtV1 { creator, ty, context, payload },
         }
     }
 
@@ -361,6 +379,7 @@ impl Public for TransactionBody {
             Self::DeleteSubkeyV1 { .. } => false,
             Self::SetNicknameV1 { .. } => false,
             Self::PublishV1 { transactions } => transactions.has_private(),
+            Self::SignV1 { .. } => false,
             Self::ExtV1 { .. } => false,
         }
     }
@@ -714,6 +733,8 @@ mod tests {
                 }
                 // blehhhh...
                 TransactionBody::PublishV1 { .. } => { }
+                // blehhhh...
+                TransactionBody::SignV1 { .. } => { }
                 // blehhhh...
                 TransactionBody::ExtV1 { .. } => { }
             }

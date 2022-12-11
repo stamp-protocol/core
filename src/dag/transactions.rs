@@ -33,7 +33,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{SerdeBinary},
+        ser::{BinaryVec, KeyValEntry, SerdeBinary},
     },
 };
 use getset;
@@ -59,6 +59,15 @@ impl Transactions {
     /// Returns an iterator over these transactions
     pub fn iter(&self) -> core::slice::Iter<'_, Transaction> {
         self.transactions().iter()
+    }
+
+    /// Grab the [IdentityID] from this transaction set.
+    pub fn identity_id(&self) -> Option<IdentityID> {
+        if self.transactions().len() > 0 {
+            Some(self.transactions()[0].id().clone().into())
+        } else {
+            None
+        }
     }
 
     /// Takes a master key, [Timestamp], and a [TransactionBody] and returns a
@@ -192,6 +201,10 @@ impl Transactions {
             TransactionBody::PublishV1 { .. } => {
                 // NOPE
                 Err(Error::TransactionInvalid("Publish transactions cannot be applied to identities".into()))
+            }
+            TransactionBody::SignV1 { .. } => {
+                // NOPE
+                Err(Error::TransactionInvalid("Sign transactions cannot be applied to identities".into()))
             }
             TransactionBody::ExtV1 { .. } => {
                 // NOPE
@@ -753,7 +766,31 @@ impl Transactions {
         let body = TransactionBody::PublishV1 {
             transactions: Box::new(self.clone()),
         };
-        self.stage_transaction(now, body)
+        // leave previous transactions blank (irrelevant here)
+        Transaction::new(TransactionEntry::new(now, vec![], body))
+    }
+
+    /// Sign a message
+    pub fn sign<T: Into<Timestamp> + Clone>(&self, now: T, body: BinaryVec) -> Result<Transaction> {
+        let creator = self.identity_id().ok_or(Error::DagEmpty)?;
+        let body = TransactionBody::SignV1 {
+            creator,
+            body: Some(body),
+        };
+        // leave previous transactions blank (irrelevant here)
+        Transaction::new(TransactionEntry::new(now, vec![], body))
+    }
+
+    /// Create a transaction for use in an external system.
+    pub fn ext<T: Into<Timestamp> + Clone>(&self, now: T, previous_transactions: Vec<TransactionID>, ty: Option<BinaryVec>, context: Option<Vec<KeyValEntry>>, payload: BinaryVec) -> Result<Transaction> {
+        let creator = self.identity_id().ok_or(Error::DagEmpty)?;
+        let body = TransactionBody::ExtV1 {
+            creator,
+            ty,
+            context,
+            payload,
+        };
+        Transaction::new(TransactionEntry::new(now, previous_transactions, body))
     }
 }
 
@@ -1556,6 +1593,84 @@ mod tests {
         };
         let identity3 = transactions3.build_identity().unwrap();
         assert_eq!(identity3.nickname(), None);
+    }
+
+    #[test]
+    fn transactions_publish() {
+        let (master_key, transactions, admin_key) = genesis();
+        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Miner 49er".into())), None::<String> ]
+            [ make_claim, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public("miner@49ers.net".into())), Some(String::from("primary")) ]
+        };
+        let published = transactions2.publish(Timestamp::now()).unwrap()
+            .sign(&master_key, &admin_key).unwrap();
+        match published.entry().body() {
+            TransactionBody::PublishV1 { transactions: published_trans } => {
+                assert_eq!(published_trans.transactions().len(), 3);
+                assert_eq!(published_trans.transactions()[0].id(), transactions2.transactions()[0].id());
+                assert_eq!(published_trans.transactions()[1].id(), transactions2.transactions()[1].id());
+                assert_eq!(published_trans.transactions()[2].id(), transactions2.transactions()[2].id());
+            }
+            _ => panic!("Unexpected transaction: {:?}", published),
+        }
+
+        let identity = transactions2.build_identity().unwrap();
+        published.verify(Some(&identity)).unwrap();
+
+        let mut published2 = published.clone();
+        match published2.entry_mut().body_mut() {
+            TransactionBody::PublishV1 { transactions: ref mut published_trans2 } => {
+                published_trans2.transactions_mut().retain(|x| x.id() != transactions2.transactions()[1].id());
+                assert_eq!(published_trans2.transactions().len(), 2);
+            }
+            _ => panic!("Unexpected transaction: {:?}", published2),
+        }
+
+        assert!(matches!(published2.verify(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
+    }
+
+    #[test]
+    fn transactions_sign() {
+        let (master_key, transactions, admin_key) = genesis();
+        let sig = transactions.sign(Timestamp::now(), BinaryVec::from(Vec::from("get a job".as_bytes()))).unwrap()
+            .sign(&master_key, &admin_key).unwrap();
+        let identity = transactions.build_identity().unwrap();
+        sig.verify(Some(&identity)).unwrap();
+
+        let transactions_blank = Transactions::new();
+        let blank_res = transactions_blank.sign(Timestamp::now(), BinaryVec::from(Vec::from("get a job".as_bytes())));
+        assert!(matches!(blank_res, Err(Error::DagEmpty)));
+
+        let mut sig_mod = sig.clone();
+        match sig_mod.entry_mut().body_mut() {
+            TransactionBody::SignV1 { creator: _creator, body: Some(ref mut body) } => {
+                *body = BinaryVec::from(Vec::from("hold on...".as_bytes()));
+            }
+            _ => panic!("Unexpected transaction: {:?}", sig_mod),
+        }
+        assert!(matches!(sig_mod.verify(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
+    }
+
+    #[test]
+    fn transactions_ext() {
+        let (master_key, transactions, admin_key) = genesis();
+        let ext = transactions.ext(Timestamp::now(), vec![], None, None, BinaryVec::from(Vec::from("SEND $5 TO SALLY".as_bytes()))).unwrap()
+            .sign(&master_key, &admin_key).unwrap();
+        let identity = transactions.build_identity().unwrap();
+        ext.verify(Some(&identity)).unwrap();
+
+        let transactions_blank = Transactions::new();
+        let blank_res = transactions_blank.sign(Timestamp::now(), BinaryVec::from(Vec::from("get a job".as_bytes())));
+        assert!(matches!(blank_res, Err(Error::DagEmpty)));
+
+        let mut ext_mod = ext.clone();
+        match ext_mod.entry_mut().body_mut() {
+            TransactionBody::ExtV1 { creator: _creator, ty: _ty, context: _context, payload: ref mut body } => {
+                *body = BinaryVec::from(Vec::from("THE ZING OF THE DAY".as_bytes()));
+            }
+            _ => panic!("Unexpected transaction: {:?}", ext_mod),
+        }
+        assert!(matches!(ext_mod.verify(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
     }
 
     #[test]
