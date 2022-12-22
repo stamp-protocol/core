@@ -13,8 +13,9 @@
 //! organization might "stamp" (verify) that claim by having the owner of the
 //! identity sign a random string sent over email and return it to the verifier.
 //! Any number of claims or types of claims can be made and signed by any other
-//! participant. Some claims, such as domain and URL claims, can be verified
-//! without any stamps from others.
+//! participant. Some claims, such as domain and URL claims, can be verified in-client
+//! without any stamps from others (rendering centralized parties like Keybase
+//! *entirely obsolete*).
 //!
 //! Because of the robust claim system, Stamp identities can also act as forwarding
 //! mechanisms for other p2p (or centralized) systems. For instance, you could claim
@@ -79,7 +80,7 @@
 //!     // to certain portions of the identity. Here, we grant access to everything.
 //!     vec![Capability::Permissive],
 //!     // A multisig policy controls which keys can satisfy this policy.
-//!     MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
+//!     MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key.clone().into()] }
 //! );
 //!
 //! // An identity is a collection of transactions. Later transactions reference previous

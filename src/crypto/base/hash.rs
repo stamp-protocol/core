@@ -15,7 +15,7 @@ use std::ops::Deref;
 ///
 /// When stringified, the hash is in the format `base64([<hash bytes>|<u8 tag>])`
 /// where the `tag` is the specific hash algorithm we use. This allows the hash
-/// to shine on its own without the tag getting inthe way. Yes, it's vain.
+/// to shine on its own without the tag getting in the way. Yes, it's vain.
 #[derive(Clone, Debug, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Hash {

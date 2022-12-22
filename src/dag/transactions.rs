@@ -1197,7 +1197,7 @@ mod tests {
         assert_claim!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
         assert_claim!{
             raw,
-            |maybe, _| ClaimSpec::Extension { key: String::from("id:state:ca"), value: maybe },
+            |maybe, _| ClaimSpec::Extension { key: Vec::from("id:state:ca".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![7, 3, 2, 90]),
             |spec: ClaimSpec| if let ClaimSpec::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }

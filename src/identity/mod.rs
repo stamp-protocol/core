@@ -7,7 +7,7 @@
 //! that dictate what public key signatures are required to create valid transactions
 //! against this identity.
 //!
-//! This system relies heavily on the [key](crate::crypto::key) module, which
+//! This system relies heavily on the [crypto base][crate::crypto::base] module, which
 //! provides all the mechanisms necessary for encryption, decryption, signing,
 //! and verification of data.
 

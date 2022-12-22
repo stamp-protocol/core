@@ -226,6 +226,7 @@ impl<'de> serde::Deserialize<'de> for BinaryVec {
     }
 }
 
+/// Used for making newtypes seamlessly ASN1 en/decodable.
 macro_rules! asn_encdec_newtype {
     ($name:ident, $inner:ty) => {
         impl rasn::AsnType for $name {
@@ -250,6 +251,9 @@ macro_rules! asn_encdec_newtype {
 }
 
 /// A struct that represents a single entry in a key-value table.
+///
+/// Mainly useful for representing hash-table-esque data in places where hash
+/// tables are not supported (*cough* ASN1).
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct KeyValEntry {
@@ -268,6 +272,8 @@ impl KeyValEntry {
     }
 }
 
+/// Used to serialize timestamps in ISO format when human readable, but a
+/// nanosecond timestamp when in binary (much smaller).
 pub(crate) mod timestamp {
     use chrono::{DateTime, Utc};
     use serde::{Serialize, Serializer, Deserialize, Deserializer};

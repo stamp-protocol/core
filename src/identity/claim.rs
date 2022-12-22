@@ -212,7 +212,7 @@ pub enum ClaimSpec {
     #[rasn(tag(explicit(11)))]
     Extension {
         #[rasn(tag(explicit(0)))]
-        key: String,
+        key: BinaryVec,
         #[rasn(tag(explicit(1)))]
         value: MaybePrivate<BinaryVec>,
     },
@@ -456,7 +456,7 @@ pub(crate) mod tests {
         claim_reenc!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
         claim_reenc!{
             raw,
-            |maybe, _| ClaimSpec::Extension { key: "id:state:ca".into(), value: maybe },
+            |maybe, _| ClaimSpec::Extension { key: Vec::from("id:state:ca".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![7, 3, 2, 90]),
             |spec: ClaimSpec| if let ClaimSpec::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }
@@ -502,7 +502,7 @@ pub(crate) mod tests {
         claim_pub_priv!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
         claim_pub_priv!{
             raw,
-            |maybe, _| ClaimSpec::Extension { key: "I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THIS POEM IS GREAT".into(), value: maybe },
+            |maybe, _| ClaimSpec::Extension { key: Vec::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THIS POEM IS GREAT".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![42, 22]),
             |spec| {
                 match spec {
@@ -548,7 +548,7 @@ pub(crate) mod tests {
         thtrip!{
             next,
             BinaryVec::from(vec![42, 17, 86]),
-            |maybe| { ClaimSpec::Extension { key: "best poem ever".into(), value: maybe } }
+            |maybe| { ClaimSpec::Extension { key: Vec::from("best poem ever".as_bytes()).into(), value: maybe } }
         }
     }
 
@@ -616,7 +616,7 @@ pub(crate) mod tests {
         assert_instant!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])), vec![] }
         assert_instant!{
             raw,
-            |maybe, _| { ClaimSpec::Extension { key: "shaka gnar gnar".into(), value: maybe } },
+            |maybe, _| { ClaimSpec::Extension { key: Vec::from("shaka gnar gnar".as_bytes()).into(), value: maybe } },
             BinaryVec::from(vec![66, 6]),
             vec![]
         }
@@ -660,7 +660,7 @@ pub(crate) mod tests {
         as_pub!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
         as_pub!{
             raw,
-            |maybe, _| ClaimSpec::Extension { key: "I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THAT I AM NOT A CAT YOUR HONOR".into(), value: maybe },
+            |maybe, _| ClaimSpec::Extension { key: Vec::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THAT I AM NOT A CAT YOUR HONOR".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![42, 22]),
             |spec: ClaimSpec| if let ClaimSpec::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }
@@ -697,7 +697,7 @@ pub(crate) mod tests {
         has_priv! { Address, String::from("Mojave Desert"), true }
         has_priv! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), true }
         has_priv! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])), true }
-        has_priv! { raw, |maybe, _| ClaimSpec::Extension { key: "tuna-melt-tuna-melt-TUNA-MELT-TUNA-MELT".into(), value: maybe }, BinaryVec::from(vec![123, 122, 100]), true }
+        has_priv! { raw, |maybe, _| ClaimSpec::Extension { key: Vec::from("tuna-melt-tuna-melt-TUNA-MELT-TUNA-MELT".as_bytes()).into(), value: maybe }, BinaryVec::from(vec![123, 122, 100]), true }
     }
 }
 

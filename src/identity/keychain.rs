@@ -413,7 +413,7 @@ impl Public for Subkey {
 pub struct AdminKey {
     /// The admin keypair.
     #[rasn(tag(explicit(0)))]
-    key: AdminKeypair,
+    pub(crate) key: AdminKeypair,
     /// The key's human-readable name, for example "claims/manage".
     #[rasn(tag(explicit(1)))]
     name: String,

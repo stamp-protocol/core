@@ -16,7 +16,7 @@ use crate::{
     identity::{
         claim::ClaimSpec,
         identity::{Identity, IdentityID},
-        keychain::{AdminKeyID, AdminKeypair, AdminKeypairPublic, AdminKeypairSignature},
+        keychain::{AdminKey, AdminKeyID, AdminKeypair, AdminKeypairPublic, AdminKeypairSignature},
     },
     util::ser::{self, BinaryVec, KeyValEntry},
 };
@@ -534,8 +534,15 @@ impl From<AdminKeypairPublic> for Participant {
 }
 
 impl From<AdminKeypair> for Participant {
-    fn from(admin_pubkey: AdminKeypair) -> Self {
-        Participant::Key { name: None, key: admin_pubkey.into() }
+    fn from(admin_keypair: AdminKeypair) -> Self {
+        Participant::Key { name: None, key: admin_keypair.into() }
+    }
+}
+
+impl From<AdminKey> for Participant {
+    fn from(admin_key: AdminKey) -> Self {
+        let AdminKey { key: admin_keypair, .. } = admin_key;
+        admin_keypair.into()
     }
 }
 

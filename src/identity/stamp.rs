@@ -201,7 +201,7 @@ impl Public for Stamp {
     }
 }
 
-/// A request for a claim to be stamped (basically a CRT, in the parlance of our
+/// A request for a claim to be stamped (basically a CSR, in the parlance of our
 /// times).
 ///
 /// Generally this only needs to be created for *private* claims where you wish
@@ -244,8 +244,8 @@ impl StampRequest {
     /// the *decrypted* claim (as a public claim).
     ///
     /// Note that if the claim is public already, this is where we stop. If the
-    /// claim is private, then we check the HMAC against the embedded key in the
-    /// private claim data and make sure it validates. If the HMAC does not
+    /// claim is private, then we check the MAC against the embedded key in the
+    /// private claim data and make sure it validates. If the MAC does not
     /// represent the data ("this doesn't represent me!") then hard pass on
     /// allowing this data to be stamped.
     pub fn open(recipient_master_key: &SecretKey, recipient_key: &Subkey, sender_key: &Subkey, req: &Message) -> Result<Claim> {
@@ -369,12 +369,12 @@ mod tests {
         req_open!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
 
         let val = BinaryVec::from(vec![89, 89, 89]);
-        let (opened_priv, opened_pub) = req_open!{ raw, |maybe, _| ClaimSpec::Extension { key: "a-new-kind-of-claimspec".into(), value: maybe }, val.clone() };
+        let (opened_priv, opened_pub) = req_open!{ raw, |maybe, _| ClaimSpec::Extension { key: Vec::from("a-new-kind-of-claimspec".as_bytes()).into(), value: maybe }, val.clone() };
         match (opened_priv.spec().clone(), opened_pub.spec().clone()) {
             (ClaimSpec::Extension { key: key1, value: MaybePrivate::Public(val1) }, ClaimSpec::Extension{ key: key2, value: MaybePrivate::Public(val2) }) => {
                 // the doctor said it was
-                assert_eq!(key1, String::from("a-new-kind-of-claimspec"));
-                assert_eq!(key2, String::from("a-new-kind-of-claimspec"));
+                assert_eq!(key1, Vec::from("a-new-kind-of-claimspec".as_bytes()).into());
+                assert_eq!(key2, Vec::from("a-new-kind-of-claimspec".as_bytes()).into());
                 assert_eq!(val1, val);
                 assert_eq!(val2, val);
                 assert_eq!(val1, val2); // probably not needed but w/e
