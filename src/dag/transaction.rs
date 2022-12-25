@@ -22,6 +22,7 @@ use crate::{
         keychain::{
             AdminKey,
             AdminKeyID,
+            AdminKeypair,
             ExtendKeypair,
             Key,
             RevocationReason,
@@ -516,11 +517,13 @@ impl Transaction {
 
     /// Sign this transaction. This consumes the transaction, adds the signature
     /// to the `signatures` list, then returns the new transaction.
-    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKey) -> Result<Self> {
+    pub fn sign<K>(mut self, master_key: &SecretKey, admin_key: &K) -> Result<Self>
+        where K: Deref<Target = AdminKeypair>
+    {
         let serialized = ser::serialize(self.id().deref())?;
-        let sig = admin_key.key().sign(master_key, &serialized[..])?;
+        let sig = admin_key.deref().sign(master_key, &serialized[..])?;
         let policy_sig = MultisigPolicySignature::Key {
-            key: admin_key.key().clone().into(),
+            key: admin_key.deref().clone().into(),
             signature: sig,
         };
         self.signatures_mut().push(policy_sig);
@@ -549,7 +552,7 @@ impl Transaction {
     /// Verify this transaction's validity. We have to make sure its ID matches
     /// the hash of its public contents, and we have to make sure the signatures
     /// satisfy a policy which has the capabilities the transaction requires.
-    pub(crate) fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
+    pub fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
         let serialized = ser::serialize(&self.entry().strip_private())?;
         // first verify the transaction's hash.
         let transaction_hash = Hash::new_blake2b(&serialized[..])?;
