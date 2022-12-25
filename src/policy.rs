@@ -240,6 +240,12 @@ pub enum Context {
     /// ).unwrap_err();
     /// context.test(
     ///     &Context::ExtContext(KeyValEntry::new(
+    ///         BinaryVec::from(vec![1, 2, 3, 4]),
+    ///         BinaryVec::from(vec![4, 5, 6])
+    ///     ))
+    /// ).unwrap_err();
+    /// context.test(
+    ///     &Context::ExtContext(KeyValEntry::new(
     ///         BinaryVec::from(vec![1, 2, 3]),
     ///         BinaryVec::from(vec![4, 5, 7])
     ///     ))
@@ -522,7 +528,11 @@ pub enum Participant {
     /// this exact key.
     #[rasn(tag(explicit(0)))]
     Key {
+        /// Lets us know who this key belongs to, ie "Rick"
+        #[rasn(tag(explicit(0)))]
         name: Option<String>,
+        /// The public key
+        #[rasn(tag(explicit(1)))]
         key: AdminKeypairPublic,
     }
 }
@@ -555,7 +565,11 @@ pub enum MultisigPolicySignature {
     /// listed as a [Participant::Key] in the policy.
     #[rasn(tag(explicit(0)))]
     Key {
+        /// The key the signature came from
+        #[rasn(tag(explicit(0)))]
         key: AdminKeypairPublic,
+        /// The signature
+        #[rasn(tag(explicit(1)))]
         signature: AdminKeypairSignature,
     },
 }
