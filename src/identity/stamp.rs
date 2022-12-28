@@ -140,11 +140,7 @@ pub struct StampEntry {
     #[rasn(tag(explicit(2)))]
     claim_id: ClaimID,
     /// How much confidence the stamper has that the claim being stamped is
-    /// valid. This is a value between 0 and 255, and is ultimately a ratio
-    /// via `c / 255`, where 0.0 is "lowest confidence" and 1.0 is "ultimate
-    /// confidence." Keep in mind that 0 here is not "absolutely zero
-    /// confidence" as otherwise the stamp wouldn't be occurring in the first
-    /// place.
+    /// valid.
     #[rasn(tag(explicit(3)))]
     confidence: Confidence,
     /// The date this stamp expires (if at all). The stamper can choose to set

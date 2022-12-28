@@ -94,7 +94,7 @@ macro_rules! object_id {
 /// instead of serde, so we might need to do some tricky things with features.
 /// - Any place that takes a `Timestamp` will receive any value that can be
 /// converted into a `Timestamp` via `From/Into` which we have implemented for
-/// [DateTime<Utc>](chrono::DateTime) and [NaiveDateTime](chrono::NaiveDateTime),
+/// [`DateTime<Utc>`](chrono::DateTime) and [NaiveDateTime](chrono::NaiveDateTime),
 /// and you can always get the underlying type via a `&timestamp` deref.
 ///
 /// So put down the pitchfork.

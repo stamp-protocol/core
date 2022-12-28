@@ -69,7 +69,8 @@
 //! let master_key = derive_secret_key(passphrase.as_bytes(), salt.as_bytes(), KDF_OPS_MODERATE, KDF_MEM_MODERATE).unwrap();
 //!
 //! // Next, we'll create an admin key. Admin keys are how we sign changes to our identity,
-//! // including its creation.
+//! // including its creation. All private/secret keys in the identity (including Admin keys)
+//! // are encrypted and only accessible by using the master key, as we're doing here.
 //! let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
 //! let admin_key = AdminKey::new(admin_keypair, "Alpha", Some("Our primary admin key"));
 //!
@@ -95,7 +96,9 @@
 //!     // initial policies.
 //!     .create_identity(Timestamp::now(), vec![admin_key.clone()], vec![policy]).unwrap()
 //!     // then we sign the transaction, generally with an admin key that's in the policy
-//!     // list.
+//!     // list. notice, again, we pass the master key into the sign fn along with our
+//!     // heroic admin key: the admin key cannot be used without first being unlocked by
+//!     // the master key... *don't forget your passphrase!*
 //!     .sign(&master_key, &admin_key).unwrap();
 //!
 //! // Fantastic! Now we apply the genesis transaction to our transaction set...
@@ -117,6 +120,16 @@
 //! And Stamp doesn't stop at the identity itself! It allows fine-grained control of
 //! publishing [transactions for external protocols][crate::dag::TransactionBody::ExtV1] as well.
 //! Stamp can act as a foundational identity and permission system in your own p2p protocol!
+//!
+//! Now that you have your initial identity constructed, using it is a matter of creating,
+//! signing, and (usually) saving [transactions][crate::dag::Transaction]
+//! to the transaction list, for example:
+//!
+//! - [`make_claim()`][crate::dag::Transactions::make_claim]
+//! - [`make_stamp()`][crate::dag::Transactions::make_stamp]
+//! - [`add_policy()`][crate::dag::Transactions::add_policy]
+//! - [`publish()`][crate::dag::Transactions::publish]
+//! - [etc][crate::dag::Transactions]
 
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMN$IF*******FV$MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM

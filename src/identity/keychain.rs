@@ -339,7 +339,7 @@ impl Public for Key {
     }
 }
 
-/// Holds a subkey's key data, (unique) name, an optional descriiption, and an
+/// Holds a subkey's key data, (unique) name, an optional description, and an
 /// optional revocation.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
@@ -407,7 +407,7 @@ impl Public for Subkey {
 
 /// Represents an *active* (not revoked) named administration key.
 ///
-/// Admin keys that are stored as [subkeys][Subkey].
+/// Revoked admin keys are stored as [subkeys][Subkey].
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct AdminKey {
@@ -468,7 +468,7 @@ impl Public for AdminKey {
 /// This is a set of administration keys which can be used to manage the
 /// identity itself (although management can happen with external keys as well)
 /// as well as a collection of subkeys, which can be used by various third
-/// party applications (including Stamp's CLU/GUI) for cryptography.
+/// party applications (including Stamp's CLI/GUI) for cryptography.
 ///
 /// The keys stored here can also be revoked. They can remain stored here for
 /// the purposes of verifying old signatures or decrypting old messages, but

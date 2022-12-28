@@ -114,28 +114,39 @@ pub enum ClaimSpec {
     ///
     /// This claim should be accompanied by a DNS TXT record on the domain that
     /// has the full URL of the identity/claim. This takes the format
-    ///   stamp://<identityID>/claim/<claimID>
+    ///
+    /// ```txt
+    /// stamp://<identityID>/claim/<claimID>
+    /// ```
     ///
     /// For instance, if you want to claim ownership of killtheradio.net then
     /// you could create a Domain claim with a value of "killtheradio.net". If
     /// you have the identity ID:
     ///
-    ///   o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA
+    /// ```txt
+    /// o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA
+    /// ```
     ///
     /// and the domain claim has an ID of:
     ///
-    ///   cZVhuW0Of5aqaFa1aCf6J_1vS2XtNV94r1LxfgIgkK8tpZmzlVnA_Xb04LJrRWno--cVj5P8P9zOMMXmZe75AQA
+    /// ```txt
+    /// cZVhuW0Of5aqaFa1aCf6J_1vS2XtNV94r1LxfgIgkK8tpZmzlVnA_Xb04LJrRWno--cVj5P8P9zOMMXmZe75AQA
+    /// ```
     ///
     /// Then you would create a DNS TXT record on the killtheradio.net domain as
     /// follows:
     ///
-    ///   stamp://o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA/claim/cZVhuW0Of5aqaFa1aCf6J_1vS2XtNV94r1LxfgIgkK8tpZmzlVnA_Xb04LJrRWno--cVj5P8P9zOMMXmZe75AQA
+    /// ```txt
+    /// stamp://o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA/claim/cZVhuW0Of5aqaFa1aCf6J_1vS2XtNV94r1LxfgIgkK8tpZmzlVnA_Xb04LJrRWno--cVj5P8P9zOMMXmZe75AQA
+    /// ```
     ///
     /// It's a mouthfull, I know. But now anybody who can read the domain DNS
     /// can look up your identity and verify your claim. If you really want to,
     /// you can use the short form URL:
     ///
-    ///   stamp://o8AL10aawwthQIUR/claim/cZVhuW0Of5aqaFa1
+    /// ```txt
+    /// stamp://o8AL10aawwthQIUR/claim/cZVhuW0Of5aqaFa1
+    /// ```
     #[rasn(tag(explicit(6)))]
     Domain(MaybePrivate<String>),
     /// A claim that I own or have write access to a specific URL.
@@ -149,28 +160,39 @@ pub enum ClaimSpec {
     /// then you would create a Url claim with that URL as the value. Let's say
     /// the resulting claim ID is:
     ///
-    ///   0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
+    /// ```txt
+    /// 0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
+    /// ```
     ///
     /// You would then publish on <https://killtheradio.net/> a string somewhere
     /// on the homepage
     ///
-    ///   stamp:0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
+    /// ```txt
+    /// stamp:0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
+    /// ```
     ///
     /// or for stupid, useless, idiotic platforms like twitter, abbreviated:
     ///
-    ///   stamp:0SgfsdQ2YNk6Nlre
+    /// ```txt
+    /// stamp:0SgfsdQ2YNk6Nlre
+    /// ```
     ///
     /// Long-form is preferred for security, but obviously not as hip.
     ///
     /// It's also possible, although very unstylish, to use the full URL of the
     /// claim itself, in the format
-    ///   stamp://<identityID>/claim/<claimID>
+    ///
+    /// ```txt
+    /// stamp://<identityID>/claim/<claimID>
+    /// ```
     ///
     /// This can be specified either with long-form IDs or short-form, 16-char
     /// abbreviated IDs:
     ///
-    ///   stamp://o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA/claim/0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
-    ///   stamp://o8AL10aawwthQIUR/claim/0SgfsdQ2YNk6Nlre
+    /// ```txt
+    /// stamp://o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA/claim/0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
+    /// stamp://o8AL10aawwthQIUR/claim/0SgfsdQ2YNk6Nlre
+    /// ```
     ///
     /// If whatever system you're using doesn't have the concept of a "profile"
     /// with editable text you can update, and doesn't provide a predictable URL
