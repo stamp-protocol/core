@@ -764,7 +764,7 @@ impl Transactions {
     /// Publish this identity
     pub fn publish<T: Into<Timestamp> + Clone>(&self, now: T) -> Result<Transaction> {
         let body = TransactionBody::PublishV1 {
-            transactions: Box::new(self.clone()),
+            transactions: Box::new(self.strip_private()),
         };
         // leave previous transactions blank (irrelevant here)
         Transaction::new(TransactionEntry::new(now, vec![], body))
@@ -1606,6 +1606,7 @@ mod tests {
             .sign(&master_key, &admin_key).unwrap();
         match published.entry().body() {
             TransactionBody::PublishV1 { transactions: published_trans } => {
+                assert!(!published_trans.has_private());
                 assert_eq!(published_trans.transactions().len(), 3);
                 assert_eq!(published_trans.transactions()[0].id(), transactions2.transactions()[0].id());
                 assert_eq!(published_trans.transactions()[1].id(), transactions2.transactions()[1].id());
