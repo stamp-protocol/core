@@ -37,7 +37,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{self, BinaryVec, KeyValEntry, SerdeBinary},
+        ser::{self, BinaryVec, KeyValEntry, SerdeBinary, SerText},
     },
 };
 use getset;
@@ -381,6 +381,12 @@ impl Public for TransactionBody {
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 pub struct TransactionID(Hash);
 
+impl TransactionID {
+    pub(crate) fn as_string(&self) -> String {
+        format!("{}", self.deref())
+    }
+}
+
 impl From<Hash> for TransactionID {
     fn from(hash: Hash) -> Self {
         Self(hash)
@@ -394,15 +400,20 @@ impl Deref for TransactionID {
     }
 }
 
-impl From<TransactionID> for String {
-    fn from(id: TransactionID) -> Self {
-        format!("{}", id.deref())
+impl TryFrom<&TransactionID> for String {
+    type Error = Error;
+
+    fn try_from(tid: &TransactionID) -> std::result::Result<Self, Self::Error> {
+        String::try_from(tid.deref())
     }
 }
 
-impl From<&TransactionID> for String {
-    fn from(id: &TransactionID) -> Self {
-        format!("{}", id.deref())
+
+impl TryFrom<&str> for TransactionID {
+    type Error = Error;
+
+    fn try_from(string: &str) -> std::result::Result<Self, Self::Error> {
+        Ok(TransactionID::from(Hash::try_from(string)?))
     }
 }
 
@@ -622,6 +633,7 @@ impl Public for Transaction {
 }
 
 impl SerdeBinary for Transaction {}
+impl SerText for Transaction {}
 
 #[cfg(test)]
 mod tests {

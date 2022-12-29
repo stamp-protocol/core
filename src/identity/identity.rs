@@ -17,8 +17,8 @@ use crate::{
     private::MaybePrivate,
     util::{
         Public,
+        SerText,
         Timestamp,
-        ser,
     },
 };
 use getset;
@@ -328,14 +328,6 @@ impl Identity {
         }
         Ok(())
     }
-
-    /// Serialize this identity in human readable format.
-    ///
-    /// Note that this cannot be undone: an identity cannot be deserialized from
-    /// this format. This is for display only.
-    pub fn serialize(&self) -> Result<String> {
-        ser::serialize_human(self)
-    }
 }
 
 impl Public for Identity {
@@ -350,6 +342,8 @@ impl Public for Identity {
         self.keychain().has_private() || self.claims().iter().find(|c| c.has_private()).is_some()
     }
 }
+
+impl SerText for Identity {}
 
 #[cfg(test)]
 mod tests {
@@ -692,7 +686,7 @@ mod tests {
         );
         let container = PolicyContainer::try_from(capability).unwrap();
         let identity = Identity::create(id.clone(), vec![admin_key], vec![container], now);
-        let ser = identity.serialize().unwrap();
+        let ser = identity.serialize_text().unwrap();
         assert_eq!(ser.trim(), r#"---
 id:
   Blake2b: emMTrxVrn5BZ4rM75UN20fFYurs3883OwVgDL62RkAjOv_ikAXNrGVpgiVKuYe_5nrL-j0N-XaZ66c6eEvVTVA

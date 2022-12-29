@@ -33,7 +33,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{BinaryVec, KeyValEntry, SerdeBinary},
+        ser::{BinaryVec, KeyValEntry, SerdeBinary, SerText},
     },
 };
 use getset;
@@ -265,7 +265,7 @@ impl Transactions {
             // make sure we don't have any orphaned transactions
             for prev in trans.entry().previous_transactions() {
                 if !transaction_idx.contains_key(prev) {
-                    Err(Error::DagOrphanedTransaction(String::from(trans.id())))?;
+                    Err(Error::DagOrphanedTransaction(trans.id().as_string()))?;
                 }
             }
         }
@@ -802,6 +802,7 @@ impl IntoIterator for Transactions {
 }
 
 impl SerdeBinary for Transactions {}
+impl SerText for Transactions {}
 
 #[cfg(test)]
 mod tests {
@@ -857,8 +858,8 @@ mod tests {
         transactions_1.push_transaction(trans_claim_signed.clone()).unwrap();
         transactions_2.build_identity().unwrap();
         match transactions_2.push_transaction_raw(trans_claim_signed.clone()) {
-            Ok(_) => panic!("pushed a bad raw transaction: {}", String::from(trans_claim_signed.id())),
-            Err(e) => assert_eq!(e, Error::DagOrphanedTransaction(String::from(trans_claim_signed.id()))),
+            Ok(_) => panic!("pushed a bad raw transaction: {}", trans_claim_signed.id().as_string()),
+            Err(e) => assert_eq!(e, Error::DagOrphanedTransaction(trans_claim_signed.id().as_string())),
         }
     }
 

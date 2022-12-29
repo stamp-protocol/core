@@ -15,7 +15,7 @@ pub(crate) mod sign;
 #[cfg(test)]
 pub(crate) mod test;
 
-pub use ser::{base64_encode, base64_decode, SerdeBinary, Binary, BinarySecret, BinaryVec, KeyValEntry};
+pub use ser::{base64_encode, base64_decode, SerdeBinary, SerText, Binary, BinarySecret, BinaryVec, KeyValEntry};
 
 macro_rules! object_id {
     (
@@ -66,17 +66,14 @@ macro_rules! object_id {
         impl std::convert::TryFrom<&$name> for String {
             type Error = crate::error::Error;
             fn try_from(id: &$name) -> std::result::Result<Self, Self::Error>  {
-                let bytes = crate::util::ser::serialize(id.deref().deref())?;
-                Ok(crate::util::ser::base64_encode(bytes))
+                String::try_from(id.deref())
             }
         }
 
         impl std::convert::TryFrom<&str> for $name {
             type Error = crate::error::Error;
             fn try_from(id_str: &str) -> std::result::Result<Self, Self::Error> {
-                let bytes = crate::util::ser::base64_decode(id_str.as_bytes())?;
-                let hash: crate::crypto::base::Hash = crate::util::ser::deserialize(&bytes[..])?;
-                Ok(Self(crate::dag::TransactionID::from(hash)))
+                Ok($name::from(crate::dag::TransactionID::try_from(id_str)?))
             }
         }
     }
@@ -302,19 +299,31 @@ mod tests {
             TestID
         }
 
-        let hash = Hash::new_blake2b(b"get a job").unwrap();
+        let hash1 = Hash::new_blake2b(b"get a job").unwrap();
+        let hash2 = Hash::new_blake2b(b"hot one today!").unwrap();
+        let hash3 = Hash::new_blake2b(b"YEAH?!").unwrap();
 
-        let id = TestID(TransactionID::from(hash));
+        let id1 = TestID::from(TransactionID::from(hash1));
+        let id2 = TestID::from(TransactionID::from(hash2));
+        let id3 = TestID::from(TransactionID::from(hash3));
 
-        let string_id = String::try_from(&id).unwrap();
-        assert_eq!(&string_id, "oEIEQHpjE68Va5-QWeKzO-VDdtHxWLq7N_PNzsFYAy-tkZAIzr_4pAFzaxlaYIlSrmHv-Z6y_o9Dfl2meunOnhL1U1Q");
+        let string_id1 = String::try_from(&id1).unwrap();
+        let string_id2 = String::try_from(&id2).unwrap();
+        let string_id3 = String::try_from(&id3).unwrap();
+        assert_eq!(&string_id1, "emMTrxVrn5BZ4rM75UN20fFYurs3883OwVgDL62RkAjOv_ikAXNrGVpgiVKuYe_5nrL-j0N-XaZ66c6eEvVTVAA");
+        assert_eq!(&string_id2, "xIckNqLUDYNitx_Ig50QwMI6k8_5V1EVy5wApqjEBFvqCFb7837FdmI93jjfc67yR1B8Id8eURmWAaX8dBllNwA");
+        assert_eq!(&string_id3, "2RDIGtU9_p-hLMFpvO2mNGcH-7zLKwUhWCiCXtGvrQHYXdBx_1i6jCjmuKzOHgM8jaxH13kRbcxodk7gmWOOkQA");
 
-        let id2 = TestID::try_from(string_id.as_str()).unwrap();
-        assert_eq!(id, id2);
+        let id1_2 = TestID::try_from(string_id1.as_str()).unwrap();
+        let id2_2 = TestID::try_from(string_id2.as_str()).unwrap();
+        let id3_2 = TestID::try_from(string_id3.as_str()).unwrap();
+        assert_eq!(id1, id1_2);
+        assert_eq!(id2, id2_2);
+        assert_eq!(id3, id3_2);
 
-        match &id {
+        match &id1 {
             TestID(sig) => {
-                assert_eq!(sig, id.deref());
+                assert_eq!(sig, id1.deref());
             }
         }
     }

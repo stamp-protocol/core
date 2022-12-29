@@ -19,10 +19,11 @@ pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
     Ok(rasn::der::encode(obj).map_err(|_| Error::ASNSerialize)?)
 }
 
-pub(crate) fn serialize_human<T>(obj: &T) -> Result<String>
+pub(crate) fn serialize_text<T>(obj: &T) -> Result<String>
     where T: Serialize + Public
 {
-    Ok(serde_yaml::to_string(&obj.strip_private())?)
+    let stripped: T = obj.strip_private();
+    Ok(serde_yaml::to_string(&stripped)?)
 }
 
 pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
@@ -49,6 +50,16 @@ pub trait SerdeBinary: Encode + Decode {
     /// Deserialize this message
     fn deserialize_binary(slice: &[u8]) -> Result<Self> {
         deserialize(slice)
+    }
+}
+
+/// Allows serializing to human readable format (but not deserializing). This is
+/// generally used for things that we want to be able to display in human readable
+/// format but aren't for consumption. If you want it consumable, use [SerdeBinary].
+pub trait SerText: Serialize + Public + Sized {
+    /// Serialize this object to human readable format
+    fn serialize_text(&self) -> Result<String> {
+        serialize_text(self)
     }
 }
 
