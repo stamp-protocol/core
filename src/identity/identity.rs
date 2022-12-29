@@ -267,8 +267,7 @@ impl Identity {
     pub fn find_claim_by_name(&self, name: &str) -> Option<&Claim> {
         self.claims().iter()
             .rev()
-            .filter(|c| c.name().as_ref().map(|n| n.as_str()) == Some(name))
-            .next()
+            .find(|c| c.name().as_ref().map(|n| n.as_str()) == Some(name))
     }
 
     /// Try to find a [Stamp] on a [Claim] by id.
@@ -605,6 +604,20 @@ mod tests {
 
         let identity3 = identity.clone().delete_subkey(&key_id).unwrap();
         assert_eq!(identity3.keychain().subkeys().len(), 0);
+    }
+
+    #[test]
+    fn identity_find_claim_by_name() {
+        let (_, identity) = create_identity();
+        let spec1 = ClaimSpec::Name(MaybePrivate::new_public(String::from("Dirk Delta")));
+        let spec2 = ClaimSpec::Name(MaybePrivate::new_public(String::from("Marty Malt")));
+        let identity2 = identity
+            .make_claim(ClaimID::random(), spec1.clone(), Some("name/primary".into())).unwrap()
+            .make_claim(ClaimID::random(), spec2.clone(), Some("name/primary".into())).unwrap();
+        match identity2.find_claim_by_name("name/primary").unwrap().spec() {
+            ClaimSpec::Name(val) => assert_eq!(val.open_public().unwrap().as_str(), "Marty Malt"),
+            _ => panic!("bad dates"),
+        }
     }
 
     #[test]

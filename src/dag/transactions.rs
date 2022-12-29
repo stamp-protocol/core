@@ -887,7 +887,7 @@ mod tests {
         assert_eq!(identity1.keychain().subkeys()[0].key_id(), admin_key_2.key_id().into());
         assert_eq!(identity1.claims().len(), 2);
         match identity1.find_claim_by_name("primary").unwrap().spec() {
-            ClaimSpec::Address(val) => assert!(val.open_public().unwrap().as_str() == "1112 Dirk Delta Ln."),
+            ClaimSpec::Address(val) => assert_eq!(val.open_public().unwrap().as_str(), "1112 Dirk Delta Ln."),
             _ => panic!("wrong"),
         }
 
@@ -895,7 +895,7 @@ mod tests {
         assert_eq!(identity2.keychain().admin_keys().len(), 2);
         assert_eq!(identity2.claims().len(), 3);
         match identity2.find_claim_by_name("primary").unwrap().spec() {
-            ClaimSpec::Address(val) => assert!(val.open_public().unwrap().as_str() == "1112 Liberal Hokes ave."),
+            ClaimSpec::Address(val) => assert_eq!(val.open_public().unwrap().as_str(), "1112 Liberal Hokes ave."),
             _ => panic!("wrong"),
         }
         let transactions2 = Transactions::merge(branch1.clone(), branch2.clone()).unwrap();
@@ -908,7 +908,7 @@ mod tests {
         assert_eq!(transactions3.transactions().len(), 10);
         let identity3 = transactions3.build_identity().unwrap();
         match identity3.find_claim_by_name("primary").unwrap().spec() {
-            ClaimSpec::Address(val) => assert!(val.open_public().unwrap().as_str() == "1112 Liberal Hokes ave."),
+            ClaimSpec::Address(val) => assert_eq!(val.open_public().unwrap().as_str(), "1112 Liberal Hokes ave."),
             _ => panic!("wrong"),
         }
         assert_eq!(identity3.claims().len(), 6);

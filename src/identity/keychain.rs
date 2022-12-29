@@ -516,7 +516,7 @@ impl Keychain {
 
     /// Find an admin key by name.
     pub fn admin_key_by_name(&self, name: &str) -> Option<&AdminKey> {
-        self.admin_keys().iter().find(|x| x.name() == name)
+        self.admin_keys().iter().rev().find(|x| x.name() == name)
     }
 
     /// Find a subkey by ID.
@@ -536,7 +536,7 @@ impl Keychain {
 
     /// Find a subkey by name. Relieves a bit of tedium.
     pub fn subkey_by_name(&self, name: &str) -> Option<&Subkey> {
-        self.subkeys().iter().find(|x| x.name() == name)
+        self.subkeys().iter().rev().find(|x| x.name() == name)
     }
 
     /// Grab all admin keys (active and revoked).
@@ -838,6 +838,58 @@ mod tests {
 
         let keychain = Keychain::new(vec![admin_key]);
         (master_key, keychain)
+    }
+
+    #[test]
+    fn keychain_admin_key_finders() {
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut keychain = Keychain::new(vec![]);
+        assert_eq!(keychain.admin_key_by_keyid(&KeyID::random_sign().into()).as_ref().map(|x| x.key()), None);
+        assert_eq!(keychain.admin_key_by_keyid_str("abcdefg").as_ref().map(|x| x.key()), None);
+        assert_eq!(keychain.admin_key_by_keyid_mut(&KeyID::random_sign().into()).as_ref().map(|x| x.key()), None);
+        assert_eq!(keychain.admin_key_by_name("Alpha").as_ref().map(|x| x.key()), None);
+
+        let adminkey1 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Alpha", None);
+        let adminkey2 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Publish", None);
+        let adminkey3 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Alpha", None);
+        let adminkey4 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Alpha", None);
+
+        let mut keychain2 = keychain
+            .add_admin_key(adminkey1.clone()).unwrap()
+            .add_admin_key(adminkey2.clone()).unwrap()
+            .add_admin_key(adminkey3.clone()).unwrap()
+            .add_admin_key(adminkey4.clone()).unwrap();
+
+        assert_eq!(keychain2.admin_key_by_keyid(&adminkey1.key().key_id().into()).as_ref().map(|x| x.key()), Some(adminkey1.key()));
+        assert_eq!(keychain2.admin_key_by_keyid_str(adminkey2.key().key_id().as_string().as_str()).as_ref().map(|x| x.key()), Some(adminkey2.key()));
+        assert_eq!(keychain2.admin_key_by_keyid_mut(&adminkey3.key().key_id().into()).as_ref().map(|x| x.key()), Some(adminkey3.key()));
+        assert_eq!(keychain2.admin_key_by_name("Alpha").as_ref().map(|x| x.key()), Some(adminkey4.key()));
+    }
+
+    #[test]
+    fn keychain_subkey_finders() {
+        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut keychain = Keychain::new(vec![]);
+        assert_eq!(keychain.subkey_by_keyid(&KeyID::random_sign().into()).as_ref().map(|x| x.key_id()), None);
+        assert_eq!(keychain.subkey_by_keyid_str("abcdefg").as_ref().map(|x| x.key_id()), None);
+        assert_eq!(keychain.subkey_by_keyid_mut(&KeyID::random_sign().into()).as_ref().map(|x| x.key_id()), None);
+        assert_eq!(keychain.subkey_by_name("Alpha").as_ref().map(|x| x.key_id()), None);
+
+        let subkey1 = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
+        let subkey2 = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
+        let subkey3 = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
+        let subkey4 = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
+
+        let mut keychain2 = keychain
+            .add_subkey(subkey1.clone(), "Alpha", None).unwrap()
+            .add_subkey(subkey2.clone(), "Publish", None).unwrap()
+            .add_subkey(subkey3.clone(), "Alpha", None).unwrap()
+            .add_subkey(subkey4.clone(), "Alpha", None).unwrap();
+
+        assert_eq!(keychain2.subkey_by_keyid(&subkey1.key_id().into()).as_ref().map(|x| x.key_id()), Some(subkey1.key_id()));
+        assert_eq!(keychain2.subkey_by_keyid_str(subkey2.key_id().as_string().as_str()).as_ref().map(|x| x.key_id()), Some(subkey2.key_id()));
+        assert_eq!(keychain2.subkey_by_keyid_mut(&subkey3.key_id().into()).as_ref().map(|x| x.key_id()), Some(subkey3.key_id()));
+        assert_eq!(keychain2.subkey_by_name("Alpha").as_ref().map(|x| x.key_id()), Some(subkey4.key_id()));
     }
 
     #[test]
