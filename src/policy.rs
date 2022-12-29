@@ -73,12 +73,10 @@ pub enum TransactionBodyType {
     #[rasn(tag(explicit(17)))]
     DeleteSubkeyV1,
     #[rasn(tag(explicit(18)))]
-    SetNicknameV1,
-    #[rasn(tag(explicit(19)))]
     PublishV1,
-    #[rasn(tag(explicit(20)))]
+    #[rasn(tag(explicit(19)))]
     SignV1,
-    #[rasn(tag(explicit(21)))]
+    #[rasn(tag(explicit(20)))]
     ExtV1,
 }
 
@@ -105,7 +103,6 @@ impl From<&TransactionBody> for TransactionBodyType {
             TransactionBody::EditSubkeyV1 { .. } => Self::EditSubkeyV1,
             TransactionBody::RevokeSubkeyV1 { .. } => Self::RevokeSubkeyV1,
             TransactionBody::DeleteSubkeyV1 { .. } => Self::DeleteSubkeyV1,
-            TransactionBody::SetNicknameV1 { .. } => Self::SetNicknameV1,
             TransactionBody::PublishV1 { .. } => Self::PublishV1,
             TransactionBody::SignV1 { .. } => Self::SignV1,
             TransactionBody::ExtV1 { .. } => Self::ExtV1,
@@ -347,7 +344,6 @@ impl Context {
                 identity.keychain().subkey_by_keyid(id)
                     .map(|subkey| contexts.push(Self::Name(subkey.name().clone())));
             }
-            TransactionBody::SetNicknameV1 { .. } => {}
             TransactionBody::PublishV1 { .. } => {}
             TransactionBody::SignV1 { .. } => {}
             TransactionBody::ExtV1 { ty, context, .. } => {
@@ -970,7 +966,7 @@ mod tests {
         assert_eq!(cap3.test(&cap1).err(), Some(Error::PolicyCapabilityMismatch));
         assert_eq!(cap3.test(&cap2).err(), Some(Error::PolicyCapabilityMismatch));
         let res3_1 = cap3.test(&Capability::Transaction {
-            body_type: TransactionBodyType::SetNicknameV1,
+            body_type: TransactionBodyType::SignV1,
             context: Context::Any(vec![]),
         });
         assert_eq!(res3_1.err(), Some(Error::PolicyCapabilityMismatch));

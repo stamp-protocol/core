@@ -193,11 +193,6 @@ impl Transactions {
                     .delete_subkey(&id)?;
                 Ok(identity_mod)
             }
-            TransactionBody::SetNicknameV1 { nickname } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .set_nickname(nickname);
-                Ok(identity_mod)
-            }
             TransactionBody::PublishV1 { .. } => {
                 // NOPE
                 Err(Error::TransactionInvalid("Publish transactions cannot be applied to identities".into()))
@@ -750,17 +745,6 @@ impl Transactions {
         self.stage_transaction(now, body)
     }
 
-    /// Set the nickname on this identity.
-    pub fn set_nickname<T, S>(&self, now: T, nickname: Option<S>) -> Result<Transaction>
-        where T: Into<Timestamp> + Clone,
-              S: Into<String>,
-    {
-        let body = TransactionBody::SetNicknameV1 {
-            nickname: nickname.map(|x| x.into()),
-        };
-        self.stage_transaction(now, body)
-    }
-
     /// Publish this identity
     pub fn publish<T: Into<Timestamp> + Clone>(&self, now: T) -> Result<Transaction> {
         let body = TransactionBody::PublishV1 {
@@ -888,23 +872,32 @@ mod tests {
             [ make_claim, Timestamp::from_str("2021-04-20T00:00:10Z").unwrap(), ClaimSpec::Name(MaybePrivate::new_public("Hooty McOwl".to_string())), None::<String> ]
             [ add_admin_key, Timestamp::from_str("2021-04-20T00:01:00Z").unwrap(), admin_key_2.clone() ]
             [ revoke_admin_key, Timestamp::from_str("2021-04-20T00:01:01Z").unwrap(), admin_key_2.key_id(), RevocationReason::Superseded, Some("CYA") ]
-            [ set_nickname, Timestamp::from_str("2021-04-20T00:01:33Z").unwrap(), Some("dirk-delta") ]
+            [ make_claim, Timestamp::from_str("2021-04-20T00:01:33Z").unwrap(), ClaimSpec::Address(MaybePrivate::new_public("1112 Dirk Delta Ln.".to_string())), Some(String::from("primary")) ]
         };
         // make some claims on my Facebook (TM) (R) (C) Brain (AND NOW A WORD FROM OUR SPONSORS) Implant
         let branch2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
             [ make_claim, Timestamp::from_str("2021-04-20T00:00:30Z").unwrap(), ClaimSpec::Url(MaybePrivate::new_public(Url::parse("https://www.cactus-petes.com/yeeeehawwww").unwrap())), None::<String> ]
             [ add_admin_key, Timestamp::from_str("2021-04-20T00:01:36Z").unwrap(), admin_key_3.clone() ]
-            [ set_nickname, Timestamp::from_str("2021-04-20T00:01:45Z").unwrap(), Some("liberal hokes") ]
+            [ make_claim, Timestamp::from_str("2021-04-20T00:01:45Z").unwrap(), ClaimSpec::Address(MaybePrivate::new_public("1112 Liberal Hokes ave.".to_string())), Some(String::from("primary")) ]
             [ make_claim, Timestamp::from_str("2021-04-20T00:01:56Z").unwrap(), ClaimSpec::Email(MaybePrivate::new_public(String::from("dirk.delta@hollywood.com"))), None::<String> ]
         };
         let identity1 = branch1.build_identity().unwrap();
         let identity2 = branch2.build_identity().unwrap();
-        assert_eq!(identity1.nickname(), Some(&String::from("dirk-delta")));
         assert_eq!(identity1.keychain().admin_keys().len(), 1);
         assert_eq!(identity1.keychain().subkeys()[0].key_id(), admin_key_2.key_id().into());
-        assert_eq!(identity2.nickname(), Some(&String::from("liberal hokes")));
+        assert_eq!(identity1.claims().len(), 2);
+        match identity1.find_claim_by_name("primary").unwrap().spec() {
+            ClaimSpec::Address(val) => assert!(val.open_public().unwrap().as_str() == "1112 Dirk Delta Ln."),
+            _ => panic!("wrong"),
+        }
+
         assert_eq!(identity2.keychain().admin_keys()[1].key_id(), admin_key_3.key_id());
         assert_eq!(identity2.keychain().admin_keys().len(), 2);
+        assert_eq!(identity2.claims().len(), 3);
+        match identity2.find_claim_by_name("primary").unwrap().spec() {
+            ClaimSpec::Address(val) => assert!(val.open_public().unwrap().as_str() == "1112 Liberal Hokes ave."),
+            _ => panic!("wrong"),
+        }
         let transactions2 = Transactions::merge(branch1.clone(), branch2.clone()).unwrap();
         assert_eq!(branch1.transactions().len(), 5);
         assert_eq!(branch2.transactions().len(), 5);
@@ -914,8 +907,11 @@ mod tests {
         };
         assert_eq!(transactions3.transactions().len(), 10);
         let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.nickname(), Some(&String::from("liberal hokes")));
-        assert_eq!(identity3.claims().len(), 4);
+        match identity3.find_claim_by_name("primary").unwrap().spec() {
+            ClaimSpec::Address(val) => assert!(val.open_public().unwrap().as_str() == "1112 Liberal Hokes ave."),
+            _ => panic!("wrong"),
+        }
+        assert_eq!(identity3.claims().len(), 6);
         assert_eq!(identity3.keychain().admin_keys().len(), 2);
         assert_eq!(identity3.keychain().admin_keys()[1].key_id(), admin_key_3.key_id());
         assert_eq!(identity3.keychain().subkeys().len(), 1);
@@ -1576,26 +1572,6 @@ mod tests {
     }
 
     #[test]
-    fn transactions_set_nickname() {
-        let (master_key, transactions, admin_key) = genesis();
-        let identity = transactions.build_identity().unwrap();
-        assert_eq!(identity.nickname(), None);
-
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
-            [ set_nickname, Timestamp::now(), Some("dirk-delta") ]
-        };
-        let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.nickname(), Some(&"dirk-delta".into()));
-
-        let no_name: Option<String> = None;
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2,
-            [ set_nickname, Timestamp::now(), no_name ]
-        };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.nickname(), None);
-    }
-
-    #[test]
     fn transactions_publish() {
         let (master_key, transactions, admin_key) = genesis();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
@@ -1912,7 +1888,7 @@ mod tests {
         let transactions = sign_and_push! { &master_key, &admin_key, transactions,
             [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Hooty McOwl".to_string()).unwrap()), None::<String> ]
             [ add_admin_key, Timestamp::now(), admin_key2 ]
-            [ set_nickname, Timestamp::now(), Some("dirk-delta") ]
+            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("dirk-delta".to_string())), Some(String::from("name")) ]
         };
         transactions.test_master_key(&master_key).unwrap();
         let identity = transactions.build_identity().unwrap();

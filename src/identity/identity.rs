@@ -101,34 +101,6 @@ pub struct Identity {
     /// for checking of revocation.
     #[rasn(tag(explicit(5)))]
     stamps: StampCollection,
-    /// An always-public nickname that can be used to look up this identity
-    /// in various indexed locations. This will always have `stamp://` prepended
-    /// to it, so don't include it here.
-    ///
-    /// For instance, I might set my nickname as "zefram-cochrane" and
-    /// from thereafter people will be able to find me via the nickname
-    /// `stamp://zefram-cochrane`.
-    ///
-    /// Note that this necessarily cannot be unique, so services that index the
-    /// nickname will need to list *all* known identities using that shortname.
-    /// Note that it will be possible to specify a string ID in long or short-form,
-    /// such as `stamp://zefram-cochrane/s0yB0i-4y822` to narrow down the result
-    /// by the nickname *and* ID.
-    ///
-    /// It's up to users of the protocol to pick names that are unique enough to
-    /// avoid accidental collisions, and any malicious immitations must be
-    /// weeded out by inclusion of an ID (prefix or full), stamp verification,
-    /// and trust levels.
-    ///
-    /// NOTE that the nickname is only useful for discovery of an identity in
-    /// the network. It must *not* be included in claim proofs,
-    /// because if the nickname changes then the claim proof will
-    /// break. It's really meant as a quick way to allow people to find your
-    /// identity, as opposed to a piece of static information used by other
-    /// systems.
-    #[rasn(tag(explicit(6)))]
-    #[getset(skip)]
-    nickname: Option<String>,
 }
 
 impl Identity {
@@ -145,7 +117,6 @@ impl Identity {
             keychain,
             claims: vec![],
             stamps: StampCollection::default(),
-            nickname: None,
         }
     }
 
@@ -286,15 +257,18 @@ impl Identity {
         Ok(self)
     }
 
-    /// Set the identity's nickname
-    pub(crate) fn set_nickname(mut self, name: Option<String>) -> Self {
-        self.nickname = name;
-        self
-    }
-
-    /// Get this identity's nickname
-    pub fn nickname(&self) -> Option<&String> {
-        self.nickname.as_ref()
+    /// Given a name, find the matching claim (if any). This searches in reverse,
+    /// meaning the *last* claim to be set with this particular name will be used.
+    /// This mirrors how a hash table works (last write wins).
+    ///
+    /// The alternative here is to have some kind of conflict resolution around
+    /// duplicate names, and let's be honest, this protocol is complicated enough
+    /// without dealing with name conflicts.
+    pub fn find_claim_by_name(&self, name: &str) -> Option<&Claim> {
+        self.claims().iter()
+            .rev()
+            .filter(|c| c.name().as_ref().map(|n| n.as_str()) == Some(name))
+            .next()
     }
 
     /// Try to find a [Stamp] on a [Claim] by id.
@@ -324,17 +298,6 @@ impl Identity {
             .collect::<Vec<_>>()
     }
 
-    /// Grab this identity's primary email, if it has one.
-    pub fn email_maybe(&self) -> Option<String> {
-        self.claims().iter()
-            .find_map(|x| {
-                match x.spec() {
-                    ClaimSpec::Email(MaybePrivate::Public(ref email)) => Some(email.clone()),
-                    _ => None,
-                }
-            })
-    }
-
     /// Return all names associated with this identity.
     pub fn names(&self) -> Vec<String> {
         self.claims().iter()
@@ -345,17 +308,6 @@ impl Identity {
                 }
             })
             .collect::<Vec<_>>()
-    }
-
-    /// Grab this identity's primary name, if it has one.
-    pub fn name_maybe(&self) -> Option<String> {
-        self.claims().iter()
-            .find_map(|x| {
-                match x.spec() {
-                    ClaimSpec::Name(MaybePrivate::Public(ref name)) => Some(name.clone()),
-                    _ => None,
-                }
-            })
     }
 
     /// Determine if this identity is owned (ie, we have the private keys stored
@@ -411,7 +363,6 @@ mod tests {
             stamp::{Confidence, StampEntry, StampRevocationEntry, StampRevocationID},
         },
         policy::{Capability, MultisigPolicy, Policy},
-        util,
     };
     use std::str::FromStr;
 
@@ -657,20 +608,9 @@ mod tests {
     }
 
     #[test]
-    fn identity_nicknames() {
-        let (_master_key, identity) = util::test::setup_identity_with_subkeys();
-        assert_eq!(identity.nickname().is_none(), true);
-        let identity = identity.set_nickname(Some("fascistpig".into()));
-        assert_eq!(identity.nickname(), Some("fascistpig".into()).as_ref());
-        let identity = identity.set_nickname(None);
-        assert_eq!(identity.nickname(), None);
-    }
-
-    #[test]
     fn identity_emails_maybe() {
         let (master_key, identity) = create_identity();
         assert_eq!(identity.emails().len(), 0);
-        assert_eq!(identity.email_maybe(), None);
 
         let spec = ClaimSpec::Email(MaybePrivate::new_public(String::from("poopy@butt.com")));
         let identity = identity
@@ -678,33 +618,27 @@ mod tests {
             .make_claim(ClaimID::random(), ClaimSpec::Email(MaybePrivate::new_private(&master_key, "ace@fairweather.com".into()).unwrap()), Some("email2".into())).unwrap()
             .make_claim(ClaimID::random(), ClaimSpec::Email(MaybePrivate::new_public("zing@radiofree.com".into())), Some("email3".into())).unwrap();
         assert_eq!(identity.emails(), vec!["poopy@butt.com".to_string(), "zing@radiofree.com".to_string()]);
-        assert_eq!(identity.email_maybe(), Some("poopy@butt.com".to_string()));
     }
 
     #[test]
     fn identity_names_maybe() {
         let (_master_key, identity) = create_identity();
         assert_eq!(identity.names().len(), 0);
-        assert_eq!(identity.name_maybe(), None);
 
         let claim_id = ClaimID::random();
         let spec = ClaimSpec::Name(MaybePrivate::new_public(String::from("BOND. JAMES BOND.")));
         let identity = identity.make_claim(claim_id.clone(), spec.clone(), Some("hvvvv".into())).unwrap();
         assert_eq!(identity.names(), vec!["BOND. JAMES BOND.".to_string()]);
-        assert_eq!(identity.name_maybe(), Some("BOND. JAMES BOND.".to_string()));
 
         let claim_id2 = ClaimID::random();
         let spec = ClaimSpec::Name(MaybePrivate::new_public(String::from("Jack Mama")));
         let identity = identity.make_claim(claim_id2.clone(), spec.clone(), Some("GUHHHH".into())).unwrap();
         assert_eq!(identity.names(), vec!["BOND. JAMES BOND.".to_string(), "Jack Mama".to_string()]);
-        assert_eq!(identity.name_maybe(), Some("BOND. JAMES BOND.".to_string()));
 
         let identity2 = identity.clone().delete_claim(&claim_id).unwrap();
         assert_eq!(identity2.names().len(), 1);
-        assert_eq!(identity2.name_maybe(), Some("Jack Mama".to_string()));
         let identity3 = identity2.clone().delete_claim(&claim_id2).unwrap();
         assert_eq!(identity3.names().len(), 0);
-        assert_eq!(identity3.name_maybe(), None);
     }
 
     #[test]
@@ -776,8 +710,7 @@ keychain:
 claims: []
 stamps:
   stamps: []
-  revocations: []
-nickname: ~"#);
+  revocations: []"#);
     }
 
     #[test]
