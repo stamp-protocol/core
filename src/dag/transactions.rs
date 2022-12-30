@@ -70,9 +70,9 @@ impl Transactions {
         }
     }
 
-    /// Takes a master key, [Timestamp], and a [TransactionBody] and returns a
-    /// [Transaction] that can be signed and then pushed onto the list.
-    pub(crate) fn stage_transaction<T: Into<Timestamp> + Clone>(&self, now: T, body: TransactionBody) -> Result<Transaction> {
+    /// Creates a new transaction that references the trailing transactions in the
+    /// current set.
+    pub(crate) fn prepare_transaction<T: Into<Timestamp> + Clone>(&self, now: T, body: TransactionBody) -> Result<Transaction> {
         let leaves = Self::find_leaf_transactions(self.transactions());
         Transaction::new(TransactionEntry::new(now, leaves, body))
     }
@@ -555,7 +555,7 @@ impl Transactions {
             admin_keys,
             policies,
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Replace optionally both the [admin keys][AdminKey] in the
@@ -569,7 +569,7 @@ impl Transactions {
             admin_keys,
             policies,
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Add a new [admin key][AdminKey] to the [Keychain][crate::identity::keychain::Keychain].
@@ -577,7 +577,7 @@ impl Transactions {
         let body = TransactionBody::AddAdminKeyV1 {
             admin_key,
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Edit an [admin key][AdminKey].
@@ -590,7 +590,7 @@ impl Transactions {
             name: name.map(|x| x.into()),
             description: description.map(|x| x.map(|y| y.into())),
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Revokes an [AdminKey] key and moves it into the subkeys, optionally
@@ -604,7 +604,7 @@ impl Transactions {
             reason,
             new_name: new_name.map(|x| x.into()),
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Add a new [policy][Policy] to the identity.
@@ -612,7 +612,7 @@ impl Transactions {
         let body = TransactionBody::AddPolicyV1 {
             policy,
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Delete (by name) a [Policy] from the identity.
@@ -620,7 +620,7 @@ impl Transactions {
         let body = TransactionBody::DeletePolicyV1 {
             id,
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Make a new [Claim][ClaimSpec].
@@ -632,7 +632,7 @@ impl Transactions {
             spec,
             name: name.map(|x| x.into()),
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Edit a claim.
@@ -644,7 +644,7 @@ impl Transactions {
             claim_id,
             name: name.map(|x| x.into()),
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Delete an existing claim.
@@ -652,7 +652,7 @@ impl Transactions {
         let body = TransactionBody::DeleteClaimV1 {
             claim_id,
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Make a transaction that stamps a claim. This transaction can be saved
@@ -664,7 +664,7 @@ impl Transactions {
         let body = TransactionBody::MakeStampV1 {
             stamp,
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Revoke a stamp we previously created and store this revocation with the
@@ -673,7 +673,7 @@ impl Transactions {
         let body = TransactionBody::RevokeStampV1 {
             revocation,
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Accept a stamp someone, or some*thing*, has made on a claim of ours.
@@ -684,7 +684,7 @@ impl Transactions {
         let body = TransactionBody::AcceptStampV1 {
             stamp_transaction: Box::new(stamp_transaction),
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Delete an existing stamp.
@@ -692,7 +692,7 @@ impl Transactions {
         let body = TransactionBody::DeleteStampV1 {
             stamp_id,
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Add a new subkey to our keychain.
@@ -708,7 +708,7 @@ impl Transactions {
             name: name.into(),
             desc: desc.map(|x| x.into()),
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Edit a subkey.
@@ -721,7 +721,7 @@ impl Transactions {
             new_name: new_name.map(|x| x.into()),
             new_desc: new_desc.map(|x| x.map(|y| y.into())),
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Revoke a subkey.
@@ -734,7 +734,7 @@ impl Transactions {
             reason,
             new_name: new_name.map(|x| x.into()),
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Delete a subkey.
@@ -742,7 +742,7 @@ impl Transactions {
         let body = TransactionBody::DeleteSubkeyV1 {
             id,
         };
-        self.stage_transaction(now, body)
+        self.prepare_transaction(now, body)
     }
 
     /// Publish this identity
