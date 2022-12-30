@@ -130,10 +130,6 @@ pub enum Error {
     #[error("deserialization error")]
     DeserializeBase64(#[from] base64::DecodeError),
 
-    /// A duplicate ID was given.
-    #[error("the given ID is already in use")]
-    DuplicateID,
-
     /// A duplicate transaction was pushed to the transaction list
     #[error("a duplicate transaction was pushed to the transaction list")]
     DuplicateTransaction,
