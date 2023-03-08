@@ -711,9 +711,6 @@ impl Transactions {
         where T: Into<Timestamp> + Clone,
               S: Into<String>,
     {
-        if matches!(key, Key::Admin(_)) {
-            Err(Error::TransactionInvalid("Admin keys cannot be added as subkeys".into()))?;
-        }
         let body = TransactionBody::AddSubkeyV1 {
             key,
             name: name.into(),
@@ -895,8 +892,10 @@ mod tests {
         };
         let identity1 = branch1.build_identity().unwrap();
         let identity2 = branch2.build_identity().unwrap();
-        assert_eq!(identity1.keychain().admin_keys().len(), 1);
-        assert_eq!(identity1.keychain().subkeys()[0].key_id(), admin_key_2.key_id().into());
+        assert_eq!(identity1.keychain().admin_keys().len(), 2);
+        assert_eq!(identity1.keychain().admin_keys()[0].key_id(), admin_key.key_id());
+        assert_eq!(identity1.keychain().admin_keys()[1].key_id(), admin_key_2.key_id());
+        assert_eq!(identity1.keychain().subkeys().len(), 0);
         assert_eq!(identity1.claims().len(), 2);
         match identity1.find_claim_by_name("primary").unwrap().spec() {
             ClaimSpec::Address(val) => assert_eq!(val.open_public().unwrap().as_str(), "1112 Dirk Delta Ln."),
@@ -924,10 +923,10 @@ mod tests {
             _ => panic!("wrong"),
         }
         assert_eq!(identity3.claims().len(), 6);
-        assert_eq!(identity3.keychain().admin_keys().len(), 2);
-        assert_eq!(identity3.keychain().admin_keys()[1].key_id(), admin_key_3.key_id());
-        assert_eq!(identity3.keychain().subkeys().len(), 1);
-        assert_eq!(identity3.keychain().subkeys()[0].key_id(), admin_key_2.key_id().into());
+        assert_eq!(identity3.keychain().admin_keys().len(), 3);
+        assert_eq!(identity3.keychain().admin_keys()[1].key_id(), admin_key_2.key_id());
+        assert_eq!(identity3.keychain().admin_keys()[2].key_id(), admin_key_3.key_id());
+        assert_eq!(identity3.keychain().subkeys().len(), 0);
     }
 
     #[test]
@@ -1032,29 +1031,29 @@ mod tests {
     fn transactions_edit_admin_key() {
         let (master_key, transactions, admin_key) = genesis();
         let identity1 = transactions.build_identity().unwrap();
-        assert_eq!(identity1.keychain().admin_keys().len(), 1);
-        assert_eq!(identity1.keychain().subkeys().len(), 0);
-        assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).map(|x| x.key()), Some(admin_key.key()));
+        assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Alpha");
+        assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(), &None);
 
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
-            [ revoke_admin_key, Timestamp::now(), admin_key.key_id(), RevocationReason::Compromised, Some("rotten") ]
+            [ edit_admin_key, Timestamp::now(), admin_key.key_id(), None, Some(Some("get a job")) ]
         };
         let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.keychain().admin_keys().len(), 0);
-        assert!(identity2.keychain().admin_key_by_keyid(&admin_key.key_id()).is_none());
-        assert_eq!(identity2.keychain().subkeys().len(), 1);
-        assert!(identity2.keychain().subkey_by_name("Alpha").is_none());
-        assert!(matches!(identity2.keychain().subkey_by_name("rotten").unwrap().key(), Key::Admin(_)));
+        assert_eq!(identity2.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Alpha");
+        assert_eq!(identity2.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(), &Some("get a job".into()));
 
         let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
-            [ revoke_admin_key, Timestamp::now(), admin_key.key_id(), RevocationReason::Compromised, Some("rotten") ]
+            [ edit_admin_key, Timestamp::now(), admin_key.key_id(), Some("Jerkface"), None ]
         };
         let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.keychain().admin_keys().len(), 0);
-        assert!(identity3.keychain().admin_key_by_keyid(&admin_key.key_id()).is_none());
-        assert_eq!(identity3.keychain().subkeys().len(), 1);
-        assert!(identity3.keychain().subkey_by_name("Alpha").is_none());
-        assert!(matches!(identity3.keychain().subkey_by_name("rotten").unwrap().key(), Key::Admin(_)));
+        assert_eq!(identity3.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Jerkface");
+        assert_eq!(identity3.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(), &Some("get a job".into()));
+
+        let transactions4 = sign_and_push! { &master_key, &admin_key, transactions3.clone(),
+            [ edit_admin_key, Timestamp::now(), admin_key.key_id(), None::<String>, Some(None) ]
+        };
+        let identity4 = transactions4.build_identity().unwrap();
+        assert_eq!(identity4.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Jerkface");
+        assert_eq!(identity4.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(), &None);
     }
 
     #[test]
@@ -1064,26 +1063,36 @@ mod tests {
         assert_eq!(identity1.keychain().admin_keys().len(), 1);
         assert_eq!(identity1.keychain().subkeys().len(), 0);
         assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).map(|x| x.key()), Some(admin_key.key()));
+        assert_eq!(identity1.keychain().admin_key_by_name("Alpha").unwrap().revocation(), &None);
+        assert_eq!(identity1.keychain().admin_key_by_name("Alpha").unwrap().name(), "Alpha");
+
+        let key_id = identity1.keychain().admin_key_by_name("Alpha").unwrap().key_id();
 
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
             [ revoke_admin_key, Timestamp::now(), admin_key.key_id(), RevocationReason::Compromised, Some("rotten") ]
         };
         let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.keychain().admin_keys().len(), 0);
+        assert_eq!(identity2.keychain().admin_keys().len(), 1);
         assert!(identity2.keychain().admin_key_by_name("Alpha").is_none());
-        assert_eq!(identity2.keychain().subkeys().len(), 1);
+        assert_eq!(identity2.keychain().admin_key_by_keyid(&key_id).unwrap().revocation(), &Some(RevocationReason::Compromised));
+        assert_eq!(identity2.keychain().admin_key_by_keyid(&key_id).unwrap().name(), "rotten");
+        assert_eq!(identity2.keychain().subkeys().len(), 0);
         assert!(identity2.keychain().subkey_by_name("Alpha").is_none());
-        assert!(matches!(identity2.keychain().subkey_by_name("rotten").unwrap().key(), Key::Admin(_)));
+        assert!(identity2.keychain().subkey_by_name("rotten").is_none());
+        assert!(identity2.keychain().subkey_by_keyid(&key_id).is_none());
 
         let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
-            [ revoke_admin_key, Timestamp::now(), admin_key.key_id(), RevocationReason::Compromised, Some("rotten") ]
+            [ revoke_admin_key, Timestamp::now(), admin_key.key_id(), RevocationReason::Compromised, Some("toast") ]
         };
         let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.keychain().admin_keys().len(), 0);
+        assert_eq!(identity3.keychain().admin_keys().len(), 1);
         assert!(identity3.keychain().admin_key_by_name("Alpha").is_none());
-        assert_eq!(identity3.keychain().subkeys().len(), 1);
+        assert_eq!(identity3.keychain().admin_key_by_keyid(&key_id).unwrap().revocation(), &Some(RevocationReason::Compromised));
+        assert_eq!(identity3.keychain().admin_key_by_keyid(&key_id).unwrap().name(), "toast");
+        assert_eq!(identity3.keychain().subkeys().len(), 0);
         assert!(identity3.keychain().subkey_by_name("Alpha").is_none());
-        assert!(matches!(identity3.keychain().subkey_by_name("rotten").unwrap().key(), Key::Admin(_)));
+        assert!(identity3.keychain().subkey_by_name("rotten").is_none());
+        assert!(identity3.keychain().subkey_by_keyid(&key_id).is_none());
     }
 
     #[test]

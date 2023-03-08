@@ -225,17 +225,14 @@ pub enum RevocationReason {
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Key {
-    /// An admin key
-    #[rasn(tag(explicit(0)))]
-    Admin(AdminKeypair),
     /// A signing key.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(explicit(0)))]
     Sign(SignKeypair),
     /// An asymmetric crypto key.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(explicit(1)))]
     Crypto(CryptoKeypair),
     /// A symmetric encryption key.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(explicit(2)))]
     Secret(PrivateWithMac<SecretKey>),
 }
 
@@ -253,14 +250,6 @@ impl Key {
     /// Create a new secret key
     pub fn new_secret(key: PrivateWithMac<SecretKey>) -> Self {
         Self::Secret(key)
-    }
-
-    /// Returns the [AdminKeypair] if this is an admin key.
-    pub fn as_adminkey(&self) -> Option<&AdminKeypair> {
-        match self {
-            Self::Admin(ref x) => Some(x),
-            _ => None,
-        }
     }
 
     /// Returns the `SignKeypair` if this is a signing key.
@@ -290,7 +279,6 @@ impl Key {
     /// Returns a KeyID for this key.
     pub fn key_id(&self) -> KeyID {
         match self {
-            Self::Admin(keypair) => keypair.key_id(),
             Self::Sign(keypair) => keypair.key_id(),
             Self::Crypto(keypair) => keypair.key_id(),
             Self::Secret(pwh) => KeyID::SecretKey(pwh.mac().clone()),
@@ -310,7 +298,6 @@ impl Key {
     /// Consumes the key, and re-encryptes it with a new master key.
     pub fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let key = match self {
-            Self::Admin(keypair) => Self::Admin(keypair.reencrypt(previous_master_key, new_master_key)?),
             Self::Sign(keypair) => Self::Sign(keypair.reencrypt(previous_master_key, new_master_key)?),
             Self::Crypto(keypair) => Self::Crypto(keypair.reencrypt(previous_master_key, new_master_key)?),
             Self::Secret(secret) => Self::Secret(secret.reencrypt(previous_master_key, new_master_key)?),
@@ -322,7 +309,6 @@ impl Key {
 impl Public for Key {
     fn strip_private(&self) -> Self {
         match self {
-            Self::Admin(keypair) => Self::Admin(keypair.strip_private()),
             Self::Sign(keypair) => Self::Sign(keypair.strip_private()),
             Self::Crypto(keypair) => Self::Crypto(keypair.strip_private()),
             Self::Secret(container) => Self::Secret(container.strip_private()),
@@ -331,7 +317,6 @@ impl Public for Key {
 
     fn has_private(&self) -> bool {
         match self {
-            Self::Admin(keypair) => keypair.has_private(),
             Self::Sign(keypair) => keypair.has_private(),
             Self::Crypto(keypair) => keypair.has_private(),
             Self::Secret(container) => container.has_private(),
@@ -361,7 +346,7 @@ pub struct Subkey {
     /// encrypted emails using this key." Or "HAI THIS IS MY DOGECOIN ADDRESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS!!!1"
     #[rasn(tag(explicit(2)))]
     description: Option<String>,
-    /// Allows revocation of a key.
+    /// Allows revocation of a subkey.
     #[rasn(tag(explicit(3)))]
     revocation: Option<RevocationReason>,
 }
@@ -421,22 +406,36 @@ pub struct AdminKey {
     /// manage claims"
     #[rasn(tag(explicit(2)))]
     description: Option<String>,
+    /// Allows revocation of an admin key.
+    #[rasn(tag(explicit(3)))]
+    revocation: Option<RevocationReason>,
 }
 
 impl AdminKey {
-    /// Create a new AdminKey
+    /// Create a new `AdminKey`. This sets `revocation` to `None`.
     pub fn new<T: Into<String>>(key: AdminKeypair, name: T, description: Option<T>) -> Self {
         Self {
             key,
             name: name.into(),
             description: description.map(|x| x.into()),
+            revocation: None,
+        }
+    }
+
+    /// Create a new `AdminKey` with revocation specified.
+    pub fn new_with_revocation<T: Into<String>>(key: AdminKeypair, name: T, description: Option<T>, revocation: Option<RevocationReason>) -> Self {
+        Self {
+            key,
+            name: name.into(),
+            description: description.map(|x| x.into()),
+            revocation,
         }
     }
 
     /// Re-encrypt this signing keypair with a new master key.
     pub fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
-        let Self { key, name, description } = self;
-        Ok(Self::new(key.reencrypt(previous_master_key, new_master_key)?, name, description))
+        let Self { key, name, description, revocation } = self;
+        Ok(Self::new_with_revocation(key.reencrypt(previous_master_key, new_master_key)?, name, description, revocation))
     }
 
     /// Grab this key's [AdminKeyID].
@@ -541,17 +540,9 @@ impl Keychain {
 
     /// Grab all admin keys (active and revoked).
     pub fn keys_admin(&self) -> Vec<&AdminKeypair> {
-        let mut search_keys = self.admin_keys()
+        self.admin_keys()
             .iter()
             .map(|key| key.key())
-            .collect::<Vec<_>>();
-        search_keys.append(&mut self.subkeys_admin());
-        search_keys
-    }
-
-    fn subkeys_admin(&self) -> Vec<&AdminKeypair> {
-        self.subkeys().iter()
-            .filter_map(|x| x.key().as_adminkey())
             .collect::<Vec<_>>()
     }
 
@@ -608,15 +599,11 @@ impl Keychain {
 
     /// Revoke an [Admin key][AdminKeypair].
     pub(crate) fn revoke_admin_key<T: Into<String>>(mut self, id: &AdminKeyID, reason: RevocationReason, new_name: Option<T>) -> Result<Self> {
-        if let Some(key) = self.admin_key_by_keyid(id) {
-            let new_name: String = new_name
-                .map(|x| x.into())
-                .unwrap_or_else(|| format!("revoked/admin/{}", key.key().key_id().as_string()));
-            let mut subkey = Subkey::new(Key::Admin(key.key().clone()), new_name, Some("revoked admin key".into()));
-            subkey.revoke(reason, None);
-            drop(key);
-            self.add_subkey_impl(subkey)?;
-            self.admin_keys_mut().retain(|k| &k.key_id() != id);
+        if let Some(key) = self.admin_key_by_keyid_mut(id) {
+            if let Some(name) = new_name {
+                key.set_name(name.into());
+            }
+            key.set_revocation(Some(reason));
         }
         Ok(self)
     }
@@ -721,25 +708,22 @@ mod tests {
     #[test]
     fn key_as_type() {
         let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
         let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let key3 = Key::Admin(admin_keypair.clone());
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
         let key6 = Key::Secret(PrivateWithMac::seal(&master_key, secret_key).unwrap());
 
-        let keys = vec![key3, key4, key5, key6];
+        let keys = vec![key4, key5, key6];
         macro_rules! keytype {
             ($keys:ident, $fn:ident) => {
                 $keys.iter().map(|x| x.$fn().is_some()).collect::<Vec<_>>()
             }
         }
-        assert_eq!(keytype!(keys, as_adminkey), vec![true, false, false, false]);
-        assert_eq!(keytype!(keys, as_signkey), vec![false, true, false, false]);
-        assert_eq!(keytype!(keys, as_cryptokey), vec![false, false, true, false]);
-        assert_eq!(keytype!(keys, as_secretkey), vec![false, false, false, true]);
+        assert_eq!(keytype!(keys, as_signkey), vec![true, false, false]);
+        assert_eq!(keytype!(keys, as_cryptokey), vec![false, true, false]);
+        assert_eq!(keytype!(keys, as_secretkey), vec![false, false, true]);
     }
 
     #[test]
@@ -758,16 +742,13 @@ mod tests {
     #[test]
     fn key_reencrypt() {
         let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
         let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let key3 = Key::Admin(admin_keypair.clone());
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
         let key6 = Key::Secret(PrivateWithMac::seal(&master_key, secret_key).unwrap());
 
-        let val3 = key3.as_adminkey().unwrap().sign(&master_key, b"hi i'm larry").unwrap();
         let val4 = key4.as_signkey().unwrap().sign(&master_key, b"hi i'm butch").unwrap();
         let val5 = key5.as_cryptokey().unwrap().seal_anonymous(b"sufferin succotash").unwrap();
         let val6_key = key6.as_secretkey().unwrap().open_and_verify(&master_key).unwrap();
@@ -776,28 +757,23 @@ mod tests {
 
         let master_key2 = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(master_key != master_key2);
-        let key3_2 = key3.reencrypt(&master_key, &master_key2).unwrap();
         let key4_2 = key4.reencrypt(&master_key, &master_key2).unwrap();
         let key5_2 = key5.reencrypt(&master_key, &master_key2).unwrap();
         let key6_2 = key6.reencrypt(&master_key, &master_key2).unwrap();
 
-        let val3_2 = key3_2.as_adminkey().unwrap().sign(&master_key2, b"hi i'm larry").unwrap();
         let val4_2 = key4_2.as_signkey().unwrap().sign(&master_key2, b"hi i'm butch").unwrap();
         let val5_2 = key5_2.as_cryptokey().unwrap().open_anonymous(&master_key2, &val5).unwrap();
         let val6_2_key = key6_2.as_secretkey().unwrap().open_and_verify(&master_key2).unwrap();
         let val6_2 = val6_2_key.open(&val6, &val6_nonce).unwrap();
 
-        assert_eq!(val3, val3_2);
         assert_eq!(val4, val4_2);
         assert_eq!(val5_2, b"sufferin succotash");
         assert_eq!(val6_2, b"and your nose like a delicious slope of cream");
 
-        let res3 = key3_2.as_adminkey().unwrap().sign(&master_key, b"hi i'm larry");
         let res4 = key4_2.as_signkey().unwrap().sign(&master_key, b"hi i'm butch");
         let res5 = key5_2.as_cryptokey().unwrap().open_anonymous(&master_key, &val5);
         let res6 = key6_2.as_secretkey().unwrap().open_and_verify(&master_key);
 
-        assert_eq!(res3, Err(Error::CryptoOpenFailed));
         assert_eq!(res4, Err(Error::CryptoOpenFailed));
         assert_eq!(res5, Err(Error::CryptoOpenFailed));
         assert_eq!(res6, Err(Error::CryptoOpenFailed));
@@ -806,26 +782,21 @@ mod tests {
     #[test]
     fn key_strip_private_has_private() {
         let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
         let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let key3 = Key::Admin(admin_keypair.clone());
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
         let key6 = Key::Secret(PrivateWithMac::seal(&master_key, secret_key).unwrap());
 
-        assert!(key3.has_private());
         assert!(key4.has_private());
         assert!(key5.has_private());
         assert!(key6.has_private());
 
-        let key3_2 = key3.strip_private();
         let key4_2 = key4.strip_private();
         let key5_2 = key5.strip_private();
         let key6_2 = key6.strip_private();
 
-        assert!(!key3_2.has_private());
         assert!(!key4_2.has_private());
         assert!(!key5_2.has_private());
         assert!(!key6_2.has_private());
@@ -923,10 +894,11 @@ mod tests {
         assert_eq!(keychain5.admin_keys()[0].description(), &Some("SO IT'S CONTINENTAL?".into()));
 
         let keychain6 = keychain5.revoke_admin_key(&key_id, RevocationReason::Superseded, Some("WROOONG")).unwrap();
-        assert_eq!(keychain6.admin_keys().len(), 0);
-        assert_eq!(keychain6.subkeys().len(), 1);
-        assert_eq!(keychain6.subkeys()[0].name(), "WROOONG");
-        assert_eq!(keychain6.subkeys()[0].description(), &Some("revoked admin key".into()));
+        assert_eq!(keychain6.admin_keys().len(), 1);
+        assert_eq!(keychain6.subkeys().len(), 0);
+        assert_eq!(keychain6.admin_keys()[0].name(), "WROOONG");
+        assert_eq!(keychain6.admin_keys()[0].description(), &Some("SO IT'S CONTINENTAL?".into()));
+        assert_eq!(keychain6.admin_keys()[0].revocation(), &Some(RevocationReason::Superseded));
     }
 
     #[test]

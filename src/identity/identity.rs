@@ -539,18 +539,18 @@ mod tests {
         assert_eq!(identity4.keychain().subkeys().len(), 0);
 
         let identity5 = identity4.revoke_admin_key(&key_id, RevocationReason::Superseded, Some("thank-you-parker".into())).unwrap();
-        assert_eq!(identity5.keychain().admin_keys().len(), 1);
-        assert_eq!(identity5.keychain().subkeys()[0].name(), "thank-you-parker");
-        assert_eq!(identity5.keychain().subkeys()[0].description(), &Some("revoked admin key".into()));
-        assert_eq!(identity5.keychain().subkeys()[0].revocation().is_some(), true);
-        assert_eq!(identity5.keychain().subkeys().len(), 1);
+        assert_eq!(identity5.keychain().admin_keys().len(), 2);
+        assert_eq!(identity5.keychain().admin_keys()[1].name(), "thank-you-parker");
+        assert_eq!(identity5.keychain().admin_keys()[1].description(), &Some("send me messages".into()));
+        assert_eq!(identity5.keychain().admin_keys()[1].revocation().is_some(), true);
+        assert_eq!(identity5.keychain().subkeys().len(), 0);
 
         let identity6 = identity5.revoke_admin_key(&key_id, RevocationReason::Recovery, Some("alright-shutup".into())).unwrap();
-        assert_eq!(identity6.keychain().admin_keys().len(), 1);
-        assert_eq!(identity6.keychain().subkeys()[0].name(), "thank-you-parker");
-        assert_eq!(identity6.keychain().subkeys()[0].description(), &Some("revoked admin key".into()));
-        assert_eq!(identity6.keychain().subkeys()[0].revocation().is_some(), true);
-        assert_eq!(identity6.keychain().subkeys().len(), 1);
+        assert_eq!(identity6.keychain().admin_keys().len(), 2);
+        assert_eq!(identity6.keychain().admin_keys()[1].name(), "alright-shutup");
+        assert_eq!(identity6.keychain().admin_keys()[1].description(), &Some("send me messages".into()));
+        assert_eq!(identity6.keychain().admin_keys()[1].revocation().is_some(), true);
+        assert_eq!(identity6.keychain().subkeys().len(), 0);
     }
 
     #[test]
@@ -713,6 +713,7 @@ keychain:
           secret: ~
       name: alpha
       description: ~
+      revocation: ~
   subkeys: []
 claims: []
 stamps:
