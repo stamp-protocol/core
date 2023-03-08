@@ -33,18 +33,6 @@ pub enum Error {
     #[error("incorrect salt given for kdf")]
     CryptoBadSalt,
 
-    /// Bad seed given to a cryptographic function.
-    #[error("incorrect seed given for keypair")]
-    CryptoBadSeed,
-
-    /// Failed to create a hash
-    #[error("failed to create a hash")]
-    CryptoHashFailed,
-
-    /// MAC failed to build properly
-    #[error("MAC failed to build properly")]
-    CryptoMacBuildFailure,
-
     /// An MAC failed to verify.
     #[error("the given MAC combo does not verify")]
     CryptoMacVerificationFailed,
@@ -57,14 +45,6 @@ pub enum Error {
     #[error("crypto key missing")]
     CryptoKeyMissing,
 
-    /// Failed to obtain a memory lock
-    #[error("failed to obtain memory lock")]
-    CryptoMemLockFailed,
-
-    /// Failed to release a memory lock
-    #[error("failed to unlock memory")]
-    CryptoMemUnlockFailed,
-
     /// Failed to open a sealed message. This is a bummer, man.
     #[error("failed to open a sealed object")]
     CryptoOpenFailed,
@@ -72,10 +52,6 @@ pub enum Error {
     /// Failed to seal a message.
     #[error("failed to seal a message")]
     CryptoSealFailed,
-
-    /// Failed to produce a signature
-    #[error("failed to create a signature")]
-    CryptoSignatureFailed,
 
     /// A signature failed to verify.
     #[error("the given signature/public key/data combo does not verify")]
@@ -104,10 +80,6 @@ pub enum Error {
     #[error("cannot build an identity from an empty transaction set")]
     DagEmpty,
 
-    /// The DAG chain looped (so this is more of a DG or G than DAG)
-    #[error("an endless loop occurred while processing the transaction set")]
-    DagLoop,
-
     /// An identity was not passed in while applying a transaction
     #[error("an identity is missing when applying a transaction")]
     DagMissingIdentity,
@@ -117,10 +89,6 @@ pub enum Error {
     #[error("this transaction set has no starting point")]
     DagNoGenesis,
 
-    /// A generic error for when things get "weird" while ordering transactions
-    #[error("an error occurred while ordering the transaction set")]
-    DagOrderingError,
-
     /// Found a transaction that references other transactions (via its
     /// `previous_transactions`) in the DAG that do not exist.
     #[error("orphaned transaction found {0}")]
@@ -129,6 +97,10 @@ pub enum Error {
     /// An error while engaging in deserialization.
     #[error("deserialization error")]
     DeserializeBase64(#[from] base64::DecodeError),
+
+    /// Trying to sign a transaction with a key that has already signed this transaction.
+    #[error("duplicate signature")]
+    DuplicateSignature,
 
     /// A duplicate transaction was pushed to the transaction list
     #[error("a duplicate transaction was pushed to the transaction list")]
@@ -146,16 +118,6 @@ pub enum Error {
     #[error("identity claim not found")]
     IdentityClaimNotFound,
 
-    /// An operation is being performed on an object not owned by the current
-    /// identity
-    #[error("identity ID mismatch")]
-    IdentityIDMismatch,
-
-    /// The identity has no recovery policy but SOMEONE (*not naming any names*)
-    /// is trying to execute a recovery request on it.
-    #[error("this identity has no recovery policy")]
-    IdentityMissingRecoveryPolicy,
-
     /// There were no private keys found in this identity.
     #[error("identity is not owned, but we attempted an operation requiring ownership")]
     IdentityNotOwned,
@@ -163,10 +125,6 @@ pub enum Error {
     /// The stamp being operated on wasn't found
     #[error("identity stamp not found")]
     IdentityStampNotFound,
-
-    /// Verification of an identity failed.
-    #[error("Verification of identity failed: {0}")]
-    IdentityVerificationFailed(String),
 
     /// An IO/net error
     #[error("io error {0:?}")]
@@ -176,17 +134,9 @@ pub enum Error {
     #[error("keychain key not found: {0}")]
     KeychainKeyNotFound(crate::crypto::base::KeyID),
 
-    /// This subkey is already revoked.
-    #[error("subkey is already revoked")]
-    KeychainSubkeyAlreadyRevoked,
-
     /// The subkey being operated on is the wrong type
     #[error("the given subkey cannot be used for the requested operation")]
     KeychainSubkeyWrongType,
-
-    /// Keygen failed
-    #[error("keygen failed")]
-    KeygenFailed,
 
     /// The request doesn't satisfy the policy. 20 beats your 5. I'm sorry, sir.
     #[error("the recovery request does not meet the policy's conditions")]
@@ -205,35 +155,13 @@ pub enum Error {
     #[error("no matching policy/capability found for the given transaction")]
     PolicyNotFound,
 
-    /// A key cannot be verified against the executed recovery policy chain.
-    #[error("policy verification of key failed")]
-    PolicyVerificationFailure,
-
     /// Tried to open a private container that has no data
     #[error("attempt to open private object which has no data")]
     PrivateDataMissing,
 
-    /// Error generating random numbers
-    #[error("error generating random")]
-    Random,
-
-    /// The recovery policy request's identity does not match the identity we're
-    /// recovering.
-    #[error("this recovery request is for another identity")]
-    RecoveryPolicyRequestIdentityMismatch,
-
-    /// The recovery policy request's policy does not match the policy we're
-    /// recovering against.
-    #[error("this recovery request is for a different policy")]
-    RecoveryPolicyRequestPolicyMismatch,
-
     /// An error while engaging in yaml serialization.
     #[error("yaml serialization error")]
     SerializeYaml(#[from] serde_yaml::Error),
-
-    /// We're trying to verify a signature on a value, but it's missing.
-    #[error("signature missing on a value")]
-    SignatureMissing,
 
     /// The hash of a transaction's body does not match its ID. He's tampered
     /// with it.

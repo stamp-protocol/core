@@ -447,17 +447,21 @@ impl Transactions {
             .collect::<Vec<_>>()
     }
 
-    /// Push a transaction into the transactions list, and return the resulting
-    /// identity object from running all transactions in order.
+    /// Push a transaction created by one of the transaction-creating functions
+    /// onto this transaction set. We consume and return the transaction set for
+    /// this.
     pub fn push_transaction(mut self, transaction: Transaction) -> Result<Self> {
         self.push_transaction_raw(transaction)?;
         Ok(self)
     }
 
-    /// Push a raw transaction onto this transaction set. Generally, this might
-    /// come from a syncing source (StampNet's private syncing) that passes
-    /// around singular transactions. We verify this transactions by building
-    /// the identity after pushing.
+    /// Push a transaction onto this transaction set, returning the fully-built
+    /// identity created from running all transactions (including the one being
+    /// pushed).
+    ///
+    /// Unless you know you want an [`Identity`] instead of [`Transactions`], or
+    /// when in doubt, use [`push_transaction()`][Transactions::push_transaction]
+    /// instead of this method.
     pub fn push_transaction_raw(&mut self, transaction: Transaction) -> Result<Identity> {
         if self.transactions().iter().find(|x| x.id() == transaction.id()).is_some() {
             Err(Error::DuplicateTransaction)?;
@@ -479,6 +483,13 @@ impl Transactions {
     }
 
     /// Merge the transactions from two transaction sets together.
+    ///
+    /// This is handy if you have two identities with the same root transaction
+    /// that have diverged (due to syncing issues, living on a mountain in solitude
+    /// for 17 years, etc) and you wish to merge the two diverged identities into
+    /// one.
+    ///
+    /// This is not for turning two separate identities into one. Don't do that.
     pub fn merge(mut branch1: Self, branch2: Self) -> Result<Self> {
         for trans2 in branch2.transactions() {
             // if it already exists, don't merge it

@@ -23,6 +23,7 @@ use crate::{
             AdminKey,
             AdminKeyID,
             AdminKeypair,
+            AdminKeypairPublic,
             ExtendKeypair,
             Key,
             RevocationReason,
@@ -522,10 +523,21 @@ impl Transaction {
     pub fn sign<K>(mut self, master_key: &SecretKey, admin_key: &K) -> Result<Self>
         where K: Deref<Target = AdminKeypair>
     {
+        let admin_key = admin_key.deref();
+        let admin_key_pub: AdminKeypairPublic = admin_key.clone().into();
+        let sig_exists = self.signatures().iter()
+            .find(|sig| {
+                match sig {
+                    MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
+                }
+            });
+        if sig_exists.is_some() {
+            Err(Error::DuplicateSignature)?;
+        }
         let serialized = ser::serialize(self.id().deref())?;
-        let sig = admin_key.deref().sign(master_key, &serialized[..])?;
+        let sig = admin_key.sign(master_key, &serialized[..])?;
         let policy_sig = MultisigPolicySignature::Key {
-            key: admin_key.deref().clone().into(),
+            key: admin_key.clone().into(),
             signature: sig,
         };
         self.signatures_mut().push(policy_sig);

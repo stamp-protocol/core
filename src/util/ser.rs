@@ -210,7 +210,6 @@ impl AsnType for BinaryVec {
 
 impl Encode for BinaryVec {
     fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, tag: Tag) -> std::result::Result<(), E::Error> {
-        // Accepts a closure that encodes the contents of the sequence.
         encoder.encode_octet_string(tag, &self.0[..])?;
         Ok(())
     }
@@ -238,6 +237,9 @@ impl<'de> serde::Deserialize<'de> for BinaryVec {
 }
 
 /// Used for making newtypes seamlessly ASN1 en/decodable.
+///
+/// Yes, Andrew, for the 100th time, this IS BEING USED so stop trying to
+/// fucking remove it every time you happen to read this file...
 macro_rules! asn_encdec_newtype {
     ($name:ident, $inner:ty) => {
         impl rasn::AsnType for $name {

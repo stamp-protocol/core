@@ -441,7 +441,7 @@ impl Context {
 }
 
 /// Defines an action that can be taken on an identity. Effectively, this is the
-/// ability to group transactions (as defined by `[TransactionBody]`) within
+/// ability to group transactions (as defined by [`TransactionBody`]) within
 /// certain contexts (such as "manage subkeys if the name matches the glob
 /// pattern 'dogecoin/*'").
 ///
@@ -471,7 +471,7 @@ pub enum Capability {
     /// This allows harnessing the identity and its policy system for participating
     /// in protocols outside of Stamp.
     ///
-    /// There is some overlap between `Capability::Extension` and `[TransactionBody::ExtV1]`,
+    /// There is some overlap between `Capability::Extension` and [`TransactionBody::ExtV1`],
     /// however capability extensions allow setting very fine-grained permissions (by
     /// externalizing them to the caller, which also means just speaking Stamp doesn't
     /// mean you can validate capability extensions) and transaction extensions allow
