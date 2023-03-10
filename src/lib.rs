@@ -64,7 +64,7 @@
 //! 
 //! // Let's create a master key. This key locks/unlocks the sensitive data within the
 //! // identity, such as private keys. Generally, you'd create this using a passphrase:
-//! let salt = Hash::new_blake2b("2022-12-06T11:59:59-0800".as_bytes()).unwrap();
+//! let salt = Hash::new_blake2b_512("2022-12-06T11:59:59-0800".as_bytes()).unwrap();
 //! let passphrase = "lumpy coal makes good sandwhiches";
 //! let master_key = derive_secret_key(passphrase.as_bytes(), salt.as_bytes(), KDF_OPS_MODERATE, KDF_MEM_MODERATE).unwrap();
 //!

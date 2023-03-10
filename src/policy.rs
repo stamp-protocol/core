@@ -687,7 +687,8 @@ impl Policy {
     /// Generate a [PolicyID] for this policy.
     pub fn gen_id(&self) -> Result<PolicyID> {
         let ser = ser::serialize(self)?;
-        let hash = Hash::new_blake2b(&ser[..])?;
+        // TODO: generate this differently
+        let hash = Hash::new_blake2b_512(&ser[..])?;
         let tid = TransactionID::from(hash);
         Ok(PolicyID::from(tid))
     }

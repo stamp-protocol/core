@@ -122,8 +122,8 @@ pub(crate) mod tests {
 
     #[test]
     fn derives_secret_key() {
-        let id = Hash::new_blake2b("my key".as_bytes()).unwrap();
-        let salt = Hash::new_blake2b(id.as_bytes()).unwrap();
+        let id = Hash::new_blake2b_512("my key".as_bytes()).unwrap();
+        let salt = Hash::new_blake2b_512(id.as_bytes()).unwrap();
         let master_key = derive_secret_key("ZONING IS COMMUNISM".as_bytes(), &salt.as_bytes(), KDF_OPS_INTERACTIVE, KDF_MEM_INTERACTIVE).unwrap();
         assert_eq!(master_key.as_ref(), &[148, 34, 57, 50, 168, 111, 176, 114, 120, 168, 159, 158, 96, 119, 14, 194, 52, 224, 58, 194, 77, 44, 168, 25, 54, 138, 172, 91, 164, 86, 190, 89]);
     }

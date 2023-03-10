@@ -207,17 +207,14 @@ pub enum RevocationReason {
     /// No reason. Feeling cute today, might revoke my keys, IDK.
     #[rasn(tag(explicit(0)))]
     Unspecified,
-    /// This key is being replaced by the recovery mechanism.
-    #[rasn(tag(explicit(1)))]
-    Recovery,
     /// Replacing this key with another.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(explicit(1)))]
     Superseded,
     /// This key has been compromised.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(explicit(2)))]
     Compromised,
     /// This key was signed by a compromised key and should never be used.
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(explicit(3)))]
     Invalid,
 }
 
@@ -682,7 +679,7 @@ mod tests {
     };
 
     fn get_master_key() -> SecretKey {
-        let hash = Hash::new_blake2b(b"my goat hurts".as_slice()).unwrap();
+        let hash = Hash::new_blake2b_512(b"my goat hurts".as_slice()).unwrap();
         let seed: [u8; 32] = hash.as_bytes()[0..32].try_into().unwrap();
         SecretKey::new_xchacha20poly1305_from_slice(&seed).unwrap()
     }
@@ -690,7 +687,7 @@ mod tests {
     #[test]
     fn admin_ser() {
         let master_key = get_master_key();
-        let hash = Hash::new_blake2b(b"i will, bye").unwrap();
+        let hash = Hash::new_blake2b_512(b"i will, bye").unwrap();
         let seed: [u8; 32] = hash.as_bytes()[0..32].try_into().unwrap();
         let kp = SignKeypair::new_ed25519_from_seed(&master_key, &seed).unwrap();
         let admin = AdminKeypair::from(kp);

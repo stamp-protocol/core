@@ -8,7 +8,7 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::base::{KeyID, SecretKey, Hash},
+    crypto::base::{KeyID, SecretKey, SignWith, Hash},
     dag::Transactions,
     identity::{
         claim::{
@@ -508,9 +508,13 @@ pub struct Transaction {
 
 impl Transaction {
     /// Create a new Transaction from a [TransactionEntry].
-    pub(crate) fn new(entry: TransactionEntry) -> Result<Self> {
+    pub(crate) fn new(entry: TransactionEntry, sign_with: SignWith) -> Result<Self> {
         let serialized = ser::serialize(&entry.strip_private())?;
-        let id = TransactionID::from(Hash::new_blake2b(&serialized)?);
+        let hash = match sign_with {
+            SignWith::Blake2b512 => Hash::new_blake2b_512(&serialized)?,
+            SignWith::Blake2b256 => Hash::new_blake2b_256(&serialized)?,
+        };
+        let id = TransactionID::from(hash);
         Ok(Self {
             id,
             entry,
@@ -569,7 +573,10 @@ impl Transaction {
     pub fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
         let serialized = ser::serialize(&self.entry().strip_private())?;
         // first verify the transaction's hash.
-        let transaction_hash = Hash::new_blake2b(&serialized[..])?;
+        let transaction_hash = match self.id().deref() {
+            Hash::Blake2b512(..) => Hash::new_blake2b_512(&serialized[..])?,
+            Hash::Blake2b256(..) => Hash::new_blake2b_256(&serialized[..])?,
+        };
         if &transaction_hash != self.id().deref() {
             Err(Error::TransactionIDMismatch(self.id().clone()))?;
         }

@@ -679,7 +679,7 @@ mod tests {
         let admin = AdminKeypair::new_ed25519_from_seed(&master_key, seeds[0]).unwrap();
         let admin_key = AdminKey::new(admin.clone(), "alpha", None);
 
-        let id = IdentityID::from(TransactionID::from(Hash::new_blake2b(b"get a job").unwrap()));
+        let id = IdentityID::from(TransactionID::from(Hash::new_blake2b_512(b"get a job").unwrap()));
         let capability = Policy::new(
             vec![Capability::Permissive],
             MultisigPolicy::MOfN { must_have: 1, participants: vec![admin.into()] }
