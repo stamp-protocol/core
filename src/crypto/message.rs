@@ -11,7 +11,7 @@ use crate::{
         identity::{IdentityID},
         keychain::Subkey,
     },
-    util::ser,
+    util::ser::{self, BinaryVec},
 };
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
@@ -23,7 +23,7 @@ use serde_derive::{Serialize, Deserialize};
 pub enum Message {
     /// An anonymous message without any signature information.
     #[rasn(tag(explicit(0)))]
-    Anonymous(Vec<u8>),
+    Anonymous(BinaryVec),
     /// A message signed by the sender that the recipient can use to verify the
     /// message came from where they think it came from.
     #[rasn(tag(explicit(1)))]
@@ -61,8 +61,8 @@ pub fn send(sender_master_key: &SecretKey, sender_identity_id: &IdentityID, send
     let recipient_crypto = recipient_key.key().as_cryptokey()
         .ok_or(Error::KeychainSubkeyWrongType)?;
     let sealed = recipient_crypto.seal(sender_master_key, sender_crypto, message)?;
-    let key_id = sender_key.key_id();
-    let signed_msg = SignedObject::new(sender_identity_id.clone(), key_id, sealed);
+    let sender_key_id = sender_key.key_id();
+    let signed_msg = SignedObject::new(sender_identity_id.clone(), sender_key_id, sealed);
     Ok(Message::Signed(signed_msg))
 }
 
@@ -90,7 +90,7 @@ pub fn send_anonymous(recipient_key: &Subkey, message: &[u8]) -> Result<Message>
     let recipient_crypto = recipient_key.key().as_cryptokey()
         .ok_or(Error::KeychainSubkeyWrongType)?;
     let sealed = recipient_crypto.seal_anonymous(message)?;
-    Ok(Message::Anonymous(sealed))
+    Ok(Message::Anonymous(sealed.into()))
 }
 
 /// Open an anonymous message send with [send_anonymous].
