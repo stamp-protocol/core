@@ -123,7 +123,7 @@ mod tests {
 
         let sealed = recipient_key.seal(&master_key, &sender_key, b"'I KNOW!' SAID THE BOY, AS HE LEAPT TO HIS FEET").unwrap();
         let msg1 = Message::Signed(SignedObject::new(IdentityID::blank(), KeyID::random_crypto(), sealed));
-        let msg2 = Message::Anonymous(vec![1, 2, 3, 42]);
+        let msg2 = Message::Anonymous(BinaryVec::from(vec![1, 2, 3, 42]));
 
         assert_eq!(msg1.anonymous(), None);
         match msg1.signed() {
