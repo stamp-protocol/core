@@ -33,37 +33,6 @@ object_id! {
     IdentityID
 }
 
-/// A container holding our public stamps and public revocations.
-///
-/// Note that stamps/revocations do not have to be publicly stored with the identity,
-/// but doing so is an option for easy lookup.
-#[derive(Debug, Default, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct StampCollection {
-    /// Turns out the real cryptographic identity system was stamps we made along the way.
-    #[rasn(tag(explicit(0)))]
-    stamps: Vec<Stamp>,
-    /// Hall of shame.
-    #[rasn(tag(explicit(1)))]
-    revocations: Vec<StampRevocation>,
-}
-
-impl StampCollection {
-    fn add_stamp(&mut self, stamp: Stamp) -> Result<()> {
-        if self.stamps().iter().find(|s| s.id() == stamp.id()).is_none() {
-            self.stamps_mut().push(stamp);
-        }
-        Ok(())
-    }
-
-    fn add_revocation(&mut self, revocation: StampRevocation) -> Result<()> {
-        if self.revocations().iter().find(|r| r.id() == revocation.id()).is_none() {
-            self.revocations_mut().push(revocation);
-        }
-        Ok(())
-    }
-}
-
 /// An identity.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
@@ -100,7 +69,7 @@ pub struct Identity {
     /// of stamps within the stamper's identity allows for quick verification and
     /// for checking of revocation.
     #[rasn(tag(explicit(5)))]
-    stamps: StampCollection,
+    stamps: Vec<Stamp>,
 }
 
 impl Identity {
@@ -116,7 +85,7 @@ impl Identity {
             policies,
             keychain,
             claims: vec![],
-            stamps: StampCollection::default(),
+            stamps: vec![],
         }
     }
 
@@ -191,13 +160,17 @@ impl Identity {
 
     /// Make a public stamp
     pub(crate) fn make_stamp(mut self, stamp: Stamp) -> Result<Self> {
-        self.stamps_mut().add_stamp(stamp)?;
+        if self.stamps().iter().find(|s| s.id() == stamp.id()).is_none() {
+            self.stamps_mut().push(stamp);
+        }
         Ok(self)
     }
 
     /// Revoke a public stamp.
     pub(crate) fn revoke_stamp(mut self, revocation: StampRevocation) -> Result<Self> {
-        self.stamps_mut().add_revocation(revocation)?;
+        let stamp = self.stamps_mut().iter_mut().find(|x| x.id() == revocation.entry().stamp_id())
+            .ok_or(Error::IdentityStampNotFound)?;
+        stamp.set_revocation(Some(revocation));
         Ok(self)
     }
 
@@ -439,8 +412,8 @@ mod tests {
         let identity1 = identity1.make_claim(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_public("Toad".into())), None).unwrap();
         let claim = identity1.claims()[0].clone();
 
-        assert_eq!(identity2.stamps().stamps().len(), 0);
-        assert_eq!(identity2.stamps().revocations().len(), 0);
+        assert_eq!(identity2.stamps().len(), 0);
+        assert_eq!(identity2.stamps().iter().filter(|x| x.revocation().is_some()).count(), 0);
         let entry = StampEntry::new(
             identity2.id().clone(),
             identity1.id().clone(),
@@ -450,26 +423,26 @@ mod tests {
         );
         let stamp = Stamp::new(StampID::random(), entry);
         let identity2_2 = identity2.make_stamp(stamp.clone()).unwrap();
-        assert_eq!(identity2_2.stamps().stamps().len(), 1);
-        assert_eq!(identity2_2.stamps().revocations().len(), 0);
+        assert_eq!(identity2_2.stamps().len(), 1);
+        assert_eq!(identity2_2.stamps().iter().filter(|x| x.revocation().is_some()).count(), 0);
 
         let identity2_3 = identity2_2.make_stamp(stamp.clone()).unwrap();
-        assert_eq!(identity2_3.stamps().stamps().len(), 1);
-        assert_eq!(identity2_3.stamps().revocations().len(), 0);
+        assert_eq!(identity2_3.stamps().len(), 1);
+        assert_eq!(identity2_3.stamps().iter().filter(|x| x.revocation().is_some()).count(), 0);
 
         let rev_entry = StampRevocationEntry::new(
             identity2_3.id().clone(),
             identity1.id().clone(),
-            identity2_3.stamps().stamps()[0].id().clone()
+            identity2_3.stamps()[0].id().clone()
         );
         let rev = StampRevocation::new(StampRevocationID::random(), rev_entry);
         let identity2_4 = identity2_3.revoke_stamp(rev.clone()).unwrap();
-        assert_eq!(identity2_4.stamps().stamps().len(), 1);
-        assert_eq!(identity2_4.stamps().revocations().len(), 1);
+        assert_eq!(identity2_4.stamps().len(), 1);
+        assert_eq!(identity2_4.stamps().iter().filter(|x| x.revocation().is_some()).count(), 1);
 
         let identity2_5 = identity2_4.revoke_stamp(rev.clone()).unwrap();
-        assert_eq!(identity2_5.stamps().stamps().len(), 1);
-        assert_eq!(identity2_5.stamps().revocations().len(), 1);
+        assert_eq!(identity2_5.stamps().len(), 1);
+        assert_eq!(identity2_5.stamps().iter().filter(|x| x.revocation().is_some()).count(), 1);
     }
 
     #[test]
@@ -716,9 +689,7 @@ keychain:
       revocation: ~
   subkeys: []
 claims: []
-stamps:
-  stamps: []
-  revocations: []"#);
+stamps: []"#);
     }
 
     #[test]

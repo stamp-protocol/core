@@ -68,7 +68,7 @@ impl StampRevocationEntry {
 /// Note that like [`Stamp` objects][Stamp], this must be wrapped in an outer transaction
 /// which is what determines its validity (through signatures). A stamp revocation on
 /// its own is fairly useless.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct StampRevocation {
     /// The unique ID of this recovation, which also happens to be the signature
@@ -179,11 +179,14 @@ pub struct Stamp {
     /// The stamp entry, containing all the actual stamp data.
     #[rasn(tag(explicit(1)))]
     entry: StampEntry,
+    /// An optional revocation for this stamp
+    #[rasn(tag(explicit(2)))]
+    revocation: Option<StampRevocation>,
 }
 
 impl Stamp {
     pub(crate) fn new(id: StampID, entry: StampEntry) -> Self {
-        Self { id, entry }
+        Self { id, entry, revocation: None }
     }
 }
 

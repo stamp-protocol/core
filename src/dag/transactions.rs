@@ -1285,7 +1285,7 @@ mod tests {
         let (master_key_stamper, transactions_stamper, admin_key_stamper) = genesis();
 
         let identity_stamper1 = transactions_stamper.build_identity().unwrap();
-        assert_eq!(identity_stamper1.stamps().stamps().len(), 0);
+        assert_eq!(identity_stamper1.stamps().len(), 0);
 
         let entry = StampEntry::new(
             IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
@@ -1302,7 +1302,8 @@ mod tests {
             .push_transaction(make_stamp_trans.clone())
             .unwrap();
         let identity_stamper2 = transactions_stamper2.build_identity().unwrap();
-        assert_eq!(identity_stamper2.stamps().stamps().len(), 1);
+        assert_eq!(identity_stamper2.stamps().len(), 1);
+        assert_eq!(identity_stamper2.stamps()[0].revocation(), &None);
     }
 
     #[test]
@@ -1315,7 +1316,7 @@ mod tests {
 
         let (master_key_stamper, transactions_stamper, admin_key_stamper) = genesis();
         let identity_stamper1 = transactions_stamper.build_identity().unwrap();
-        assert_eq!(identity_stamper1.stamps().stamps().len(), 0);
+        assert_eq!(identity_stamper1.stamps().len(), 0);
 
         let identity_stampee2 = transactions2.build_identity().unwrap();
         let claim = identity_stampee2.claims()[0].clone();
@@ -1334,18 +1335,22 @@ mod tests {
             .push_transaction(make_stamp_trans.clone())
             .unwrap();
         let identity_stamper2 = transactions_stamper2.build_identity().unwrap();
-        assert_eq!(identity_stamper2.stamps().stamps().len(), 1);
+        assert_eq!(identity_stamper2.stamps().len(), 1);
+        assert_eq!(identity_stamper2.stamps()[0].revocation(), &None);
 
         let revocation = StampRevocationEntry::new(
             identity_stamper2.id().clone(),
             identity_stampee2.id().clone(),
-            identity_stamper2.stamps().stamps()[0].id().clone()
+            identity_stamper2.stamps()[0].id().clone()
         );
         let revoke_trans = transactions_stamper2
                 .revoke_stamp(Timestamp::now(), revocation.clone()).unwrap()
                 .sign(&master_key_stamper, &admin_key_stamper).unwrap();
         let transactions_stamper3 = transactions_stamper2.clone()
             .push_transaction(revoke_trans.clone()).unwrap();
+        let identity_stamper3 = transactions_stamper3.build_identity().unwrap();
+        assert_eq!(identity_stamper3.stamps().len(), 1);
+        assert_eq!(identity_stamper3.stamps()[0].revocation().as_ref().unwrap().entry().stamp_id(), identity_stamper2.stamps()[0].id());
 
         // same revocation, different id, should work fine
         sign_and_push! { &master_key_stamper, &admin_key_stamper, transactions_stamper3.clone(),
