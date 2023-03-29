@@ -11,7 +11,7 @@ use crate::{
     identity::{
         claim::{ClaimID, ClaimSpec, Claim},
         keychain::{AdminKey, AdminKeyID, ExtendKeypair, RevocationReason, Key, Keychain},
-        stamp::{StampID, Stamp, StampRevocation},
+        stamp::{RevocationReason as StampRevocationReason, StampID, Stamp},
     },
     policy::{PolicyID, PolicyContainer},
     private::MaybePrivate,
@@ -167,10 +167,10 @@ impl Identity {
     }
 
     /// Revoke a public stamp.
-    pub(crate) fn revoke_stamp(mut self, revocation: StampRevocation) -> Result<Self> {
-        let stamp = self.stamps_mut().iter_mut().find(|x| x.id() == revocation.entry().stamp_id())
+    pub(crate) fn revoke_stamp(mut self, stamp_id: &StampID, reason: StampRevocationReason) -> Result<Self> {
+        let stamp = self.stamps_mut().iter_mut().find(|x| x.id() == stamp_id)
             .ok_or(Error::IdentityStampNotFound)?;
-        stamp.set_revocation(Some(revocation));
+        stamp.set_revocation(Some(reason));
         Ok(self)
     }
 
@@ -326,7 +326,7 @@ mod tests {
         dag::TransactionID,
         identity::{
             keychain::AdminKeypair,
-            stamp::{Confidence, StampEntry, StampRevocationEntry, StampRevocationID},
+            stamp::{Confidence, StampEntry},
         },
         policy::{Capability, MultisigPolicy, Policy},
     };
@@ -430,17 +430,12 @@ mod tests {
         assert_eq!(identity2_3.stamps().len(), 1);
         assert_eq!(identity2_3.stamps().iter().filter(|x| x.revocation().is_some()).count(), 0);
 
-        let rev_entry = StampRevocationEntry::new(
-            identity2_3.id().clone(),
-            identity1.id().clone(),
-            identity2_3.stamps()[0].id().clone()
-        );
-        let rev = StampRevocation::new(StampRevocationID::random(), rev_entry);
-        let identity2_4 = identity2_3.revoke_stamp(rev.clone()).unwrap();
+        let stamp_id = identity2_3.stamps()[0].id().clone();
+        let identity2_4 = identity2_3.revoke_stamp(&stamp_id, StampRevocationReason::Invalid).unwrap();
         assert_eq!(identity2_4.stamps().len(), 1);
         assert_eq!(identity2_4.stamps().iter().filter(|x| x.revocation().is_some()).count(), 1);
 
-        let identity2_5 = identity2_4.revoke_stamp(rev.clone()).unwrap();
+        let identity2_5 = identity2_4.revoke_stamp(&stamp_id, StampRevocationReason::Invalid).unwrap();
         assert_eq!(identity2_5.stamps().len(), 1);
         assert_eq!(identity2_5.stamps().iter().filter(|x| x.revocation().is_some()).count(), 1);
     }

@@ -29,9 +29,9 @@ use crate::{
             RevocationReason,
         },
         stamp::{
+            RevocationReason as StampRevocationReason,
             StampID,
             StampEntry,
-            StampRevocationEntry,
         },
     },
     policy::{Context, MultisigPolicySignature, Policy, PolicyContainer, PolicyID},
@@ -146,7 +146,9 @@ pub enum TransactionBody {
     #[rasn(tag(explicit(11)))]
     RevokeStampV1 {
         #[rasn(tag(explicit(0)))]
-        revocation: StampRevocationEntry,
+        stamp_id: StampID,
+        #[rasn(tag(explicit(1)))]
+        reason: StampRevocationReason,
     },
     /// Accept a stamp on one of our claims into our identity. This allows those
     /// who have our identity to see the trust others have put into us.
@@ -286,7 +288,7 @@ impl TransactionBody {
             Self::EditClaimV1 { claim_id, name} => Self::EditClaimV1 { claim_id, name },
             Self::DeleteClaimV1 { claim_id } => Self::DeleteClaimV1 { claim_id },
             Self::MakeStampV1 { stamp } => Self::MakeStampV1 { stamp },
-            Self::RevokeStampV1 { revocation } => Self::RevokeStampV1 { revocation },
+            Self::RevokeStampV1 { stamp_id, reason } => Self::RevokeStampV1 { stamp_id, reason },
             Self::AcceptStampV1 { stamp_transaction } => Self::AcceptStampV1 { stamp_transaction },
             Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
             Self::AddSubkeyV1 { key, name, desc } => {
@@ -333,7 +335,7 @@ impl Public for TransactionBody {
             Self::EditClaimV1 { claim_id, name } => Self::EditClaimV1 { claim_id, name },
             Self::DeleteClaimV1 { claim_id } => Self::DeleteClaimV1 { claim_id },
             Self::MakeStampV1 { stamp } => Self::MakeStampV1 { stamp },
-            Self::RevokeStampV1 { revocation } => Self::RevokeStampV1 { revocation },
+            Self::RevokeStampV1 { stamp_id, reason } => Self::RevokeStampV1 { stamp_id, reason },
             Self::AcceptStampV1 { stamp_transaction } => Self::AcceptStampV1 { stamp_transaction: Box::new(stamp_transaction.strip_private()) },
             Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
             Self::AddSubkeyV1 { key, name, desc } => Self::AddSubkeyV1 { key: key.strip_private(), name, desc },
@@ -772,8 +774,7 @@ mod tests {
 
         let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::Low, None);
         test_privates(&TransactionBody::MakeStampV1 { stamp: entry.clone() });
-        let revocation = StampRevocationEntry::new(IdentityID::random(), IdentityID::random(), StampID::random());
-        test_privates(&TransactionBody::RevokeStampV1 { revocation });
+        test_privates(&TransactionBody::RevokeStampV1 { stamp_id: StampID::random(), reason: StampRevocationReason::Unspecified });
         let stamp_transaction = transactions.make_stamp(Timestamp::now(), entry.clone()).unwrap();
         test_privates(&TransactionBody::AcceptStampV1 { stamp_transaction: Box::new(stamp_transaction) });
         test_privates(&TransactionBody::DeleteStampV1 { stamp_id: StampID::random() });
