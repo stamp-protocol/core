@@ -18,7 +18,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser,
+        ser::{self, SerText},
     },
 };
 use getset;
@@ -132,14 +132,17 @@ pub struct Stamp {
     /// The stamp entry, containing all the actual stamp data.
     #[rasn(tag(explicit(1)))]
     entry: StampEntry,
-    /// An optional revocation for this stamp
+    /// The date this stamp was created
     #[rasn(tag(explicit(2)))]
+    created: Timestamp,
+    /// An optional revocation for this stamp
+    #[rasn(tag(explicit(3)))]
     revocation: Option<RevocationReason>,
 }
 
 impl Stamp {
-    pub(crate) fn new(id: StampID, entry: StampEntry) -> Self {
-        Self { id, entry, revocation: None }
+    pub(crate) fn new(id: StampID, entry: StampEntry, created: Timestamp) -> Self {
+        Self { id, entry, created, revocation: None }
     }
 }
 
@@ -152,6 +155,8 @@ impl Public for Stamp {
         false
     }
 }
+
+impl SerText for Stamp {}
 
 /// A request for a claim to be stamped (basically a CSR, in the parlance of our
 /// times).
@@ -227,7 +232,7 @@ mod tests {
     #[test]
     fn stamp_strip() {
         let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::None, None);
-        let stamp = Stamp::new(StampID::random(), entry);
+        let stamp = Stamp::new(StampID::random(), entry, Timestamp::now());
         let stamp2 = stamp.strip_private();
         // we only really need strip_private() so we can serialized_human, but
         // stamps don't hold ANY private data at all, so a stripped stamp should

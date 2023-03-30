@@ -421,7 +421,7 @@ mod tests {
             Confidence::Low,
             None::<Timestamp>
         );
-        let stamp = Stamp::new(StampID::random(), entry);
+        let stamp = Stamp::new(StampID::random(), entry, Timestamp::now());
         let identity2_2 = identity2.make_stamp(stamp.clone()).unwrap();
         assert_eq!(identity2_2.stamps().len(), 1);
         assert_eq!(identity2_2.stamps().iter().filter(|x| x.revocation().is_some()).count(), 0);
@@ -458,8 +458,9 @@ mod tests {
         );
         let mut entry_wrong = entry.clone();
         entry_wrong.set_claim_id(ClaimID::random());
-        let stamp = Stamp::new(StampID::random(), entry);
-        let stamp_wrong = Stamp::new(stamp.id().clone(), entry_wrong);
+        let now = Timestamp::now();
+        let stamp = Stamp::new(StampID::random(), entry, now.clone());
+        let stamp_wrong = Stamp::new(stamp.id().clone(), entry_wrong, now.clone());
 
         let identity1_2 = identity1.accept_stamp(stamp.clone()).unwrap();
         assert_eq!(identity1_2.claims()[0].stamps().len(), 1);

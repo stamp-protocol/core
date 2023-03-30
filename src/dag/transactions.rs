@@ -145,8 +145,9 @@ impl Transactions {
                 Ok(identity_mod)
             }
             TransactionBody::MakeStampV1 { stamp: entry } => {
+                let created = transaction.entry().created().clone();
                 let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .make_stamp(Stamp::new(StampID::from(transaction.id().clone()), entry))?;
+                    .make_stamp(Stamp::new(StampID::from(transaction.id().clone()), entry, created))?;
                 Ok(identity_mod)
             }
             TransactionBody::RevokeStampV1 { stamp_id, reason } => {
@@ -158,7 +159,8 @@ impl Transactions {
                 stamp_transaction.verify_signatures()?;
                 let identity_mod = match stamp_transaction.entry().body() {
                     TransactionBody::MakeStampV1 { stamp: entry } => {
-                        let stamp = Stamp::new(StampID::from(stamp_transaction.id().clone()), entry.clone());
+                        let created = stamp_transaction.entry().created().clone();
+                        let stamp = Stamp::new(StampID::from(stamp_transaction.id().clone()), entry.clone(), created);
                         identity.ok_or(Error::DagMissingIdentity)?
                             .accept_stamp(stamp)?
                     }
