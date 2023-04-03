@@ -299,12 +299,12 @@ impl Context {
                 contexts.push(Self::ObjectID(stamp.claim_id().deref().clone()));
                 contexts.push(Self::IdentityID(stamp.stampee().clone()));
             }
-            TransactionBody::RevokeStampV1 { revocation } => {
-                contexts.push(Self::ObjectID(revocation.stamp_id().deref().clone()));
-                contexts.push(Self::IdentityID(revocation.stampee().clone()));
+            TransactionBody::RevokeStampV1 { stamp_id, .. } => {
+                contexts.push(Self::ObjectID(stamp_id.deref().clone()));
 
-                let stamp_maybe = identity.find_claim_stamp_by_id(revocation.stamp_id());
+                let stamp_maybe = identity.find_claim_stamp_by_id(&stamp_id);
                 if let Some(stamp) = stamp_maybe {
+                    contexts.push(Self::IdentityID(stamp.entry().stampee().clone()));
                     contexts.push(Self::ObjectID(stamp.entry().claim_id().deref().clone()));
                 }
             }

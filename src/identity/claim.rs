@@ -14,7 +14,7 @@ use crate::{
     },
     crypto::base::SecretKey,
     private::{MaybePrivate},
-    util::{Public, Date, Url, ser::BinaryVec},
+    util::{Public, Date, Url, BinaryVec, SerText},
 };
 use getset;
 use rasn::{AsnType, Encode, Decode};
@@ -408,6 +408,8 @@ impl Public for Claim {
         self.spec().has_private()
     }
 }
+
+impl SerText for Claim {}
 
 #[cfg(test)]
 pub(crate) mod tests {

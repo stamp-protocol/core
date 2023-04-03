@@ -24,9 +24,7 @@ use crate::{
             Stamp,
             StampID,
             StampEntry,
-            StampRevocation,
-            StampRevocationEntry,
-            StampRevocationID,
+            RevocationReason as StampRevocationReason,
         },
     },
     policy::{Policy, PolicyContainer, PolicyID},
@@ -147,20 +145,22 @@ impl Transactions {
                 Ok(identity_mod)
             }
             TransactionBody::MakeStampV1 { stamp: entry } => {
+                let created = transaction.entry().created().clone();
                 let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .make_stamp(Stamp::new(StampID::from(transaction.id().clone()), entry))?;
+                    .make_stamp(Stamp::new(StampID::from(transaction.id().clone()), entry, created))?;
                 Ok(identity_mod)
             }
-            TransactionBody::RevokeStampV1 { revocation: entry } => {
+            TransactionBody::RevokeStampV1 { stamp_id, reason } => {
                 let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .revoke_stamp(StampRevocation::new(StampRevocationID::from(transaction.id().clone()), entry))?;
+                    .revoke_stamp(&stamp_id, reason)?;
                 Ok(identity_mod)
             }
             TransactionBody::AcceptStampV1 { stamp_transaction } => {
                 stamp_transaction.verify_signatures()?;
                 let identity_mod = match stamp_transaction.entry().body() {
                     TransactionBody::MakeStampV1 { stamp: entry } => {
-                        let stamp = Stamp::new(StampID::from(stamp_transaction.id().clone()), entry.clone());
+                        let created = stamp_transaction.entry().created().clone();
+                        let stamp = Stamp::new(StampID::from(stamp_transaction.id().clone()), entry.clone(), created);
                         identity.ok_or(Error::DagMissingIdentity)?
                             .accept_stamp(stamp)?
                     }
@@ -680,9 +680,10 @@ impl Transactions {
 
     /// Revoke a stamp we previously created and store this revocation with the
     /// identity.
-    pub fn revoke_stamp<T: Into<Timestamp> + Clone>(&self, now: T, revocation: StampRevocationEntry) -> Result<Transaction> {
+    pub fn revoke_stamp<T: Into<Timestamp> + Clone>(&self, now: T, stamp_id: StampID, reason: StampRevocationReason) -> Result<Transaction> {
         let body = TransactionBody::RevokeStampV1 {
-            revocation,
+            stamp_id,
+            reason,
         };
         self.prepare_transaction(now, body)
     }
@@ -1285,7 +1286,7 @@ mod tests {
         let (master_key_stamper, transactions_stamper, admin_key_stamper) = genesis();
 
         let identity_stamper1 = transactions_stamper.build_identity().unwrap();
-        assert_eq!(identity_stamper1.stamps().stamps().len(), 0);
+        assert_eq!(identity_stamper1.stamps().len(), 0);
 
         let entry = StampEntry::new(
             IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
@@ -1302,7 +1303,8 @@ mod tests {
             .push_transaction(make_stamp_trans.clone())
             .unwrap();
         let identity_stamper2 = transactions_stamper2.build_identity().unwrap();
-        assert_eq!(identity_stamper2.stamps().stamps().len(), 1);
+        assert_eq!(identity_stamper2.stamps().len(), 1);
+        assert_eq!(identity_stamper2.stamps()[0].revocation(), &None);
     }
 
     #[test]
@@ -1315,7 +1317,7 @@ mod tests {
 
         let (master_key_stamper, transactions_stamper, admin_key_stamper) = genesis();
         let identity_stamper1 = transactions_stamper.build_identity().unwrap();
-        assert_eq!(identity_stamper1.stamps().stamps().len(), 0);
+        assert_eq!(identity_stamper1.stamps().len(), 0);
 
         let identity_stampee2 = transactions2.build_identity().unwrap();
         let claim = identity_stampee2.claims()[0].clone();
@@ -1334,23 +1336,26 @@ mod tests {
             .push_transaction(make_stamp_trans.clone())
             .unwrap();
         let identity_stamper2 = transactions_stamper2.build_identity().unwrap();
-        assert_eq!(identity_stamper2.stamps().stamps().len(), 1);
+        assert_eq!(identity_stamper2.stamps().len(), 1);
+        assert_eq!(identity_stamper2.stamps()[0].revocation(), &None);
 
-        let revocation = StampRevocationEntry::new(
-            identity_stamper2.id().clone(),
-            identity_stampee2.id().clone(),
-            identity_stamper2.stamps().stamps()[0].id().clone()
-        );
+        let stamp_id = identity_stamper2.stamps()[0].id();
         let revoke_trans = transactions_stamper2
-                .revoke_stamp(Timestamp::now(), revocation.clone()).unwrap()
+                .revoke_stamp(Timestamp::now(), stamp_id.clone(), StampRevocationReason::Compromised).unwrap()
                 .sign(&master_key_stamper, &admin_key_stamper).unwrap();
         let transactions_stamper3 = transactions_stamper2.clone()
             .push_transaction(revoke_trans.clone()).unwrap();
+        let identity_stamper3 = transactions_stamper3.build_identity().unwrap();
+        assert_eq!(identity_stamper3.stamps().len(), 1);
+        assert_eq!(identity_stamper3.stamps()[0].revocation().as_ref().unwrap(), &StampRevocationReason::Compromised);
 
         // same revocation, different id, should work fine
-        sign_and_push! { &master_key_stamper, &admin_key_stamper, transactions_stamper3.clone(),
-            [ revoke_stamp, Timestamp::now(), revocation.clone() ]
+        let transactions_stamper4 = sign_and_push! { &master_key_stamper, &admin_key_stamper, transactions_stamper3.clone(),
+            [ revoke_stamp, Timestamp::now(), stamp_id.clone(), StampRevocationReason::Unspecified ]
         };
+        let identity_stamper4 = transactions_stamper4.build_identity().unwrap();
+        // should use the reason from the most recent transaction
+        assert_eq!(identity_stamper4.stamps()[0].revocation().as_ref().unwrap(), &StampRevocationReason::Unspecified);
     }
 
     #[test]

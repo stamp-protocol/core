@@ -18,7 +18,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser,
+        ser::{self, SerText},
     },
 };
 use getset;
@@ -31,69 +31,22 @@ object_id! {
     StampID
 }
 
-object_id! {
-    /// A unique identifier for a stamp revocation.
-    StampRevocationID
-}
-
-/// An inner container for creating a stamp revocation.
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct StampRevocationEntry {
-    /// The identity ID of the original stamper (which must match the identity
-    /// ID of the revoker).
+/// Why we are revoking a stamp.
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum RevocationReason {
+    /// No reason. Feeling cute today, might revoke a stamp, IDK.
     #[rasn(tag(explicit(0)))]
-    stamper: IdentityID,
-    /// The identity ID of the recipient of the original stamp.
-    #[rasn(tag(explicit(1)))]
-    stampee: IdentityID,
-    /// The ID of the stamp we're revoking.
+    Unspecified,
+    /// Replacing this stamp with another.
     #[rasn(tag(explicit(2)))]
-    stamp_id: StampID,
-}
-
-impl StampRevocationEntry {
-    /// Create a new stamp revocation
-    pub fn new(stamper: IdentityID, stampee: IdentityID, stamp_id: StampID) -> Self {
-        Self {
-            stamper,
-            stampee,
-            stamp_id,
-        }
-    }
-}
-
-/// An object published when a stamper wishes to revoke their stamp.
-///
-/// Note that like [`Stamp` objects][Stamp], this must be wrapped in an outer transaction
-/// which is what determines its validity (through signatures). A stamp revocation on
-/// its own is fairly useless.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct StampRevocation {
-    /// The unique ID of this recovation, which also happens to be the signature
-    /// of the revocation.
-    #[rasn(tag(explicit(0)))]
-    id: StampRevocationID,
-    /// Holds the revocations inner data.
-    #[rasn(tag(explicit(1)))]
-    entry: StampRevocationEntry,
-}
-
-impl StampRevocation {
-    pub(crate) fn new(id: StampRevocationID, entry: StampRevocationEntry) -> Self {
-        Self { id, entry }
-    }
-}
-
-impl Public for StampRevocation {
-    fn strip_private(&self) -> Self {
-        self.clone()
-    }
-
-    fn has_private(&self) -> bool {
-        false
-    }
+    Superseded,
+    /// The stamped identity has been compromised
+    #[rasn(tag(explicit(3)))]
+    Compromised,
+    /// This stamp was signed by a compromised key and cannot be trusted
+    #[rasn(tag(explicit(4)))]
+    Invalid,
 }
 
 /// The confidence of a stamp being made.
@@ -179,11 +132,17 @@ pub struct Stamp {
     /// The stamp entry, containing all the actual stamp data.
     #[rasn(tag(explicit(1)))]
     entry: StampEntry,
+    /// The date this stamp was created
+    #[rasn(tag(explicit(2)))]
+    created: Timestamp,
+    /// An optional revocation for this stamp
+    #[rasn(tag(explicit(3)))]
+    revocation: Option<RevocationReason>,
 }
 
 impl Stamp {
-    pub(crate) fn new(id: StampID, entry: StampEntry) -> Self {
-        Self { id, entry }
+    pub(crate) fn new(id: StampID, entry: StampEntry, created: Timestamp) -> Self {
+        Self { id, entry, created, revocation: None }
     }
 }
 
@@ -196,6 +155,8 @@ impl Public for Stamp {
         false
     }
 }
+
+impl SerText for Stamp {}
 
 /// A request for a claim to be stamped (basically a CSR, in the parlance of our
 /// times).
@@ -271,7 +232,7 @@ mod tests {
     #[test]
     fn stamp_strip() {
         let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::None, None);
-        let stamp = Stamp::new(StampID::random(), entry);
+        let stamp = Stamp::new(StampID::random(), entry, Timestamp::now());
         let stamp2 = stamp.strip_private();
         // we only really need strip_private() so we can serialized_human, but
         // stamps don't hold ANY private data at all, so a stripped stamp should
