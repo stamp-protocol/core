@@ -54,7 +54,7 @@
 //!
 //! ```
 //! use stamp_core::{
-//!     crypto::base::{derive_secret_key, Hash, KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
+//!     crypto::base::{derive_secret_key, Hash, HashAlgo, KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
 //!     dag::Transactions,
 //!     identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
 //!     policy::{Capability, MultisigPolicy, Policy},
@@ -94,7 +94,7 @@
 //! let genesis = transactions
 //!     // when creating the identity, we pass in our initial set of admin keys and our
 //!     // initial policies.
-//!     .create_identity(Timestamp::now(), vec![admin_key.clone()], vec![policy]).unwrap()
+//!     .create_identity(&HashAlgo::Blake2b256, Timestamp::now(), vec![admin_key.clone()], vec![policy]).unwrap()
 //!     // then we sign the transaction, generally with an admin key that's in the policy
 //!     // list. notice, again, we pass the master key into the sign fn along with our
 //!     // heroic admin key: the admin key cannot be used without first being unlocked by
@@ -114,7 +114,7 @@
 //! See? Easy. *A child could do it.* While this approach is seemingly complicated, it
 //! allows for a lot of flexibility. Where this really shines is if multiple people want
 //! to manage a shared group identity. The [policy system][crate::policy] allows for a lot
-//! of flexibility in deciding how various key owners can perform certain operation on the
+//! of flexibility in deciding how various key owners can perform certain operations on the
 //! identity.
 //!
 //! And Stamp doesn't stop at the identity itself! It allows fine-grained control of

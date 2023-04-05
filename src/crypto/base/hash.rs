@@ -12,7 +12,7 @@ use std::ops::Deref;
 
 /// An enum we can pass to various signing functions to tell them which hashing
 /// algorithm to use.
-pub enum SignWith {
+pub enum HashAlgo {
     /// Blake2b 512
     Blake2b512,
     /// Blake2b256
@@ -50,7 +50,7 @@ impl Hash {
 
     /// Create a new blake2b (256 bit) hash from a message
     pub fn new_blake2b_256(message: &[u8]) -> Result<Self> {
-        let mut hasher = blake2::Blake2bVar::new(32);
+        let mut hasher = blake2::Blake2b::<blake2::digest::consts::U32>::new();
         hasher.update(message);
         let genarr = hasher.finalize();
         let arr: [u8; 32] = genarr.as_slice().try_into()
@@ -62,7 +62,7 @@ impl Hash {
     pub(crate) fn random_blake2b_512() -> Self {
         let mut randbuf = [0u8; 64];
         OsRng.fill_bytes(&mut randbuf);
-        Self::Blake2b(Binary::new(randbuf))
+        Self::Blake2b512(Binary::new(randbuf))
     }
 
     /// Return the byte slice representing this hash.
@@ -128,15 +128,17 @@ impl std::fmt::Display for Hash {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::util::ser::base64_encode;
 
     #[test]
     fn hash_blake2b_512_encode_decode_fmt() {
         let msg = b"that kook dropped in on me. we need to send him a (cryptographically hashed) message.";
         let hash = Hash::new_blake2b_512(&msg[..]).unwrap();
         match &hash {
-            Hash::Blake2b(bin) => {
-                assert_eq!(bin.deref(), &vec![243, 64, 239, 85, 96, 25, 23, 71, 194, 134, 56, 85, 159, 71, 57, 211, 109, 253, 219, 151, 200, 67, 151, 95, 99, 68, 251, 52, 88, 37, 134, 63, 169, 104, 190, 112, 71, 235, 90, 125, 25, 122, 63, 198, 27, 40, 69, 145, 173, 13, 190, 238, 237, 236, 183, 80, 47, 131, 70, 200, 61, 26, 202, 161][..]);
+            Hash::Blake2b512(bin) => {
+                assert_eq!(base64_encode(bin.deref()), "80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQ");
             }
+            _ => panic!("Not possible"),
         }
         let bytes = ser::serialize(&hash).unwrap();
         assert_eq!(ser::base64_encode(&bytes[..]), String::from("oEIEQPNA71VgGRdHwoY4VZ9HOdNt_duXyEOXX2NE-zRYJYY_qWi-cEfrWn0Zej_GGyhFka0Nvu7t7LdQL4NGyD0ayqE"));
@@ -144,15 +146,17 @@ pub(crate) mod tests {
         let hash2: Hash = ser::deserialize(&bytes).unwrap();
         match &hash2 {
             Hash::Blake2b512(bin) => {
-                assert_eq!(bin.deref(), &vec![243, 64, 239, 85, 96, 25, 23, 71, 194, 134, 56, 85, 159, 71, 57, 211, 109, 253, 219, 151, 200, 67, 151, 95, 99, 68, 251, 52, 88, 37, 134, 63, 169, 104, 190, 112, 71, 235, 90, 125, 25, 122, 63, 198, 27, 40, 69, 145, 173, 13, 190, 238, 237, 236, 183, 80, 47, 131, 70, 200, 61, 26, 202, 161][..]);
+                assert_eq!(base64_encode(bin.deref()), "80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQ");
             }
+            _ => panic!("Not possible"),
         }
 
         let hash3 = Hash::try_from("80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQA").unwrap();
         match &hash3 {
             Hash::Blake2b512(bin) => {
-                assert_eq!(bin.deref(), &vec![243, 64, 239, 85, 96, 25, 23, 71, 194, 134, 56, 85, 159, 71, 57, 211, 109, 253, 219, 151, 200, 67, 151, 95, 99, 68, 251, 52, 88, 37, 134, 63, 169, 104, 190, 112, 71, 235, 90, 125, 25, 122, 63, 198, 27, 40, 69, 145, 173, 13, 190, 238, 237, 236, 183, 80, 47, 131, 70, 200, 61, 26, 202, 161][..]);
+                assert_eq!(base64_encode(bin.deref()), "80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQ");
             }
+            _ => panic!("Not possible"),
         }
     }
 
@@ -161,25 +165,29 @@ pub(crate) mod tests {
         let msg = b"that kook dropped in on me. we need to send him a (cryptographically hashed) message.";
         let hash = Hash::new_blake2b_256(&msg[..]).unwrap();
         match &hash {
-            Hash::Blake2b(bin) => {
-                assert_eq!(bin.deref(), &vec![243, 64, 239, 85, 96, 25, 23, 71, 194, 134, 56, 85, 159, 71, 57, 211, 109, 253, 219, 151, 200, 67, 151, 95, 99, 68, 251, 52, 88, 37, 134, 63, 169, 104, 190, 112, 71, 235, 90, 125, 25, 122, 63, 198, 27, 40, 69, 145, 173, 13, 190, 238, 237, 236, 183, 80, 47, 131, 70, 200, 61, 26, 202, 161][..]);
+            Hash::Blake2b256(bin) => {
+                assert_eq!(base64_encode(bin.deref()), "2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NI");
             }
+            _ => panic!("Not possible"),
         }
+
         let bytes = ser::serialize(&hash).unwrap();
-        assert_eq!(ser::base64_encode(&bytes[..]), String::from("oEIEQPNA71VgGRdHwoY4VZ9HOdNt_duXyEOXX2NE-zRYJYY_qWi-cEfrWn0Zej_GGyhFka0Nvu7t7LdQL4NGyD0ayqE"));
-        assert_eq!(format!("{}", hash), String::from("80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQA"));
+        assert_eq!(ser::base64_encode(&bytes[..]), String::from("oSIEINqp-KnuVdCDj1WFke6oU8_UU-GkA96ZgP-hxNuAOtjS"));
+        assert_eq!(format!("{}", hash), String::from("2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NIB"));
         let hash2: Hash = ser::deserialize(&bytes).unwrap();
         match &hash2 {
             Hash::Blake2b256(bin) => {
-                assert_eq!(bin.deref(), &vec![243, 64, 239, 85, 96, 25, 23, 71, 194, 134, 56, 85, 159, 71, 57, 211, 109, 253, 219, 151, 200, 67, 151, 95, 99, 68, 251, 52, 88, 37, 134, 63, 169, 104, 190, 112, 71, 235, 90, 125, 25, 122, 63, 198, 27, 40, 69, 145, 173, 13, 190, 238, 237, 236, 183, 80, 47, 131, 70, 200, 61, 26, 202, 161][..]);
+                assert_eq!(base64_encode(bin.deref()), "2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NI");
             }
+            _ => panic!("Not possible"),
         }
 
-        let hash3 = Hash::try_from("80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQA").unwrap();
+        let hash3 = Hash::try_from("2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NIB").unwrap();
         match &hash3 {
             Hash::Blake2b256(bin) => {
-                assert_eq!(bin.deref(), &vec![243, 64, 239, 85, 96, 25, 23, 71, 194, 134, 56, 85, 159, 71, 57, 211, 109, 253, 219, 151, 200, 67, 151, 95, 99, 68, 251, 52, 88, 37, 134, 63, 169, 104, 190, 112, 71, 235, 90, 125, 25, 122, 63, 198, 27, 40, 69, 145, 173, 13, 190, 238, 237, 236, 183, 80, 47, 131, 70, 200, 61, 26, 202, 161][..]);
+                assert_eq!(base64_encode(bin.deref()), "2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NI");
             }
+            _ => panic!("Not possible"),
         }
     }
 }

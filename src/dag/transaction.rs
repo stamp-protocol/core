@@ -8,7 +8,7 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::base::{KeyID, SecretKey, SignWith, Hash},
+    crypto::base::{KeyID, SecretKey, Hash, HashAlgo},
     dag::Transactions,
     identity::{
         claim::{
@@ -437,7 +437,7 @@ impl std::fmt::Display for TransactionID {
 #[cfg(test)]
 impl TransactionID {
     pub(crate) fn random() -> Self {
-        Self(Hash::random_blake2b())
+        Self(Hash::random_blake2b_512())
     }
 }
 
@@ -510,11 +510,11 @@ pub struct Transaction {
 
 impl Transaction {
     /// Create a new Transaction from a [TransactionEntry].
-    pub(crate) fn new(entry: TransactionEntry, sign_with: SignWith) -> Result<Self> {
+    pub(crate) fn new(entry: TransactionEntry, hash_with: &HashAlgo) -> Result<Self> {
         let serialized = ser::serialize(&entry.strip_private())?;
-        let hash = match sign_with {
-            SignWith::Blake2b512 => Hash::new_blake2b_512(&serialized)?,
-            SignWith::Blake2b256 => Hash::new_blake2b_256(&serialized)?,
+        let hash = match hash_with {
+            HashAlgo::Blake2b512 => Hash::new_blake2b_512(&serialized)?,
+            HashAlgo::Blake2b256 => Hash::new_blake2b_256(&serialized)?,
         };
         let id = TransactionID::from(hash);
         Ok(Self {
@@ -782,7 +782,7 @@ mod tests {
         let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::Low, None);
         test_privates(&TransactionBody::MakeStampV1 { stamp: entry.clone() });
         test_privates(&TransactionBody::RevokeStampV1 { stamp_id: StampID::random(), reason: StampRevocationReason::Unspecified });
-        let stamp_transaction = transactions.make_stamp(Timestamp::now(), entry.clone()).unwrap();
+        let stamp_transaction = transactions.make_stamp(&HashAlgo::Blake2b512, Timestamp::now(), entry.clone()).unwrap();
         test_privates(&TransactionBody::AcceptStampV1 { stamp_transaction: Box::new(stamp_transaction) });
         test_privates(&TransactionBody::DeleteStampV1 { stamp_id: StampID::random() });
 
@@ -813,7 +813,7 @@ mod tests {
             spec: ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Jackie Chrome".into()).unwrap()),
             name: None,
         };
-        let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::from(Hash::random_blake2b())], body);
+        let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::from(Hash::random_blake2b_512())], body);
         assert!(entry.has_private());
         assert!(entry.body().has_private());
         let entry2 = entry.strip_private();

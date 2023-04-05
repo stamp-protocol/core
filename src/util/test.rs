@@ -1,5 +1,5 @@
 use crate::{
-    crypto::base::{SecretKey, SignKeypair, CryptoKeypair},
+    crypto::base::{CryptoKeypair, HashAlgo, SecretKey, SignKeypair},
     dag::Transactions,
     identity::{
         identity::{IdentityID, Identity},
@@ -28,7 +28,7 @@ pub(crate) fn create_fake_identity(now: Timestamp) -> (SecretKey, Transactions, 
         MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
     );
     let trans_id = transactions
-        .create_identity(now, vec![admin_key.clone()], vec![policy]).unwrap()
+        .create_identity(&HashAlgo::Blake2b512, now, vec![admin_key.clone()], vec![policy]).unwrap()
         .sign(&master_key, &admin_key).unwrap();
     let transactions2 = transactions.push_transaction(trans_id).unwrap();
     (master_key, transactions2, admin_key)

@@ -39,13 +39,13 @@ macro_rules! object_id {
         #[allow(dead_code)]
         impl $name {
             pub(crate) fn blank() -> Self {
-                let hash = crate::crypto::base::Hash::Blake2b(crate::util::ser::Binary::new([0u8; 64]));
+                let hash = crate::crypto::base::Hash::Blake2b512(crate::util::ser::Binary::new([0u8; 64]));
                 $name(crate::dag::TransactionID::from(hash))
             }
 
             #[cfg(test)]
             pub(crate) fn random() -> Self {
-                let hash = crate::crypto::base::Hash::random_blake2b();
+                let hash = crate::crypto::base::Hash::random_blake2b_512();
                 $name(crate::dag::TransactionID::from(hash))
             }
         }
@@ -305,9 +305,9 @@ mod tests {
             TestID
         }
 
-        let hash1 = Hash::new_blake2b(b"get a job").unwrap();
-        let hash2 = Hash::new_blake2b(b"hot one today!").unwrap();
-        let hash3 = Hash::new_blake2b(b"YEAH?!").unwrap();
+        let hash1 = Hash::new_blake2b_512(b"get a job").unwrap();
+        let hash2 = Hash::new_blake2b_512(b"hot one today!").unwrap();
+        let hash3 = Hash::new_blake2b_512(b"YEAH?!").unwrap();
 
         let id1 = TestID::from(TransactionID::from(hash1));
         let id2 = TestID::from(TransactionID::from(hash2));

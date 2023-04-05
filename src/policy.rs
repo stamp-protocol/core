@@ -733,7 +733,7 @@ impl TryFrom<Policy> for PolicyContainer {
 mod tests {
     use super::*;
     use crate::{
-        crypto::base::{SecretKey},
+        crypto::base::{HashAlgo, SecretKey},
         identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
         private::MaybePrivate,
         util::{self, Timestamp, Url},
@@ -1235,6 +1235,7 @@ mod tests {
         let policy = Policy::new(capabilities.clone(), multisig.clone());
 
         let transaction1 = transactions.make_claim(
+            &HashAlgo::Blake2b512, 
             Timestamp::now(),
             ClaimSpec::Url(MaybePrivate::new_public(Url::parse("http://timmy.com").unwrap())),
             Some("primary-url"),

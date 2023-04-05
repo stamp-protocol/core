@@ -514,7 +514,7 @@ mod tests {
         assert_eq!(identity5.keychain().admin_keys()[1].revocation().is_some(), true);
         assert_eq!(identity5.keychain().subkeys().len(), 0);
 
-        let identity6 = identity5.revoke_admin_key(&key_id, RevocationReason::Recovery, Some("alright-shutup".into())).unwrap();
+        let identity6 = identity5.revoke_admin_key(&key_id, RevocationReason::Unspecified, Some("alright-shutup".into())).unwrap();
         assert_eq!(identity6.keychain().admin_keys().len(), 2);
         assert_eq!(identity6.keychain().admin_keys()[1].name(), "alright-shutup");
         assert_eq!(identity6.keychain().admin_keys()[1].description(), &Some("send me messages".into()));
@@ -658,11 +658,11 @@ mod tests {
         let ser = identity.serialize_text().unwrap();
         assert_eq!(ser.trim(), r#"---
 id:
-  Blake2b: emMTrxVrn5BZ4rM75UN20fFYurs3883OwVgDL62RkAjOv_ikAXNrGVpgiVKuYe_5nrL-j0N-XaZ66c6eEvVTVA
+  Blake2b512: emMTrxVrn5BZ4rM75UN20fFYurs3883OwVgDL62RkAjOv_ikAXNrGVpgiVKuYe_5nrL-j0N-XaZ66c6eEvVTVA
 created: "1977-06-07T04:32:06Z"
 policies:
   - id:
-      Blake2b: 8_nj44kBtb4EIM1qJuJmgoPdlwN8q33CpS39UzEke2EBrDbJskCOJKVB39jG-hwBDQVuqL5Tg6KKJUrO_HiJWQ
+      Blake2b512: 8_nj44kBtb4EIM1qJuJmgoPdlwN8q33CpS39UzEke2EBrDbJskCOJKVB39jG-hwBDQVuqL5Tg6KKJUrO_HiJWQ
     policy:
       capabilities:
         - Permissive
