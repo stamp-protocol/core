@@ -16,8 +16,5 @@ pub mod claim;
 pub mod stamp;
 pub mod identity;
 
-pub use keychain::*;
-pub use claim::*;
-pub use stamp::*;
 pub use identity::*;
 

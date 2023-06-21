@@ -110,7 +110,7 @@ mod tests {
     use crate::{
         crypto::base::{KeyID, CryptoKeypair},
         identity::{
-            Key,
+            keychain::Key,
         },
         util::test,
     };

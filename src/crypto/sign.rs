@@ -9,7 +9,7 @@ use crate::{
     error::{Error, Result},
     identity::{
         IdentityID,
-        Subkey,
+        keychain::Subkey,
     },
     util::ser::{self, BinaryVec},
 };
@@ -105,7 +105,7 @@ mod tests {
     use super::*;
     use crate::{
         crypto::base::SignKeypair,
-        identity::Key,
+        identity::keychain::Key,
         util::test,
     };
 

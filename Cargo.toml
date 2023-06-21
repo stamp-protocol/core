@@ -16,7 +16,7 @@ getset = "0.1"
 glob = "0.3"
 rand = { version = "0.8", features = ["getrandom"] }
 rand_chacha = "0.2"
-rasn = { git = "https://github.com/XAMPPRocky/rasn/", rev = "550a3356851e67c1e2accf2e7ed03aeeacb1b43c" }
+rasn = "0.7.0"
 serde = "1.0"
 serde_derive = "1.0"
 serde_yaml = "0.8"
