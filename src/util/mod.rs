@@ -1,6 +1,6 @@
 //! Utilities. OBVIOUSLY.
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc, Local, TimeZone};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc, Local, SubsecRound, TimeZone};
 use crate::{
     error::Result,
 };
@@ -151,14 +151,7 @@ impl From<NaiveDateTime> for Timestamp {
 
 impl From<DateTime<Utc>> for Timestamp {
     fn from(date: DateTime<Utc>) -> Self {
-        // we need to erase any precision below millisecond because it is not
-        // serialized and will screw things up for us.
-        let ts = date.timestamp_millis();
-        // i hate to panic here, but we're literally converting to i64 then
-        // from i64 without modification, so it would be very surprising if
-        // we failed here
-        let dt = chrono::Utc.timestamp_millis(ts);
-        Self(dt)
+        Self(date.trunc_subsecs(3))
     }
 }
 
@@ -175,13 +168,14 @@ pub struct Date(NaiveDate);
 
 impl From<Timestamp> for Date {
     fn from(ts: Timestamp) -> Self {
-        Self(ts.deref().date().naive_utc())
+        Self(ts.deref().date_naive())
     }
 }
 
 impl From<Date> for Timestamp {
     fn from(date: Date) -> Self {
-        Self(DateTime::<Utc>::from_utc(date.and_hms(0, 0, 0), Utc))
+        // UGH I hate unwraps, but this should never fail sooo....
+        Self(DateTime::<Utc>::from_utc(date.and_hms_opt(0, 0, 0).unwrap(), Utc))
     }
 }
 
@@ -350,6 +344,14 @@ mod tests {
         let ser3 = ser::serialize(&date3).unwrap();
         let date3_2: Timestamp = ser::deserialize(ser3.as_slice()).unwrap();
         assert_eq!(date3, date3_2);
+
+        // ser/deser should truncate to millis.
+        let date4 = Timestamp::from_str("2023-06-21T04:59:44.023816356Z").unwrap();
+        let date4_comp = Timestamp::from_str("2023-06-21T04:59:44.023Z").unwrap();
+        let ser4 = ser::serialize(&date4).unwrap();
+        let date4_2: Timestamp = ser::deserialize(ser4.as_slice()).unwrap();
+        assert_eq!(date4_2, date4_comp);
+
     }
 
     #[test]
