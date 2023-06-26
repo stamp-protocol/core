@@ -411,7 +411,6 @@ impl TryFrom<&TransactionID> for String {
     }
 }
 
-
 impl TryFrom<&str> for TransactionID {
     type Error = Error;
 
