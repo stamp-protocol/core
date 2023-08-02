@@ -1,4 +1,4 @@
-//! A stamp is a signed seal of approval on a [claim](crate::identity::Claim).
+//! A stamp is a signed seal of approval on a [claim](crate::identity::claim::Claim).
 //!
 //! Stamps form the underlying trust network of the Stamp protocol. They are
 //! seals of approval, and depending on who you trust, allow you to determine if
