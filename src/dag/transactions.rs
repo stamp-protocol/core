@@ -31,7 +31,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{BinaryVec, KeyValEntry, SerdeBinary, SerText},
+        ser::{BinaryVec, KeyValStore, SerdeBinary, SerText},
     },
 };
 use getset;
@@ -775,12 +775,12 @@ impl Transactions {
     }
 
     /// Create a transaction for use in an external system.
-    pub fn ext<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, previous_transactions: Vec<TransactionID>, ty: Option<BinaryVec>, context: Option<Vec<KeyValEntry>>, payload: BinaryVec) -> Result<Transaction> {
+    pub fn ext<T: Into<Timestamp> + Clone, K: Into<KeyValStore>>(&self, hash_with: &HashAlgo, now: T, previous_transactions: Vec<TransactionID>, ty: Option<BinaryVec>, context: Option<K>, payload: BinaryVec) -> Result<Transaction> {
         let creator = self.identity_id().ok_or(Error::DagEmpty)?;
         let body = TransactionBody::ExtV1 {
             creator,
             ty,
-            context,
+            context: context.map(|x| x.into()),
             payload,
         };
         Transaction::new(TransactionEntry::new(now, previous_transactions, body), hash_with)
@@ -1657,7 +1657,7 @@ mod tests {
     #[test]
     fn transactions_ext() {
         let (master_key, transactions, admin_key) = genesis();
-        let ext = transactions.ext(&HashAlgo::Blake2b512, Timestamp::now(), vec![], None, None, BinaryVec::from(Vec::from("SEND $5 TO SALLY".as_bytes()))).unwrap()
+        let ext = transactions.ext(&HashAlgo::Blake2b512, Timestamp::now(), vec![], None, Some([("type", "payment")]), BinaryVec::from(Vec::from("SEND $5 TO SALLY".as_bytes()))).unwrap()
             .sign(&master_key, &admin_key).unwrap();
         let identity = transactions.build_identity().unwrap();
         ext.verify(Some(&identity)).unwrap();
@@ -1669,7 +1669,8 @@ mod tests {
         let mut ext_mod = ext.clone();
         match ext_mod.entry_mut().body_mut() {
             TransactionBody::ExtV1 { creator: _creator, ty: _ty, context: _context, payload: ref mut body } => {
-                *body = BinaryVec::from(Vec::from("THE ZING OF THE DAY".as_bytes()));
+                // NICE TRY, SALLY. UGH.
+                *body = BinaryVec::from(Vec::from("SEND $6 TO SALLY".as_bytes()));
             }
             _ => panic!("Unexpected transaction: {:?}", ext_mod),
         }

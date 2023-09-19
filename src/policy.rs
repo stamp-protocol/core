@@ -349,7 +349,7 @@ impl Context {
             TransactionBody::ExtV1 { ty, context, .. } => {
                 ty.as_ref().map(|t| contexts.push(Self::ExtType(t.clone())));
                 context.as_ref().map(|c| {
-                    for con in c {
+                    for con in c.deref() {
                         contexts.push(Self::ExtContext(con.clone()))
                     }
                 });

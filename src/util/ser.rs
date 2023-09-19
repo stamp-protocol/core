@@ -13,6 +13,7 @@ use crate::{
 };
 use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag};
 use serde::{Serialize, Deserialize, ser::Serializer, de::Deserializer};
+use std::ops::Deref;
 use zeroize::Zeroize;
 
 pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
@@ -282,6 +283,43 @@ impl KeyValEntry {
     /// Quick onstructor for KeyValEntry
     pub fn new(key: BinaryVec, val: BinaryVec) -> Self {
         Self { key, val }
+    }
+}
+
+/// A key/value store that can be serialized as an ASN1 "map."
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+pub struct KeyValStore(Vec<KeyValEntry>);
+
+impl KeyValStore {
+    /// Get a value out of this kv store by key.
+    pub fn get<T: AsRef<[u8]>>(&self, key: T) -> Option<&BinaryVec> {
+        self.0.iter()
+            .rev()
+            .find(|x| x.key().deref().as_slice() == key.as_ref())
+            .map(|x| x.val())
+    }
+}
+
+impl std::ops::Deref for KeyValStore {
+    type Target = Vec<KeyValEntry>;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+impl<const N: usize> std::convert::From<[(&[u8], &[u8]); N]> for KeyValStore {
+    fn from(map: [(&[u8], &[u8]); N]) -> Self {
+        let kv = map.into_iter()
+            .map(|(key, val)| KeyValEntry::new(BinaryVec::from(Vec::from(key)), BinaryVec::from(Vec::from(val))))
+            .collect::<Vec<_>>();
+        Self(kv)
+    }
+}
+
+impl<const N: usize> std::convert::From<[(&str, &str); N]> for KeyValStore {
+    fn from(map: [(&str, &str); N]) -> Self {
+        let kv = map.into_iter()
+            .map(|(key, val)| KeyValEntry::new(BinaryVec::from(Vec::from(key.as_bytes())), BinaryVec::from(Vec::from(val.as_bytes()))))
+            .collect::<Vec<_>>();
+        Self(kv)
     }
 }
 

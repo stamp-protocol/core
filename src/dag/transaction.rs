@@ -38,7 +38,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{self, BinaryVec, KeyValEntry, SerdeBinary, SerText},
+        ser::{self, BinaryVec, KeyValStore, SerdeBinary, SerText},
     },
 };
 use getset;
@@ -65,7 +65,7 @@ pub enum TransactionBody {
     /// and the [policies][Policy] attached to the identity.
     ///
     /// This is more or less a hailmary recovery option that allows gaining
-    /// access to identity after some kind of catastrophic event.
+    /// access to the identity after some kind of catastrophic event.
     #[rasn(tag(explicit(1)))]
     ResetIdentityV1 {
         #[rasn(tag(explicit(0)))]
@@ -229,9 +229,10 @@ pub enum TransactionBody {
     /// ordering.
     ///
     /// `Ext` allows specifying an optional transaction type and optional set of
-    /// binary contexts, which can be used for matching in the policy system. This
-    /// makes it so a policy can determine which [admin keys][AdminKey] can create
-    /// valid external transactions.
+    /// binary contexts, which can be used for attaching arbitrary key-value data
+    /// to the transaction (like tags). Both the type and the contexts can be matched
+    /// in the policy system, making it so a policy can determine which [admin keys][AdminKey]
+    /// can create valid external transactions.
     ///
     /// Note that `Ext` transactions cannot be applied to the identity...Stamp allows
     /// their creation but provides no methods for executing them.
@@ -242,7 +243,7 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(1)))]
         ty: Option<BinaryVec>,
         #[rasn(tag(explicit(2)))]
-        context: Option<Vec<KeyValEntry>>,
+        context: Option<KeyValStore>,
         #[rasn(tag(explicit(3)))]
         payload: BinaryVec,
     },

@@ -15,7 +15,7 @@ use std::ops::Deref;
 pub enum HashAlgo {
     /// Blake2b 512
     Blake2b512,
-    /// Blake2b256
+    /// Blake2b 256
     Blake2b256,
 }
 
@@ -63,6 +63,14 @@ impl Hash {
         let mut randbuf = [0u8; 64];
         OsRng.fill_bytes(&mut randbuf);
         Self::Blake2b512(Binary::new(randbuf))
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn random_blake2b_256() -> Self {
+        let mut randbuf = [0u8; 32];
+        OsRng.fill_bytes(&mut randbuf);
+        Self::Blake2b256(Binary::new(randbuf))
     }
 
     /// Return the byte slice representing this hash.
