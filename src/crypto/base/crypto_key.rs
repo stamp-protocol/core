@@ -19,7 +19,7 @@ use std::ops::Deref;
 #[rasn(choice)]
 pub enum CryptoKeypairNonce {
     /// Nonce for Curve25519XChaCha20Poly1305
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Curve25519XChaCha20Poly1305(Binary<24>),
 }
 
@@ -29,10 +29,10 @@ pub enum CryptoKeypairNonce {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct CryptoKeypairMessage {
     /// Our heroic nonce
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     nonce: CryptoKeypairNonce,
     /// The message ciphertext
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     ciphertext: BinaryVec,
 }
 
@@ -51,11 +51,11 @@ impl CryptoKeypairMessage {
 #[rasn(choice)]
 pub enum CryptoKeypair {
     /// Curve25519XChaCha20Poly1305 keypair for encryption/decryption
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Curve25519XChaCha20Poly1305 {
-        #[rasn(tag(explicit(0)))]
+        #[rasn(tag(0))]
         public: Binary<32>,
-        #[rasn(tag(explicit(1)))]
+        #[rasn(tag(1))]
         secret: Option<Private<BinarySecret<32>>>,
     },
 }
@@ -213,7 +213,7 @@ impl Public for CryptoKeypair {
 #[rasn(choice)]
 pub enum CryptoKeypairPublic {
     /// Public key for Curve25519XChaCha20Poly1305
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Curve25519XChaCha20Poly1305(Binary<32>),
 }
 

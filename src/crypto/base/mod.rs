@@ -50,11 +50,11 @@ pub const KDF_MEM_SENSITIVE: u32 = 1048576;
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum KeyID {
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     SignKeypair(SignKeypairPublic),
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     CryptoKeypair(CryptoKeypairPublic),
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     SecretKey(Mac),
 }
 

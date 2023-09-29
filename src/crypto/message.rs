@@ -22,11 +22,11 @@ use serde_derive::{Serialize, Deserialize};
 #[rasn(choice)]
 pub enum Message {
     /// An anonymous message without any signature information.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Anonymous(BinaryVec),
     /// A message signed by the sender that the recipient can use to verify the
     /// message came from where they think it came from.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     Signed(SignedObject<CryptoKeypairMessage>),
 }
 

@@ -44,7 +44,7 @@ use std::collections::HashMap;
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transactions {
     /// The actual transactions.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     transactions: Vec<Transaction>,
 }
 
@@ -84,7 +84,8 @@ impl Transactions {
                 }
                 let policies_con = policies
                     .iter()
-                    .map(|x| PolicyContainer::try_from(x.clone()))
+                    .enumerate()
+                    .map(|(idx, x)| PolicyContainer::from_policy_transaction(transaction.id(), idx, x.clone()))
                     .collect::<Result<Vec<PolicyContainer>>>()?;
                 let identity_id = IdentityID::from(transaction.id().clone());
                 Ok(Identity::create(identity_id, admin_keys, policies_con, transaction.entry().created().clone()))
@@ -93,7 +94,8 @@ impl Transactions {
                 let policies_con = if let Some(policies) = policies {
                     let containerized = policies
                         .iter()
-                        .map(|x| PolicyContainer::try_from(x.clone()))
+                        .enumerate()
+                        .map(|(idx, x)| PolicyContainer::from_policy_transaction(transaction.id(), idx, x.clone()))
                         .collect::<Result<Vec<PolicyContainer>>>()?;
                     Some(containerized)
                 } else {
@@ -120,7 +122,7 @@ impl Transactions {
             }
             TransactionBody::AddPolicyV1 { policy } => {
                 let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .add_policy(PolicyContainer::try_from(policy)?)?;
+                    .add_policy(PolicyContainer::from_policy_transaction(transaction.id(), 0, policy)?)?;
                 Ok(identity_mod)
             }
             TransactionBody::DeletePolicyV1 { id  } => {
@@ -823,7 +825,7 @@ mod tests {
             keychain::{AdminKeypair, ExtendKeypair},
             stamp::Confidence,
         },
-        policy::{Capability, Context, MultisigPolicy, MultisigPolicySignature, Policy, TransactionBodyType},
+        policy::{Capability, Context, MultisigPolicy, MultisigPolicySignature, Policy, PolicyContainer, TransactionBodyType},
         private::{PrivateWithMac, MaybePrivate},
         util::{Date, Url, ser::BinaryVec, test},
     };
@@ -974,10 +976,6 @@ mod tests {
         let admin_key3 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Zing", None);
         let capability2 = Capability::Transaction { body_type: TransactionBodyType::ResetIdentityV1, context: Context::Permissive };
         let capability3 = Capability::Transaction { body_type: TransactionBodyType::AcceptStampV1, context: Context::IdentityID(IdentityID::random()) };
-        let policy1 = match transactions.transactions()[0].entry().body() {
-            TransactionBody::CreateIdentityV1 { policies, .. } => policies[0].clone(),
-            _ => panic!("WRONG"),
-        };
         let policy2 = Policy::new(
             vec![capability2],
             MultisigPolicy::MOfN { must_have: 0, participants: vec![] }
@@ -990,7 +988,7 @@ mod tests {
         assert_eq!(identity1.keychain().admin_keys().len(), 1);
         assert!(identity1.keychain().admin_key_by_name("Alpha").is_some());
         assert_eq!(identity1.policies().len(), 1);
-        assert_eq!(identity1.policies()[0].id(), &policy1.gen_id().unwrap());
+        assert_eq!(identity1.policies()[0].id(), &PolicyContainer::gen_id(transactions.transactions()[0].id(), 0).unwrap());
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ reset_identity, Timestamp::now(), Some(vec![admin_key2.clone(), admin_key3.clone()]), Some(vec![policy2.clone(), policy3.clone()]) ]
         };
@@ -999,8 +997,8 @@ mod tests {
         assert_eq!(identity2.keychain().admin_key_by_name("Alpha").unwrap().key(), admin_key2.key());
         assert!(identity2.keychain().admin_key_by_name("Zing").is_some());
         assert_eq!(identity2.policies().len(), 2);
-        assert_eq!(identity2.policies()[0].id(), &policy2.gen_id().unwrap());
-        assert_eq!(identity2.policies()[1].id(), &policy3.gen_id().unwrap());
+        assert_eq!(identity2.policies()[0].id(), &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 0).unwrap());
+        assert_eq!(identity2.policies()[1].id(), &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 1).unwrap());
     }
 
     #[test]
@@ -1100,10 +1098,6 @@ mod tests {
     fn transactions_add_policy() {
         let (master_key, transactions, admin_key) = genesis();
         let capability2 = Capability::Transaction { body_type: TransactionBodyType::ResetIdentityV1, context: Context::Permissive };
-        let policy1 = match transactions.transactions()[0].entry().body() {
-            TransactionBody::CreateIdentityV1 { policies, .. } => policies[0].clone(),
-            _ => panic!("WRONG"),
-        };
         let policy2 = Policy::new(
             vec![capability2],
             MultisigPolicy::MOfN { must_have: 0, participants: vec![] }
@@ -1111,23 +1105,24 @@ mod tests {
 
         let identity1 = transactions.build_identity().unwrap();
         assert_eq!(identity1.policies().len(), 1);
-        assert_eq!(identity1.policies()[0].id(), &policy1.gen_id().unwrap());
+        assert_eq!(identity1.policies()[0].id(), &PolicyContainer::gen_id(transactions.transactions()[0].id(), 0).unwrap());
 
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_policy, Timestamp::now(), policy2.clone() ]
         };
         let identity2 = transactions2.build_identity().unwrap();
         assert_eq!(identity2.policies().len(), 2);
-        assert_eq!(identity2.policies()[0].id(), &policy1.gen_id().unwrap());
-        assert_eq!(identity2.policies()[1].id(), &policy2.gen_id().unwrap());
+        assert_eq!(identity2.policies()[0].id(), &PolicyContainer::gen_id(transactions2.transactions()[0].id(), 0).unwrap());
+        assert_eq!(identity2.policies()[1].id(), &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 0).unwrap());
 
         let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
             [ add_policy, Timestamp::now(), policy2.clone() ]
         };
         let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.policies().len(), 2);
-        assert_eq!(identity3.policies()[0].id(), &policy1.gen_id().unwrap());
-        assert_eq!(identity3.policies()[1].id(), &policy2.gen_id().unwrap());
+        assert_eq!(identity3.policies().len(), 3);
+        assert_eq!(identity3.policies()[0].id(), &PolicyContainer::gen_id(transactions3.transactions()[0].id(), 0).unwrap());
+        assert_eq!(identity3.policies()[1].id(), &PolicyContainer::gen_id(transactions3.transactions()[1].id(), 0).unwrap());
+        assert_eq!(identity3.policies()[2].id(), &PolicyContainer::gen_id(transactions3.transactions()[2].id(), 0).unwrap());
     }
 
     #[test]
@@ -2033,7 +2028,10 @@ mod tests {
 
     #[test]
     fn transactions_serde_binary() {
-        let (_master_key, transactions, _admin_key) = genesis();
+        let (master_key, transactions, admin_key) = genesis();
+        let transactions = sign_and_push! { &master_key, &admin_key, transactions,
+            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Andrew".into())), Some("given-name".to_string()) ]
+        };
         let identity = transactions.build_identity().unwrap();
         let ser = transactions.serialize_binary().unwrap();
         let des = Transactions::deserialize_binary(ser.as_slice()).unwrap();

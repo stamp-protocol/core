@@ -9,7 +9,7 @@ use thiserror::Error;
 pub enum Error {
     /// An error while engaging in deserialization.
     #[error("ASN.1 deserialization error")]
-    ASNDeserialize,
+    ASNDeserialize(#[from] rasn::ber::de::Error),
 
     /// An error while engaging in msgpack serialization.
     #[error("ASN.1 serialization error")]

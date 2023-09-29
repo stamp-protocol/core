@@ -12,15 +12,15 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::base::{SecretKey, SecretKeyNonce, Mac, MacKey},
-    util::{Public, ser::{self, BinaryVec}},
+    crypto::base::{SecretKey, Mac, MacKey, Sealed},
+    util::{Public, ser},
 };
-use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag, types::Class};
+use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag, types::{Constructed, Class, fields::{Field, Fields}}};
 use serde_derive::{Serialize, Deserialize};
 use std::marker::PhantomData;
 
 /// Holds private data, which can only be opened if you have the special key.
-#[derive(Debug, AsnType, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Private<T> {
     /// Allows us to cast this container to T without this container ever
     /// actually storing any T value (because it's encrypted).
@@ -28,28 +28,34 @@ pub struct Private<T> {
     _phantom: PhantomData<T>,
     /// The encrypted data stored in this container, created using a
     /// `PrivateVerifiableInner` struct (the actual data alongside a MAC key).
-    sealed: BinaryVec,
-    /// A nonce used to decrypt our heroic data (given the correct secret key).
-    nonce: SecretKeyNonce,
+    sealed: Sealed,
 }
 
-impl<T> Encode for Private<T> {
-    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, tag: Tag) -> std::result::Result<(), E::Error> {
-        encoder.encode_sequence(tag, |encoder| {
-            self.sealed.encode_with_tag(encoder, Tag::new(Class::Context, 0))?;
-            self.nonce.encode_with_tag(encoder, Tag::new(Class::Context, 1))?;
+impl<T> AsnType for Private<T> {
+    const TAG: rasn::Tag = rasn::Tag::SEQUENCE;
+}
+
+impl<T> Constructed for Private<T> {
+    const FIELDS: Fields = Fields::from_static(&[
+        Field::new_required(Sealed::TAG, Sealed::TAG_TREE),
+    ]);
+}
+
+impl<T: AsnType> Encode for Private<T> {
+    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+        encoder.encode_sequence::<Self, _>(tag, |encoder| {
+            self.sealed.encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints)?;
             Ok(())
         })?;
         Ok(())
     }
 }
 
-impl<T> Decode for Private<T> {
-    fn decode_with_tag<D: Decoder>(decoder: &mut D, tag: Tag) -> std::result::Result<Self, D::Error> {
+impl<T: AsnType> Decode for Private<T> {
+    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
         decoder.decode_sequence(tag, |decoder| {
-            let sealed = BinaryVec::decode_with_tag(decoder, Tag::new(Class::Context, 0))?;
-            let nonce = SecretKeyNonce::decode_with_tag(decoder, Tag::new(Class::Context, 1))?;
-            Ok(Self { _phantom: PhantomData, sealed, nonce })
+            let sealed = Sealed::decode_with_tag_and_constraints(decoder, Tag::new(Class::Context, 0), constraints)?;
+            Ok(Self { _phantom: PhantomData, sealed })
         })
     }
 }
@@ -59,7 +65,6 @@ impl<T> Clone for Private<T> {
         Self {
             _phantom: PhantomData,
             sealed: self.sealed.clone(),
-            nonce: self.nonce.clone(),
         }
     }
 }
@@ -69,18 +74,16 @@ impl<T: Encode + Decode> Private<T> {
     /// an encrypting key.
     pub fn seal(seal_key: &SecretKey, data: &T) -> Result<Self> {
         let serialized = ser::serialize(data)?;
-        let nonce = seal_key.gen_nonce()?;
-        let sealed = seal_key.seal(&serialized, &nonce)?;
+        let sealed = seal_key.seal(&serialized)?;
         Ok(Self {
             _phantom: PhantomData,
-            sealed: sealed.into(),
-            nonce,
+            sealed: sealed,
         })
     }
 
     /// Open a Private container with a decrypting key.
     pub fn open(&self, seal_key: &SecretKey) -> Result<T> {
-        let open_bytes = seal_key.open(&self.sealed, &self.nonce)
+        let open_bytes = seal_key.open(&self.sealed)
             .map_err(|_| Error::CryptoOpenFailed)?;
         let obj: T = ser::deserialize(&open_bytes[..])?;
         Ok(obj)
@@ -88,14 +91,12 @@ impl<T: Encode + Decode> Private<T> {
 
     /// Re-encrypt the contained secret value with a new key.
     pub fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
-        let serialized = previous_seal_key.open(&self.sealed, &self.nonce)
+        let serialized = previous_seal_key.open(&self.sealed)
             .map_err(|_| Error::CryptoOpenFailed)?;
-        let nonce = new_seal_key.gen_nonce()?;
-        let sealed = new_seal_key.seal(&serialized, &nonce)?;
+        let sealed = new_seal_key.seal(&serialized)?;
         Ok(Self {
             _phantom: PhantomData,
-            sealed: sealed.into(),
-            nonce,
+            sealed: sealed,
         })
     }
 }
@@ -120,7 +121,7 @@ struct PrivateVerifiableInner<T> {
 ///
 /// This works such that:
 ///
-/// - The private data is stored alonside a MAC key (both encrypted)
+/// - The private data is stored alongside a MAC key (both encrypted)
 /// - The MAC key can be used to derive a hash of the data
 ///
 /// This allows anybody who has access to the private data to verify that the
@@ -134,7 +135,7 @@ struct PrivateVerifiableInner<T> {
 ///
 /// This also allows the key that protects the private data to be rotated
 /// without the MAC (and therefor the stamps) on that data being deprecated.
-#[derive(Debug, PartialEq, AsnType, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct PrivateVerifiable<T> {
     /// Allows us to cast this container to T without this container ever
     /// actually storing any T value (because it's encrypted).
@@ -142,28 +143,34 @@ pub struct PrivateVerifiable<T> {
     _phantom: PhantomData<T>,
     /// The encrypted data stored in this container, created using a
     /// `PrivateVerifiableInner` struct (the actual data alongside a MAC key).
-    sealed: BinaryVec,
-    /// A nonce used to decrypt our heroic data (given the correct secret key).
-    nonce: SecretKeyNonce,
+    sealed: Sealed,
 }
 
-impl<T> Encode for PrivateVerifiable<T> {
-    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, tag: Tag) -> std::result::Result<(), E::Error> {
-        encoder.encode_sequence(tag, |encoder| {
-            self.sealed.encode_with_tag(encoder, Tag::new(Class::Context, 0))?;
-            self.nonce.encode_with_tag(encoder, Tag::new(Class::Context, 1))?;
+impl<T> AsnType for PrivateVerifiable<T> {
+    const TAG: rasn::Tag = rasn::Tag::SEQUENCE;
+}
+
+impl<T> Constructed for PrivateVerifiable<T> {
+    const FIELDS: Fields = Fields::from_static(&[
+        Field::new_required(Sealed::TAG, Sealed::TAG_TREE),
+    ]);
+}
+
+impl<T: AsnType> Encode for PrivateVerifiable<T> {
+    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+        encoder.encode_sequence::<Self, _>(tag, |encoder| {
+            self.sealed.encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints)?;
             Ok(())
         })?;
         Ok(())
     }
 }
 
-impl<T> Decode for PrivateVerifiable<T> {
-    fn decode_with_tag<D: Decoder>(decoder: &mut D, tag: Tag) -> std::result::Result<Self, D::Error> {
+impl<T: AsnType> Decode for PrivateVerifiable<T> {
+    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
         decoder.decode_sequence(tag, |decoder| {
-            let sealed = BinaryVec::decode_with_tag(decoder, Tag::new(Class::Context, 0))?;
-            let nonce = SecretKeyNonce::decode_with_tag(decoder, Tag::new(Class::Context, 1))?;
-            Ok(Self { _phantom: PhantomData, sealed, nonce })
+            let sealed = Sealed::decode_with_tag_and_constraints(decoder, Tag::new(Class::Context, 0), constraints)?;
+            Ok(Self { _phantom: PhantomData, sealed })
         })
     }
 }
@@ -192,13 +199,11 @@ impl<T: Encode + Decode> PrivateVerifiable<T> {
         // to this container to regenerate the MAC.
         let inner = PrivateVerifiableInner { value: data, mac_key: mac_key };
         let serialized_inner = ser::serialize(&inner)?;
-        let nonce = seal_key.gen_nonce()?;
         // encrypt the data+mac_key combo
-        let sealed = seal_key.seal(&serialized_inner, &nonce)?;
+        let sealed = seal_key.seal(&serialized_inner)?;
         Ok((mac, Self {
             _phantom: PhantomData,
-            sealed: BinaryVec::from(sealed),
-            nonce,
+            sealed,
         }))
     }
 
@@ -210,7 +215,7 @@ impl<T: Encode + Decode> PrivateVerifiable<T> {
     /// return an error.
     pub fn open_and_verify(&self, seal_key: &SecretKey, mac: &Mac) -> Result<T> {
         // decrypt the secret value
-        let open_bytes = seal_key.open(&self.sealed, &self.nonce)
+        let open_bytes = seal_key.open(&self.sealed)
             .map_err(|_| Error::CryptoOpenFailed)?;
         // deserialize our secret to give us the stored data and the MAC key.
         let obj: PrivateVerifiableInner<T> = ser::deserialize(&open_bytes[..])?;
@@ -223,14 +228,12 @@ impl<T: Encode + Decode> PrivateVerifiable<T> {
 
     /// Re-encrypt the contained secret value with a new key.
     pub fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
-        let serialized = previous_seal_key.open(&self.sealed, &self.nonce)
+        let serialized = previous_seal_key.open(&self.sealed)
             .map_err(|_| Error::CryptoOpenFailed)?;
-        let nonce = new_seal_key.gen_nonce()?;
-        let sealed = new_seal_key.seal(&serialized, &nonce)?;
+        let sealed = new_seal_key.seal(&serialized)?;
         Ok(Self {
             _phantom: PhantomData,
-            sealed: BinaryVec::from(sealed),
-            nonce,
+            sealed: sealed,
         })
     }
 }
@@ -240,7 +243,6 @@ impl<T> Clone for PrivateVerifiable<T> {
         Self {
             _phantom: Default::default(),
             sealed: self.sealed.clone(),
-            nonce: self.nonce.clone(),
         }
     }
 }
@@ -260,10 +262,10 @@ impl<T> Clone for PrivateVerifiable<T> {
 pub struct PrivateWithMac<T> {
     /// Holds the MAC for this private data so it can be verified without
     /// revealing the data itself
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     pub(crate) mac: Mac,
     /// The (encrypted) data AND MAC key.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     pub(crate) data: Option<PrivateVerifiable<T>>,
 }
 
@@ -334,15 +336,18 @@ impl<T> Clone for PrivateWithMac<T> {
 
 /// A wrapper that contains either public/plaintext data of type T or encrypted
 /// data, which can be deserialized to T.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
 pub enum MaybePrivate<T> {
     /// Any publicly-viewable data
+    #[rasn(tag(0))]
     Public(T),
     /// Secret data, which can only be opened with the corresponding decryption
     /// key, stored alongside a public signature of a MAC of the secret data.
     ///
     /// Make sure to check if this object has data via <MaybePrivate::has_data()>
     /// before trying to use it.
+    #[rasn(tag(1))]
     Private(PrivateWithMac<T>)
 }
 
@@ -417,22 +422,23 @@ impl<T: Encode + Decode + Clone> MaybePrivate<T> {
     }
 }
 
+/*
 impl<T> AsnType for MaybePrivate<T> {
     const TAG: Tag = Tag::EOC;
 }
 
 #[derive(AsnType, Encode, Decode)]
 struct PrivateInner<T> {
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     mac: Mac,
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     data: Option<PrivateVerifiable<T>>,
 }
 
 impl<T> Encode for MaybePrivate<T>
     where T: Encode + Clone,
 {
-    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, _tag: Tag) -> std::result::Result<(), E::Error> {
+    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, _tag: Tag, _constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
         match self {
             Self::Public(data) => {
                 encoder.encode_explicit_prefix(Tag::new(Class::Context, 0), data)?;
@@ -452,7 +458,7 @@ impl<T> Encode for MaybePrivate<T>
 impl<T> Decode for MaybePrivate<T>
     where T: Decode + Clone,
 {
-    fn decode_with_tag<D: Decoder>(decoder: &mut D, _tag: Tag) -> std::result::Result<Self, D::Error> {
+    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, _tag: Tag, _constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
         decoder.decode_explicit_prefix(Tag::new(Class::Context, 0))
             .map(|val: T| Self::Public(val))
             .or_else(|_| {
@@ -463,6 +469,7 @@ impl<T> Decode for MaybePrivate<T>
             })
     }
 }
+*/
 
 impl<T: Clone> Public for MaybePrivate<T> {
     fn strip_private(&self) -> Self {

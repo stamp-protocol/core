@@ -70,151 +70,143 @@ pub trait ExtendKeypair: From<SignKeypair> + Clone + PartialEq + Deref<Target = 
     }
 }
 
-macro_rules! make_keytype {
-    ($keytype:ident, $keytype_public:ident, $signaturetype:ident, $keyid:ident) => {
-        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-        pub struct $signaturetype(SignKeypairSignature);
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(delegate)]
+pub struct AdminKeypairSignature(SignKeypairSignature);
 
-        asn_encdec_newtype! { $signaturetype, SignKeypairSignature }
-
-        impl Deref for $signaturetype {
-            type Target = SignKeypairSignature;
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
-
-        impl From<SignKeypairSignature> for $signaturetype {
-            fn from(sig: SignKeypairSignature) -> Self {
-                Self(sig)
-            }
-        }
-
-        impl AsRef<[u8]> for $signaturetype {
-            fn as_ref(&self) -> &[u8] {
-                self.deref().as_ref()
-            }
-        }
-
-        impl ExtendKeypairSignature for $signaturetype {}
-
-        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-        pub struct $keytype_public(SignKeypairPublic);
-
-        asn_encdec_newtype! { $keytype_public, SignKeypairPublic }
-
-        impl From<SignKeypairPublic> for $keytype_public {
-            fn from(pubkey: SignKeypairPublic) -> Self {
-                Self(pubkey)
-            }
-        }
-
-        impl Deref for $keytype_public {
-            type Target = SignKeypairPublic;
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
-
-        #[derive(Debug, Clone, Serialize, Deserialize)]
-        pub struct $keytype(SignKeypair);
-
-        asn_encdec_newtype! { $keytype, SignKeypair }
-
-        impl From<SignKeypair> for $keytype {
-            fn from(sign: SignKeypair) -> Self {
-                Self(sign)
-            }
-        }
-
-        impl From<$keytype> for $keytype_public {
-            fn from(key: $keytype) -> Self {
-                Self(key.deref().clone().into())
-            }
-        }
-
-        impl Deref for $keytype {
-            type Target = SignKeypair;
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
-
-        impl Public for $keytype {
-            fn strip_private(&self) -> Self {
-                Self::from(self.deref().strip_private())
-            }
-
-            fn has_private(&self) -> bool {
-                self.deref().has_private()
-            }
-        }
-
-        impl PartialEq for $keytype {
-            fn eq(&self, other: &Self) -> bool {
-                self.deref().eq(other.deref())
-            }
-        }
-
-        impl Signable for $keytype {
-            type Item = $keytype_public;
-            fn signable(&self) -> Self::Item {
-                Self::Item::from(self.deref().signable())
-            }
-        }
-
-        impl ExtendKeypair for $keytype {
-            type Signature = $signaturetype;
-        }
-
-        #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
-        pub struct $keyid(KeyID);
-
-        impl From<KeyID> for $keyid {
-            fn from(id: KeyID) -> Self {
-                Self(id)
-            }
-        }
-
-        impl From<$keyid> for KeyID {
-            fn from(id: $keyid) -> Self {
-                let $keyid(inner) = id;
-                inner
-            }
-        }
-
-        impl From<SignKeypairPublic> for $keyid {
-            fn from(pubkey: SignKeypairPublic) -> Self {
-                KeyID::SignKeypair(pubkey).into()
-            }
-        }
-
-        impl Deref for $keyid {
-            type Target = KeyID;
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
+impl Deref for AdminKeypairSignature {
+    type Target = SignKeypairSignature;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-make_keytype! { AdminKeypair, AdminKeypairPublic, AdminKeypairSignature, AdminKeyID }
+impl From<SignKeypairSignature> for AdminKeypairSignature {
+    fn from(sig: SignKeypairSignature) -> Self {
+        Self(sig)
+    }
+}
+
+impl AsRef<[u8]> for AdminKeypairSignature {
+    fn as_ref(&self) -> &[u8] {
+        self.deref().as_ref()
+    }
+}
+
+impl ExtendKeypairSignature for AdminKeypairSignature {}
+
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(delegate)]
+pub struct AdminKeypairPublic(SignKeypairPublic);
+
+impl From<SignKeypairPublic> for AdminKeypairPublic {
+    fn from(pubkey: SignKeypairPublic) -> Self {
+        Self(pubkey)
+    }
+}
+
+impl Deref for AdminKeypairPublic {
+    type Target = SignKeypairPublic;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(delegate)]
+pub struct AdminKeypair(SignKeypair);
+
+impl From<SignKeypair> for AdminKeypair {
+    fn from(sign: SignKeypair) -> Self {
+        Self(sign)
+    }
+}
+
+impl From<AdminKeypair> for AdminKeypairPublic {
+    fn from(key: AdminKeypair) -> Self {
+        Self(key.deref().clone().into())
+    }
+}
+
+impl Deref for AdminKeypair {
+    type Target = SignKeypair;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Public for AdminKeypair {
+    fn strip_private(&self) -> Self {
+        Self::from(self.deref().strip_private())
+    }
+
+    fn has_private(&self) -> bool {
+        self.deref().has_private()
+    }
+}
+
+impl PartialEq for AdminKeypair {
+    fn eq(&self, other: &Self) -> bool {
+        self.deref().eq(other.deref())
+    }
+}
+
+impl Signable for AdminKeypair {
+    type Item = AdminKeypairPublic;
+    fn signable(&self) -> Self::Item {
+        Self::Item::from(self.deref().signable())
+    }
+}
+
+impl ExtendKeypair for AdminKeypair {
+    type Signature = AdminKeypairSignature;
+}
+
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(delegate)]
+pub struct AdminKeyID(KeyID);
+
+impl From<KeyID> for AdminKeyID {
+    fn from(id: KeyID) -> Self {
+        Self(id)
+    }
+}
+
+impl From<AdminKeyID> for KeyID {
+    fn from(id: AdminKeyID) -> Self {
+        let AdminKeyID(inner) = id;
+        inner
+    }
+}
+
+impl From<SignKeypairPublic> for AdminKeyID {
+    fn from(pubkey: SignKeypairPublic) -> Self {
+        KeyID::SignKeypair(pubkey).into()
+    }
+}
+
+impl Deref for AdminKeyID {
+    type Target = KeyID;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 /// Why we are revoking a key.
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum RevocationReason {
     /// No reason. Feeling cute today, might revoke my keys, IDK.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Unspecified,
     /// Replacing this key with another.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     Superseded,
     /// This key has been compromised.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     Compromised,
     /// This key was signed by a compromised key and should never be used.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(3))]
     Invalid,
 }
 
@@ -223,13 +215,13 @@ pub enum RevocationReason {
 #[rasn(choice)]
 pub enum Key {
     /// A signing key.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Sign(SignKeypair),
     /// An asymmetric crypto key.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     Crypto(CryptoKeypair),
     /// A symmetric encryption key.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     Secret(PrivateWithMac<SecretKey>),
 }
 
@@ -334,17 +326,17 @@ pub struct Subkey {
     ///
     ///
     /// ...Nobody thinks you're funny.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     key: Key,
     /// The key's human-readable name, for example "email".
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     name: String,
     /// The key's human-readable description, for example "Please send me
     /// encrypted emails using this key." Or "HAI THIS IS MY DOGECOIN ADDRESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS!!!1"
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     description: Option<String>,
     /// Allows revocation of a subkey.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(3))]
     revocation: Option<RevocationReason>,
 }
 
@@ -394,17 +386,17 @@ impl Public for Subkey {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct AdminKey {
     /// The admin keypair.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     pub(crate) key: AdminKeypair,
     /// The key's human-readable name, for example "claims/manage".
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     name: String,
     /// The key's human-readable description, for example "This key is used to
     /// manage claims"
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     description: Option<String>,
     /// Allows revocation of an admin key.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(3))]
     revocation: Option<RevocationReason>,
 }
 
@@ -475,14 +467,14 @@ pub struct Keychain {
     /// Holds this identity's owned administration keypairs. These are keys used
     /// to manage the identity, although it's entirely possible to manage the
     /// identity using keys owned by other identities by using the policy system.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     admin_keys: Vec<AdminKey>,
     /// Holds subkeys, which are non-admin keys owned by this identity. Generally
     /// these are accessed/used by other systems for things like creating messages
     /// or accessing encrypted data. For instance, an application that manages
     /// encrypted notes might store a subkey in the keychain which can be used to
     /// unlock the note data.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     subkeys: Vec<Subkey>,
 }
 
@@ -749,8 +741,7 @@ mod tests {
         let val4 = key4.as_signkey().unwrap().sign(&master_key, b"hi i'm butch").unwrap();
         let val5 = key5.as_cryptokey().unwrap().seal_anonymous(b"sufferin succotash").unwrap();
         let val6_key = key6.as_secretkey().unwrap().open_and_verify(&master_key).unwrap();
-        let val6_nonce = val6_key.gen_nonce().unwrap();
-        let val6 = val6_key.seal(b"and your nose like a delicious slope of cream", &val6_nonce).unwrap();
+        let val6 = val6_key.seal(b"and your nose like a delicious slope of cream").unwrap();
 
         let master_key2 = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(master_key != master_key2);
@@ -761,7 +752,7 @@ mod tests {
         let val4_2 = key4_2.as_signkey().unwrap().sign(&master_key2, b"hi i'm butch").unwrap();
         let val5_2 = key5_2.as_cryptokey().unwrap().open_anonymous(&master_key2, &val5).unwrap();
         let val6_2_key = key6_2.as_secretkey().unwrap().open_and_verify(&master_key2).unwrap();
-        let val6_2 = val6_2_key.open(&val6, &val6_nonce).unwrap();
+        let val6_2 = val6_2_key.open(&val6).unwrap();
 
         assert_eq!(val4, val4_2);
         assert_eq!(val5_2, b"sufferin succotash");

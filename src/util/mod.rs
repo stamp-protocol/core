@@ -22,11 +22,10 @@ macro_rules! object_id {
         $(#[$meta:meta])*
         $name:ident
     ) => {
-        #[derive(Debug, Clone, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+        #[derive(Debug, Clone, rasn::AsnType, rasn::Encode, rasn::Decode, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+        #[rasn(delegate)]
         $(#[$meta])*
         pub struct $name(pub(crate) crate::dag::TransactionID);
-
-        asn_encdec_newtype! { $name, crate::dag::TransactionID }
 
         impl $name {
             /// Take a full string id and return the shortened ID
@@ -120,16 +119,16 @@ impl AsnType for Timestamp {
 }
 
 impl Encode for Timestamp {
-    fn encode_with_tag<E: rasn::Encoder>(&self, encoder: &mut E, _tag: rasn::Tag) -> std::result::Result<(), E::Error> {
+    fn encode_with_tag_and_constraints<E: rasn::Encoder>(&self, encoder: &mut E, tag: rasn::Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
         let ts = self.timestamp_millis();
-        ts.encode(encoder)?;
+        ts.encode_with_tag_and_constraints(encoder, tag, constraints)?;
         Ok(())
     }
 }
 
 impl Decode for Timestamp {
-    fn decode_with_tag<D: rasn::Decoder>(decoder: &mut D, _tag: rasn::Tag) -> std::result::Result<Self, D::Error> {
-        let ts = <i64>::decode(decoder)?;
+    fn decode_with_tag_and_constraints<D: rasn::Decoder>(decoder: &mut D, tag: rasn::Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+        let ts = <i64>::decode_with_tag_and_constraints(decoder, tag, constraints)?;
         let dt = match chrono::Utc.timestamp_millis_opt(ts) {
             chrono::offset::LocalResult::Single(dt) => dt,
             _ => Err(rasn::de::Error::custom("could not deserialize Url"))?,
@@ -184,16 +183,16 @@ impl AsnType for Date {
 }
 
 impl Encode for Date {
-    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, _tag: Tag) -> std::result::Result<(), E::Error> {
+    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
         let ts: Timestamp = self.clone().into();
-        ts.encode(encoder)?;
+        ts.encode_with_tag_and_constraints(encoder, tag, constraints)?;
         Ok(())
     }
 }
 
 impl Decode for Date {
-    fn decode_with_tag<D: Decoder>(decoder: &mut D, _tag: Tag) -> std::result::Result<Self, D::Error> {
-        let ts = Timestamp::decode(decoder)?;
+    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+        let ts = Timestamp::decode_with_tag_and_constraints(decoder, tag, constraints)?;
         Ok(ts.into())
     }
 }
@@ -260,16 +259,16 @@ impl AsnType for Url {
 }
 
 impl Encode for Url {
-    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, _tag: Tag) -> std::result::Result<(), E::Error> {
+    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
         let url_str: &str = self.deref().as_ref();
-        url_str.encode(encoder)?;
+        url_str.encode_with_tag_and_constraints(encoder, tag, constraints)?;
         Ok(())
     }
 }
 
 impl Decode for Url {
-    fn decode_with_tag<D: Decoder>(decoder: &mut D, tag: Tag) -> std::result::Result<Self, D::Error> {
-        let url_str: &str = &decoder.decode_utf8_string(tag)?;
+    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+        let url_str: &str = &decoder.decode_utf8_string(tag, constraints)?;
         let url = url::Url::parse(url_str)
             .map_err(|_| rasn::de::Error::custom("could not deserialize Url"))?;
         Ok(Self(url))

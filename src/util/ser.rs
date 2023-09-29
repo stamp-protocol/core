@@ -28,7 +28,7 @@ pub(crate) fn serialize_text<T>(obj: &T) -> Result<String>
 }
 
 pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
-    Ok(rasn::der::decode(bytes).map_err(|_| Error::ASNDeserialize)?)
+    Ok(rasn::der::decode(bytes).map_err(|e| Error::ASNDeserialize(e))?)
 }
 
 /// Convert bytes to base64
@@ -72,16 +72,16 @@ macro_rules! impl_asn1_binary {
         }
 
         impl<const N: usize> Encode for $name<N> {
-            fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, tag: Tag) -> std::result::Result<(), E::Error> {
+            fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
                 // Accepts a closure that encodes the contents of the sequence.
-                encoder.encode_octet_string(tag, &self.0[..])?;
+                encoder.encode_octet_string(tag, constraints, &self.0[..])?;
                 Ok(())
             }
         }
 
         impl<const N: usize> Decode for $name<N> {
-            fn decode_with_tag<D: Decoder>(decoder: &mut D, tag: Tag) -> std::result::Result<Self, D::Error> {
-                let vec = decoder.decode_octet_string(tag)?;
+            fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+                let vec = decoder.decode_octet_string(tag, constraints)?;
                 let arr = vec.try_into()
                     .map_err(|_| rasn::de::Error::no_valid_choice("octet string is incorrect length"))?;
                 Ok(Self(arr))
@@ -210,15 +210,15 @@ impl AsnType for BinaryVec {
 }
 
 impl Encode for BinaryVec {
-    fn encode_with_tag<E: Encoder>(&self, encoder: &mut E, tag: Tag) -> std::result::Result<(), E::Error> {
-        encoder.encode_octet_string(tag, &self.0[..])?;
+    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+        encoder.encode_octet_string(tag, constraints, &self.0[..])?;
         Ok(())
     }
 }
 
 impl Decode for BinaryVec {
-    fn decode_with_tag<D: Decoder>(decoder: &mut D, tag: Tag) -> std::result::Result<Self, D::Error> {
-        let vec = decoder.decode_octet_string(tag)?;
+    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+        let vec = decoder.decode_octet_string(tag, constraints)?;
         Ok(Self(vec))
     }
 }
@@ -237,33 +237,6 @@ impl<'de> serde::Deserialize<'de> for BinaryVec {
     }
 }
 
-/// Used for making newtypes seamlessly ASN1 en/decodable.
-///
-/// Yes, Andrew, for the 100th time, this IS BEING USED so stop trying to
-/// fucking remove it every time you happen to read this file...
-macro_rules! asn_encdec_newtype {
-    ($name:ident, $inner:ty) => {
-        impl rasn::AsnType for $name {
-            const TAG: rasn::Tag = rasn::Tag::EOC;
-        }
-
-        impl rasn::Encode for $name {
-            fn encode_with_tag<E: rasn::Encoder>(&self, encoder: &mut E, _tag: rasn::Tag) -> std::result::Result<(), E::Error> {
-                // Accepts a closure that encodes the contents of the sequence.
-                self.0.encode(encoder)?;
-                Ok(())
-            }
-        }
-
-        impl rasn::Decode for $name {
-            fn decode_with_tag<D: rasn::Decoder>(decoder: &mut D, _tag: rasn::Tag) -> std::result::Result<Self, D::Error> {
-                let inner = <$inner>::decode(decoder)?;
-                Ok(Self(inner))
-            }
-        }
-    }
-}
-
 /// A struct that represents a single entry in a key-value table.
 ///
 /// Mainly useful for representing hash-table-esque data in places where hash
@@ -272,10 +245,10 @@ macro_rules! asn_encdec_newtype {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct KeyValEntry {
     /// The key
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     key: BinaryVec,
     /// The value
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     val: BinaryVec,
 }
 
@@ -348,6 +321,113 @@ pub(crate) mod timestamp {
             let naive = chrono::naive::serde::ts_nanoseconds::deserialize(deserializer)?;
             Ok(DateTime::<Utc>::from_utc(naive, Utc))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ser_newtype() {
+        #[derive(Debug, PartialEq, rasn::AsnType, rasn::Encode, rasn::Decode)]
+        #[rasn(delegate)]
+        struct ID1(Binary<8>);
+
+        #[derive(Debug, PartialEq, rasn::AsnType, rasn::Encode, rasn::Decode)]
+        #[rasn(delegate)]
+        struct ID3(ID1);
+
+        #[derive(Clone, Debug, PartialEq, rasn::AsnType, rasn::Encode, rasn::Decode)]
+        #[rasn(choice)]
+        enum Choose {
+            #[rasn(tag(0))]
+            Single(String),
+        }
+
+        #[derive(Debug, PartialEq, rasn::AsnType, rasn::Encode, rasn::Decode)]
+        #[rasn(delegate)]
+        struct ID4(Choose);
+
+        #[derive(Debug, PartialEq, rasn::AsnType, rasn::Encode, rasn::Decode)]
+        #[rasn(delegate)]
+        struct ID5(ID4);
+
+        let id1 = ID1(Binary::new([4; 8]));
+        let id3 = ID3(ID1(Binary::new([4; 8])));
+
+        let choice1 = Choose::Single("hello".to_string());
+        let id4 = ID4(choice1.clone());
+        let id5 = ID5(ID4(choice1.clone()));
+
+        let ser_id1 = serialize(&id1).unwrap();
+        let ser_id3 = serialize(&id3).unwrap();
+        let ser_choice1 = serialize(&choice1).unwrap();
+        let ser_id4 = serialize(&id4).unwrap();
+        let ser_id5 = serialize(&id5).unwrap();
+
+        assert_eq!(ser_id1, &[4, 8, 4, 4, 4, 4, 4, 4, 4, 4]);
+        assert_eq!(ser_id3, &[4, 8, 4, 4, 4, 4, 4, 4, 4, 4]);
+        assert_eq!(ser_choice1, &[128, 5, 104, 101, 108, 108, 111]);
+        assert_eq!(ser_id4, &[128, 5, 104, 101, 108, 108, 111]);
+        assert_eq!(ser_id5, &[128, 5, 104, 101, 108, 108, 111]);
+
+        let id1_2: ID1 = deserialize(&ser_id1).unwrap();
+        let id3_2: ID3 = deserialize(&ser_id3).unwrap();
+        let choice1_2: Choose = deserialize(&ser_choice1).unwrap();
+        let id4_2: ID4 = deserialize(&ser_id4).unwrap();
+        let id5_2: ID5 = deserialize(&ser_id5).unwrap();
+
+        assert_eq!(id1, id1_2);
+        assert_eq!(id3, id3_2);
+        assert_eq!(choice1, choice1_2);
+        assert_eq!(id4, id4_2);
+        assert_eq!(id5, id5_2);
+    }
+
+    #[test]
+    fn ser_sequence_vec() {
+        #[derive(AsnType, Clone, Debug, Decode, Encode)]
+        #[rasn(delegate)]
+        struct Timestamp(u64);
+
+        #[derive(AsnType, Clone, Debug, Decode, Encode)]
+        #[rasn(choice)]
+        enum TransactionBody {
+            #[rasn(tag(0))]
+            Increase(u32),
+            #[rasn(tag(1))]
+            Decrease(u32),
+            #[rasn(tag(2))]
+            Reset,
+        }
+
+        #[derive(AsnType, Clone, Debug, Decode, Encode)]
+        struct Transaction {
+            #[rasn(tag(0))]
+            created: Timestamp,
+            #[rasn(tag(1))]
+            body: TransactionBody,
+        }
+
+        #[derive(AsnType, Clone, Debug, Decode, Encode)]
+        struct Transactions {
+            #[rasn(tag(0))]
+            transactions: Vec<Transaction>,
+        }
+
+        let transactions1 = Transactions {
+            transactions: vec![
+                Transaction { created: Timestamp(4), body: TransactionBody::Reset },
+                Transaction { created: Timestamp(5), body: TransactionBody::Increase(42) },
+                Transaction { created: Timestamp(6), body: TransactionBody::Decrease(12) },
+            ],
+        };
+
+        let ser1 = serialize(&transactions1).unwrap();
+        println!("ser1: {:?}", ser1);
+        let transactions1_2: Transactions = deserialize(&ser1).unwrap();
+        println!("trans2: {:?}", transactions1_2);
     }
 }
 

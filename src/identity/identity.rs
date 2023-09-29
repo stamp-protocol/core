@@ -38,10 +38,10 @@ object_id! {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Identity {
     /// The unique identifier for this identity.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     id: IdentityID,
     /// When this identity came into being.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     created: Timestamp,
     /// A collection of policies, each with a key policy attached to it. The
     /// idea here is that we can specify a capability/action such as "add subkey"
@@ -53,13 +53,13 @@ pub struct Identity {
     /// according to the given policies.
     ///
     /// Effectively, this allows group/multisig management of identities.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     policies: Vec<PolicyContainer>,
     /// Holds the keys for our identity.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(3))]
     keychain: Keychain,
     /// The claims this identity makes.
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(4))]
     claims: Vec<Claim>,
     /// The public stamps (and revocations) this identity has made *on other
     /// identities.*
@@ -68,7 +68,7 @@ pub struct Identity {
     /// directly to the recipient without advertisement. However, public storage
     /// of stamps within the stamper's identity allows for quick verification and
     /// for checking of revocation.
-    #[rasn(tag(explicit(5)))]
+    #[rasn(tag(5))]
     stamps: Vec<Stamp>,
 }
 
@@ -119,9 +119,6 @@ impl Identity {
 
     /// Add a new capability policy
     pub(crate) fn add_policy(mut self, container: PolicyContainer) -> Result<Self> {
-        if self.policies().iter().find(|c| c.id() == container.id()).is_some() {
-            return Ok(self);
-        }
         self.policies_mut().push(container);
         Ok(self)
     }
@@ -349,7 +346,8 @@ mod tests {
             }
         );
         let created = Timestamp::now();
-        let identity = Identity::create(id, vec![admin_key], vec![capability.try_into().unwrap()], created);
+        let policy_trans_id = TransactionID::random();
+        let identity = Identity::create(id, vec![admin_key], vec![PolicyContainer::from_policy_transaction(&policy_trans_id, 0, capability).unwrap()], created);
         (master_key, identity)
     }
 
@@ -363,7 +361,7 @@ mod tests {
             vec![Capability::Permissive],
             MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
         );
-        let container = PolicyContainer::try_from(capability).unwrap();
+        let container = PolicyContainer::from_policy_transaction(&TransactionID::random(), 0, capability).unwrap();
         let created = Timestamp::now();
         let identity = Identity::create(id.clone(), vec![admin_key.clone()], vec![container.clone().try_into().unwrap()], created.clone());
 
@@ -648,21 +646,21 @@ mod tests {
         let admin = AdminKeypair::new_ed25519_from_seed(&master_key, seeds[0]).unwrap();
         let admin_key = AdminKey::new(admin.clone(), "alpha", None);
 
-        let id = IdentityID::from(TransactionID::from(Hash::new_blake2b_512(b"get a job").unwrap()));
+        let id = IdentityID::from(TransactionID::from(Hash::new_blake2b_256(b"get a job").unwrap()));
         let capability = Policy::new(
             vec![Capability::Permissive],
             MultisigPolicy::MOfN { must_have: 1, participants: vec![admin.into()] }
         );
-        let container = PolicyContainer::try_from(capability).unwrap();
+        let container = PolicyContainer::from_policy_transaction(&id.deref(), 0, capability).unwrap();
         let identity = Identity::create(id.clone(), vec![admin_key], vec![container], now);
         let ser = identity.serialize_text().unwrap();
         assert_eq!(ser.trim(), r#"---
 id:
-  Blake2b512: emMTrxVrn5BZ4rM75UN20fFYurs3883OwVgDL62RkAjOv_ikAXNrGVpgiVKuYe_5nrL-j0N-XaZ66c6eEvVTVA
+  Blake2b256: lxvoCQLf9GhP6rHsDYBYbS6pPMg6ja0F0xF32CVulp8
 created: "1977-06-07T04:32:06Z"
 policies:
   - id:
-      Blake2b512: 8_nj44kBtb4EIM1qJuJmgoPdlwN8q33CpS39UzEke2EBrDbJskCOJKVB39jG-hwBDQVuqL5Tg6KKJUrO_HiJWQ
+      Blake2b256: CNG1SjrtvQuE0-CLAAEQHK3rGXwQkpOnMbw9B5m52-c
     policy:
       capabilities:
         - Permissive

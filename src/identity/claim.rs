@@ -36,10 +36,10 @@ pub enum RelationshipType {
     /// an organization, but can really mean "a member of any group" including
     /// but not limited to a book club, a state citizenship, a murder of crows,
     /// and anything in-between or beyond.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     OrganizationMember,
     /// Any custom relationship.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     Extension(BinaryVec),
 }
 
@@ -48,13 +48,13 @@ pub enum RelationshipType {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Relationship<T> {
     /// The type of relationship we have.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     #[serde(rename = "type")]
     ty: RelationshipType,
     /// Who the relationship is with.
     ///
     /// Eg: "your mom"
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     subject: T,
 }
 
@@ -84,20 +84,20 @@ pub enum ClaimSpec {
     ///
     /// This can also be used to claim ownership of another identity, for instance
     /// if you lost your keys and need to move to a new identity.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Identity(MaybePrivate<IdentityID>),
     /// A claim that the name attached to this identity is mine.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     Name(MaybePrivate<String>),
     /// A claim I was born on a certain day.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     Birthday(MaybePrivate<Date>),
     /// A claim that I own an email address.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(3))]
     Email(MaybePrivate<String>),
     /// A claim that the attached photo is a photo of me (ie, not an anime
     /// avatar).
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(4))]
     Photo(MaybePrivate<BinaryVec>),
     /// A claim that I own a PGP keypair (using the key's ID as the value).
     ///
@@ -108,7 +108,7 @@ pub enum ClaimSpec {
     /// NOTE: we *could* reimplement *all* of PGP and allow people to verify
     /// this themselves via cross-signing, but seems more appropriate to keep
     /// the spec lean and instead require third-parties to verify the claim.
-    #[rasn(tag(explicit(5)))]
+    #[rasn(tag(5))]
     Pgp(MaybePrivate<String>),
     /// A claim that I own or have write access to an internet domain.
     ///
@@ -147,7 +147,7 @@ pub enum ClaimSpec {
     /// ```txt
     /// stamp://o8AL10aawwthQIUR/claim/cZVhuW0Of5aqaFa1
     /// ```
-    #[rasn(tag(explicit(6)))]
+    #[rasn(tag(6))]
     Domain(MaybePrivate<String>),
     /// A claim that I own or have write access to a specific URL.
     ///
@@ -198,24 +198,24 @@ pub enum ClaimSpec {
     /// with editable text you can update, and doesn't provide a predictable URL
     /// format for new posts, and doesn't have editable posts, you will need a
     /// third-party to stamp this claim.
-    #[rasn(tag(explicit(7)))]
+    #[rasn(tag(7))]
     Url(MaybePrivate<Url>),
     /// A claim that I reside at a physical address.
     ///
     /// Must be stamped in-person. At the DMV. The one that's further away.
     /// Sorry, that's the protocol.
-    #[rasn(tag(explicit(8)))]
+    #[rasn(tag(8))]
     Address(MaybePrivate<String>),
     /// A claim that I am in a relationship with another identity, hopefully
     /// stamped by that identity ='[
-    #[rasn(tag(explicit(9)))]
+    #[rasn(tag(9))]
     Relation(MaybePrivate<Relationship<IdentityID>>),
     /// A claim that I am in a relationship with another entity with some form
     /// of serializable identification (such as a signed certificate, a name,
     /// etc). Can be used to assert relationships to entities outside of the
     /// Stamp protocol (although stamps on these relationships must be provided
     /// by Stamp protocol identities).
-    #[rasn(tag(explicit(10)))]
+    #[rasn(tag(10))]
     RelationExtension(MaybePrivate<Relationship<BinaryVec>>),
     /// Any kind of claim of identity ownership or possession outside the
     /// defined types. This includes a public field (which could be used as a
@@ -231,11 +231,11 @@ pub enum ClaimSpec {
     ///
     /// Anything you can dream up that you wish to claim in any format can exist
     /// here.
-    #[rasn(tag(explicit(11)))]
+    #[rasn(tag(11))]
     Extension {
-        #[rasn(tag(explicit(0)))]
+        #[rasn(tag(0))]
         key: BinaryVec,
-        #[rasn(tag(explicit(1)))]
+        #[rasn(tag(1))]
         value: MaybePrivate<BinaryVec>,
     },
 }
@@ -323,16 +323,16 @@ impl Public for ClaimSpec {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Claim {
     /// The ID of this claim (the [transaction id][crate::dag::TransactionID] that created it).
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     id: ClaimID,
     /// The data we're claiming.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     spec: ClaimSpec,
     /// Stamps that have been made on our claim.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     stamps: Vec<Stamp>,
     /// This claim's name, can be used for forwarding/redirection.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(3))]
     name: Option<String>,
 }
 

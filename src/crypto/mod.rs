@@ -3,6 +3,7 @@
 
 pub mod base;
 pub mod message;
+pub mod seal;
 pub mod sign;
 
 use crate::{
@@ -20,13 +21,13 @@ use serde_derive::{Serialize, Deserialize};
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct SignedObject<T> {
     /// The ID of the signing identity
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     signed_by_identity: IdentityID,
     /// The ID of the key that signed the message
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     signed_by_key: KeyID,
     /// The signature or message
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     body: T,
 }
 

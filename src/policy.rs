@@ -24,7 +24,6 @@ use getset;
 use glob::Pattern;
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
-use std::convert::TryFrom;
 use std::ops::Deref;
 
 object_id! {
@@ -36,47 +35,47 @@ object_id! {
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum TransactionBodyType {
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     CreateIdentityV1,
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     ResetIdentityV1,
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     AddAdminKeyV1,
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(3))]
     EditAdminKeyV1,
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(4))]
     RevokeAdminKeyV1,
-    #[rasn(tag(explicit(5)))]
+    #[rasn(tag(5))]
     AddPolicyV1,
-    #[rasn(tag(explicit(6)))]
+    #[rasn(tag(6))]
     DeletePolicyV1,
-    #[rasn(tag(explicit(7)))]
+    #[rasn(tag(7))]
     MakeClaimV1,
-    #[rasn(tag(explicit(8)))]
+    #[rasn(tag(8))]
     EditClaimV1,
-    #[rasn(tag(explicit(9)))]
+    #[rasn(tag(9))]
     DeleteClaimV1,
-    #[rasn(tag(explicit(10)))]
+    #[rasn(tag(10))]
     MakeStampV1,
-    #[rasn(tag(explicit(11)))]
+    #[rasn(tag(11))]
     RevokeStampV1,
-    #[rasn(tag(explicit(12)))]
+    #[rasn(tag(12))]
     AcceptStampV1,
-    #[rasn(tag(explicit(13)))]
+    #[rasn(tag(13))]
     DeleteStampV1,
-    #[rasn(tag(explicit(14)))]
+    #[rasn(tag(14))]
     AddSubkeyV1,
-    #[rasn(tag(explicit(15)))]
+    #[rasn(tag(15))]
     EditSubkeyV1,
-    #[rasn(tag(explicit(16)))]
+    #[rasn(tag(16))]
     RevokeSubkeyV1,
-    #[rasn(tag(explicit(17)))]
+    #[rasn(tag(17))]
     DeleteSubkeyV1,
-    #[rasn(tag(explicit(18)))]
+    #[rasn(tag(18))]
     PublishV1,
-    #[rasn(tag(explicit(19)))]
+    #[rasn(tag(19))]
     SignV1,
-    #[rasn(tag(explicit(20)))]
+    #[rasn(tag(20))]
     ExtV1,
 }
 
@@ -114,29 +113,29 @@ impl From<&TransactionBody> for TransactionBodyType {
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum ContextClaimType {
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Identity,
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     Name,
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     Birthday,
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(3))]
     Email,
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(4))]
     Photo,
-    #[rasn(tag(explicit(5)))]
+    #[rasn(tag(5))]
     Pgp,
-    #[rasn(tag(explicit(6)))]
+    #[rasn(tag(6))]
     Domain,
-    #[rasn(tag(explicit(7)))]
+    #[rasn(tag(7))]
     Url,
-    #[rasn(tag(explicit(8)))]
+    #[rasn(tag(8))]
     Address,
-    #[rasn(tag(explicit(9)))]
+    #[rasn(tag(9))]
     Relation,
-    #[rasn(tag(explicit(10)))]
+    #[rasn(tag(10))]
     RelationExtension,
-    #[rasn(tag(explicit(11)))]
+    #[rasn(tag(11))]
     Extension,
 }
 
@@ -169,44 +168,44 @@ impl From<&ClaimSpec> for ContextClaimType {
 #[rasn(choice)]
 pub enum Context {
     /// Represents a context in which ALL given contexts must match (an AND gate)
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     All(Vec<Context>),
     /// Represents a context in which one or more of the given contexts must
     /// match (an OR gate).
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     Any(Vec<Context>),
     /// Allows an action in any context (ie, context is irrelevant).
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     Permissive,
     /// Allows an action in the context of an identity that has this exact ID.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(3))]
     IdentityID(IdentityID),
     /// Allows an action in the context of items with an exact ID match (for
     /// instance, a claim that was created by transaction 0x03fd913)
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(4))]
     ObjectID(TransactionID),
     /// Allows an action on an admin key with the given ID.
     AdminKeyID(AdminKeyID),
     /// Allows an action on a key with the given ID. This can match Admin keys, although
     /// using the `AdminKeyID` variant might be more useful.
-    #[rasn(tag(explicit(5)))]
+    #[rasn(tag(5))]
     KeyID(KeyID),
     /// Allows an action in the context of items with an exact name match. This
     /// can be an admin key, subkey, or capability policy generally.
-    #[rasn(tag(explicit(6)))]
+    #[rasn(tag(6))]
     Name(String),
     /// Allows an action in the context of items with name matching a glob pattern.
     /// For instance `email-keys/*`
-    #[rasn(tag(explicit(7)))]
+    #[rasn(tag(7))]
     NameGlob(String),
     /// Allows actions on claims where the claim is of a particular type
-    #[rasn(tag(explicit(8)))]
+    #[rasn(tag(8))]
     ClaimType(ContextClaimType),
     /// Allows actions on external transactions of a certain type
-    #[rasn(tag(explicit(9)))]
+    #[rasn(tag(9))]
     ExtType(BinaryVec),
     /// Allows actions on external transactions containing a key/value pair
-    #[rasn(tag(explicit(10)))]
+    #[rasn(tag(10))]
     ExtContext(KeyValEntry),
     /// Allows actions on external transactions matching a key and *prefix* of a value.
     ///
@@ -251,7 +250,7 @@ pub enum Context {
     ///
     /// As you can see, the *value* is matched via prefis, but the key must be an
     /// exact match. Or else.
-    #[rasn(tag(explicit(11)))]
+    #[rasn(tag(11))]
     ExtContextPrefix(KeyValEntry),
 }
 
@@ -451,14 +450,14 @@ impl Context {
 #[rasn(choice)]
 pub enum Capability {
     /// A capability that allows all actions
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Permissive,
     /// The ability to perform a transaction in a given context
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     Transaction {
-        #[rasn(tag(explicit(0)))]
+        #[rasn(tag(0))]
         body_type: TransactionBodyType,
-        #[rasn(tag(explicit(1)))]
+        #[rasn(tag(1))]
         context: Context,
     },
     /// Allows creating any kind of custom actions/contexts outside the scope of
@@ -477,11 +476,11 @@ pub enum Capability {
     /// mean you can validate capability extensions) and transaction extensions allow
     /// a very quick and easy way to leverage Stamp's transactional system that might
     /// be somewhat crude but allow built-in transaction creation and verification.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     Extension {
-        #[rasn(tag(explicit(0)))]
+        #[rasn(tag(0))]
         ty: BinaryVec,
-        #[rasn(tag(explicit(1)))]
+        #[rasn(tag(1))]
         context: BinaryVec,
     }
 }
@@ -522,13 +521,13 @@ impl Capability {
 pub enum Participant {
     /// This participant is a specific key, and policy signatures must come from
     /// this exact key.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Key {
         /// Lets us know who this key belongs to, ie "Rick"
-        #[rasn(tag(explicit(0)))]
+        #[rasn(tag(0))]
         name: Option<String>,
         /// The public key
-        #[rasn(tag(explicit(1)))]
+        #[rasn(tag(1))]
         key: AdminKeypairPublic,
     }
 }
@@ -559,13 +558,13 @@ impl From<AdminKey> for Participant {
 pub enum MultisigPolicySignature {
     /// A signature on a transaction from a specific key, generally one that's
     /// listed as a [Participant::Key] in the policy.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     Key {
         /// The key the signature came from
-        #[rasn(tag(explicit(0)))]
+        #[rasn(tag(0))]
         key: AdminKeypairPublic,
         /// The signature
-        #[rasn(tag(explicit(1)))]
+        #[rasn(tag(1))]
         signature: AdminKeypairSignature,
     },
 }
@@ -577,20 +576,20 @@ pub enum MultisigPolicySignature {
 #[rasn(choice)]
 pub enum MultisigPolicy {
     /// All of the given conditions must be met.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     All(Vec<MultisigPolicy>),
     /// Any of the given conditions can be met.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     Any(Vec<MultisigPolicy>),
     /// Of the given public keys, N many must produce a valid signature in order
     /// for the policy to be ratified.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(2))]
     MOfN {
         /// Must have at least this many signatures.
-        #[rasn(tag(explicit(0)))]
+        #[rasn(tag(0))]
         must_have: u16,
         /// The keys we're listing as identity recovery keys.
-        #[rasn(tag(explicit(1)))]
+        #[rasn(tag(1))]
         participants: Vec<Participant>,
     },
 }
@@ -646,11 +645,11 @@ impl MultisigPolicy {
 pub struct Policy {
     /// The capabilities (or actions) this policy can access. These are permissive,
     /// and combined via OR.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     capabilities: Vec<Capability>,
     /// The signature policy defining which keys are required to perform the
     /// specified capabilities
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     multisig_policy: MultisigPolicy,
 }
 
@@ -683,15 +682,6 @@ impl Policy {
         }
         Ok(())
     }
-
-    /// Generate a [PolicyID] for this policy.
-    pub fn gen_id(&self) -> Result<PolicyID> {
-        let ser = ser::serialize(self)?;
-        // TODO: generate this differently
-        let hash = Hash::new_blake2b_512(&ser[..])?;
-        let tid = TransactionID::from(hash);
-        Ok(PolicyID::from(tid))
-    }
 }
 
 /// A container that assigns a unique ID to a capability policy.
@@ -699,10 +689,10 @@ impl Policy {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct PolicyContainer {
     /// The ID of this capability policy.
-    #[rasn(tag(explicit(0)))]
+    #[rasn(tag(0))]
     id: PolicyID,
     /// The actual capability policy
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(1))]
     policy: Policy,
 }
 
@@ -711,21 +701,38 @@ impl PolicyContainer {
     pub fn new(id: PolicyID, policy: Policy) -> Self {
         Self { id, policy }
     }
+
+    /// Generates a `PolicyID` given a transaction id and the policy's position (index) in that
+    /// transactions.
+    pub fn gen_id(transaction_id: &TransactionID, idx: usize) -> Result<PolicyID> {
+        #[derive(AsnType, Encode)]
+        struct PolicyContainerSer<'a> {
+            #[rasn(tag(0))]
+            transaction_id: &'a TransactionID,
+            #[rasn(tag(1))]
+            idx: usize,
+        }
+
+        let ser_struct = PolicyContainerSer {
+            transaction_id,
+            idx,
+        };
+        let serialized = ser::serialize(&ser_struct)?;
+        let hashed = Hash::new_blake2b_256(&serialized[..])?;
+        Ok(PolicyID(TransactionID::from(hashed)))
+    }
+
+    /// Creates a `PolicyContainer` from a `Policy` and its index in the transaction
+    pub fn from_policy_transaction(transaction_id: &TransactionID, idx: usize, policy: Policy) -> Result<Self> {
+        let id = Self::gen_id(transaction_id, idx)?;
+        Ok(PolicyContainer { id, policy })
+    }
 }
 
 impl Deref for PolicyContainer {
     type Target = Policy;
     fn deref(&self) -> &Self::Target {
         self.policy()
-    }
-}
-
-impl TryFrom<Policy> for PolicyContainer {
-    type Error = Error;
-
-    fn try_from(value: Policy) -> std::result::Result<Self, Self::Error> {
-        let id = value.gen_id()?;
-        Ok(Self::new(id, value))
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::{
-    crypto::base::{CryptoKeypair, HashAlgo, SecretKey, SignKeypair},
-    dag::Transactions,
+    crypto::base::{CryptoKeypair, Hash, HashAlgo, SecretKey, SignKeypair},
+    dag::{TransactionID, Transactions},
     identity::{
         identity::{IdentityID, Identity},
         keychain::{ExtendKeypair, AdminKey, AdminKeypair, Key},
@@ -46,7 +46,8 @@ pub(crate) fn setup_identity_with_subkeys() -> (SecretKey, Identity) {
             ],
         }
     );
-    let policy_con = PolicyContainer::try_from(policy).unwrap();
+    let policy_transaction_id = TransactionID::from(Hash::new_blake2b_256(b"policy").unwrap());
+    let policy_con = PolicyContainer::from_policy_transaction(&policy_transaction_id, 0, policy).unwrap();
     let admin_key = AdminKey::new(admin_keypair, "Alpha", None);
     let identity = Identity::create(IdentityID::random(), vec![admin_key], vec![policy_con], Timestamp::now())
         .add_subkey(Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap()), "sign", None).unwrap()
