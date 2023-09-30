@@ -29,11 +29,11 @@ pub enum HashAlgo {
 #[rasn(choice)]
 pub enum Hash {
     /// Blake2b 512bit hash
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Blake2b512(Binary<64>),
 
     /// Blake2b 512bit hash
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     Blake2b256(Binary<32>),
 }
 
@@ -149,7 +149,7 @@ pub(crate) mod tests {
             _ => panic!("Not possible"),
         }
         let bytes = ser::serialize(&hash).unwrap();
-        assert_eq!(ser::base64_encode(&bytes[..]), String::from("gEDzQO9VYBkXR8KGOFWfRznTbf3bl8hDl19jRPs0WCWGP6lovnBH61p9GXo_xhsoRZGtDb7u7ey3UC-DRsg9Gsqh"));
+        assert_eq!(ser::base64_encode(&bytes[..]), String::from("oEIEQPNA71VgGRdHwoY4VZ9HOdNt_duXyEOXX2NE-zRYJYY_qWi-cEfrWn0Zej_GGyhFka0Nvu7t7LdQL4NGyD0ayqE"));
         assert_eq!(format!("{}", hash), String::from("80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQA"));
         let hash2: Hash = ser::deserialize(&bytes).unwrap();
         match &hash2 {
@@ -180,7 +180,7 @@ pub(crate) mod tests {
         }
 
         let bytes = ser::serialize(&hash).unwrap();
-        assert_eq!(ser::base64_encode(&bytes[..]), String::from("gSDaqfip7lXQg49VhZHuqFPP1FPhpAPemYD_ocTbgDrY0g"));
+        assert_eq!(ser::base64_encode(&bytes[..]), String::from("oSIEINqp-KnuVdCDj1WFke6oU8_UU-GkA96ZgP-hxNuAOtjS"));
         assert_eq!(format!("{}", hash), String::from("2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NIB"));
         let hash2: Hash = ser::deserialize(&bytes).unwrap();
         match &hash2 {

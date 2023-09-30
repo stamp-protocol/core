@@ -245,10 +245,10 @@ impl<'de> serde::Deserialize<'de> for BinaryVec {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct KeyValEntry {
     /// The key
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     key: BinaryVec,
     /// The value
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     val: BinaryVec,
 }
 
@@ -341,7 +341,7 @@ mod tests {
         #[derive(Clone, Debug, PartialEq, rasn::AsnType, rasn::Encode, rasn::Decode)]
         #[rasn(choice)]
         enum Choose {
-            #[rasn(tag(0))]
+            #[rasn(tag(explicit(0)))]
             Single(String),
         }
 
@@ -368,9 +368,9 @@ mod tests {
 
         assert_eq!(ser_id1, &[4, 8, 4, 4, 4, 4, 4, 4, 4, 4]);
         assert_eq!(ser_id3, &[4, 8, 4, 4, 4, 4, 4, 4, 4, 4]);
-        assert_eq!(ser_choice1, &[128, 5, 104, 101, 108, 108, 111]);
-        assert_eq!(ser_id4, &[128, 5, 104, 101, 108, 108, 111]);
-        assert_eq!(ser_id5, &[128, 5, 104, 101, 108, 108, 111]);
+        assert_eq!(ser_choice1, &[160, 7, 12, 5, 104, 101, 108, 108, 111]);
+        assert_eq!(ser_id4, &[160, 7, 12, 5, 104, 101, 108, 108, 111]);
+        assert_eq!(ser_id5, &[160, 7, 12, 5, 104, 101, 108, 108, 111]);
 
         let id1_2: ID1 = deserialize(&ser_id1).unwrap();
         let id3_2: ID3 = deserialize(&ser_id3).unwrap();

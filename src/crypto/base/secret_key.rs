@@ -12,7 +12,7 @@ use std::ops::Deref;
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum SecretKeyNonce {
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     XChaCha20Poly1305(Binary<24>),
 }
 
@@ -20,7 +20,7 @@ pub enum SecretKeyNonce {
 #[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum SecretKey {
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     XChaCha20Poly1305(BinarySecret<32>),
 }
 
@@ -29,10 +29,10 @@ pub enum SecretKey {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Sealed {
     /// Our heroic nonce
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     nonce: SecretKeyNonce,
     /// The ciphertext
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     ciphertext: BinaryVec,
 }
 

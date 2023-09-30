@@ -197,16 +197,16 @@ impl Deref for AdminKeyID {
 #[rasn(choice)]
 pub enum RevocationReason {
     /// No reason. Feeling cute today, might revoke my keys, IDK.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Unspecified,
     /// Replacing this key with another.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     Superseded,
     /// This key has been compromised.
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     Compromised,
     /// This key was signed by a compromised key and should never be used.
-    #[rasn(tag(3))]
+    #[rasn(tag(explicit(3)))]
     Invalid,
 }
 
@@ -215,13 +215,13 @@ pub enum RevocationReason {
 #[rasn(choice)]
 pub enum Key {
     /// A signing key.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Sign(SignKeypair),
     /// An asymmetric crypto key.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     Crypto(CryptoKeypair),
     /// A symmetric encryption key.
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     Secret(PrivateWithMac<SecretKey>),
 }
 
@@ -326,17 +326,17 @@ pub struct Subkey {
     ///
     ///
     /// ...Nobody thinks you're funny.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     key: Key,
     /// The key's human-readable name, for example "email".
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     name: String,
     /// The key's human-readable description, for example "Please send me
     /// encrypted emails using this key." Or "HAI THIS IS MY DOGECOIN ADDRESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS!!!1"
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     description: Option<String>,
     /// Allows revocation of a subkey.
-    #[rasn(tag(3))]
+    #[rasn(tag(explicit(3)))]
     revocation: Option<RevocationReason>,
 }
 
@@ -386,17 +386,17 @@ impl Public for Subkey {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct AdminKey {
     /// The admin keypair.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     pub(crate) key: AdminKeypair,
     /// The key's human-readable name, for example "claims/manage".
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     name: String,
     /// The key's human-readable description, for example "This key is used to
     /// manage claims"
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     description: Option<String>,
     /// Allows revocation of an admin key.
-    #[rasn(tag(3))]
+    #[rasn(tag(explicit(3)))]
     revocation: Option<RevocationReason>,
 }
 
@@ -467,14 +467,14 @@ pub struct Keychain {
     /// Holds this identity's owned administration keypairs. These are keys used
     /// to manage the identity, although it's entirely possible to manage the
     /// identity using keys owned by other identities by using the policy system.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     admin_keys: Vec<AdminKey>,
     /// Holds subkeys, which are non-admin keys owned by this identity. Generally
     /// these are accessed/used by other systems for things like creating messages
     /// or accessing encrypted data. For instance, an application that manages
     /// encrypted notes might store a subkey in the keychain which can be used to
     /// unlock the note data.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     subkeys: Vec<Subkey>,
 }
 

@@ -36,16 +36,16 @@ object_id! {
 #[rasn(choice)]
 pub enum RevocationReason {
     /// No reason. Feeling cute today, might revoke a stamp, IDK.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Unspecified,
     /// Replacing this stamp with another.
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     Superseded,
     /// The stamped identity has been compromised
-    #[rasn(tag(3))]
+    #[rasn(tag(explicit(3)))]
     Compromised,
     /// This stamp was signed by a compromised key and cannot be trusted
-    #[rasn(tag(4))]
+    #[rasn(tag(explicit(4)))]
     Invalid,
 }
 
@@ -54,26 +54,26 @@ pub enum RevocationReason {
 #[rasn(choice)]
 pub enum Confidence {
     /// The stamp is being made with absolutely no verification whatsoever.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     None,
     /// Some verification of the claim happened, but it was quick and
     /// dirty.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     Low,
     /// We verified the claim using a decent amount of diligence. This could be
     /// like checking someone's state-issued ID.
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     Medium,
     /// The claim was extensively investigated: birth certificates, background
     /// checks, photo verification.
-    #[rasn(tag(3))]
+    #[rasn(tag(explicit(3)))]
     High,
     /// We climbed mountains, pulled teeth, interrogated family members, and are
     /// absolutely positive that this claim is true in every way.
     ///
     /// This should really only be used between people who have known each other
     /// for years (like family).
-    #[rasn(tag(4))]
+    #[rasn(tag(explicit(4)))]
     Extreme,
 }
 
@@ -84,22 +84,22 @@ pub enum Confidence {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct StampEntry {
     /// The ID of the identity that is stamping.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     stamper: IdentityID,
     /// The ID of the identity being stamped.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     stampee: IdentityID,
     /// The ID of the claim we're stamping.
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     claim_id: ClaimID,
     /// How much confidence the stamper has that the claim being stamped is
     /// valid.
-    #[rasn(tag(3))]
+    #[rasn(tag(explicit(3)))]
     confidence: Confidence,
     /// The date this stamp expires (if at all). The stamper can choose to set
     /// this expiration date if they feel their stamp is only good for a set
     /// period of time.
-    #[rasn(tag(4))]
+    #[rasn(tag(explicit(4)))]
     expires: Option<Timestamp>,
 }
 
@@ -127,16 +127,16 @@ impl StampEntry {
 pub struct Stamp {
     /// The [transaction id][crate::dag::TransactionID] of the transaction that created
     /// this stamp.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     id: StampID,
     /// The stamp entry, containing all the actual stamp data.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     entry: StampEntry,
     /// The date this stamp was created
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     created: Timestamp,
     /// An optional revocation for this stamp
-    #[rasn(tag(3))]
+    #[rasn(tag(explicit(3)))]
     revocation: Option<RevocationReason>,
 }
 
@@ -172,10 +172,10 @@ impl SerText for Stamp {}
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct StampRequest {
     /// The claim we wish to have stamped
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     claim: Claim,
     /// The one-time key that can be used to decrypt and verify this claim.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     decrypt_key: SecretKey,
 }
 

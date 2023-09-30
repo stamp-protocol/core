@@ -262,10 +262,10 @@ impl<T> Clone for PrivateVerifiable<T> {
 pub struct PrivateWithMac<T> {
     /// Holds the MAC for this private data so it can be verified without
     /// revealing the data itself
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     pub(crate) mac: Mac,
     /// The (encrypted) data AND MAC key.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     pub(crate) data: Option<PrivateVerifiable<T>>,
 }
 
@@ -340,14 +340,14 @@ impl<T> Clone for PrivateWithMac<T> {
 #[rasn(choice)]
 pub enum MaybePrivate<T> {
     /// Any publicly-viewable data
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Public(T),
     /// Secret data, which can only be opened with the corresponding decryption
     /// key, stored alongside a public signature of a MAC of the secret data.
     ///
     /// Make sure to check if this object has data via <MaybePrivate::has_data()>
     /// before trying to use it.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     Private(PrivateWithMac<T>)
 }
 
@@ -429,9 +429,9 @@ impl<T> AsnType for MaybePrivate<T> {
 
 #[derive(AsnType, Encode, Decode)]
 struct PrivateInner<T> {
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     mac: Mac,
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     data: Option<PrivateVerifiable<T>>,
 }
 

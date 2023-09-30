@@ -38,10 +38,10 @@ object_id! {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Identity {
     /// The unique identifier for this identity.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     id: IdentityID,
     /// When this identity came into being.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     created: Timestamp,
     /// A collection of policies, each with a key policy attached to it. The
     /// idea here is that we can specify a capability/action such as "add subkey"
@@ -53,13 +53,13 @@ pub struct Identity {
     /// according to the given policies.
     ///
     /// Effectively, this allows group/multisig management of identities.
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     policies: Vec<PolicyContainer>,
     /// Holds the keys for our identity.
-    #[rasn(tag(3))]
+    #[rasn(tag(explicit(3)))]
     keychain: Keychain,
     /// The claims this identity makes.
-    #[rasn(tag(4))]
+    #[rasn(tag(explicit(4)))]
     claims: Vec<Claim>,
     /// The public stamps (and revocations) this identity has made *on other
     /// identities.*
@@ -68,7 +68,7 @@ pub struct Identity {
     /// directly to the recipient without advertisement. However, public storage
     /// of stamps within the stamper's identity allows for quick verification and
     /// for checking of revocation.
-    #[rasn(tag(5))]
+    #[rasn(tag(explicit(5)))]
     stamps: Vec<Stamp>,
 }
 
@@ -660,7 +660,7 @@ id:
 created: "1977-06-07T04:32:06Z"
 policies:
   - id:
-      Blake2b256: CNG1SjrtvQuE0-CLAAEQHK3rGXwQkpOnMbw9B5m52-c
+      Blake2b256: T5pi6qfapwpI3c7NkMATSBci1xYitVgrF2OGe5iP0jI
     policy:
       capabilities:
         - Permissive

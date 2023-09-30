@@ -15,7 +15,7 @@ use std::ops::Deref;
 #[rasn(choice)]
 pub enum MacKey {
     /// Blake2b MAC key
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Blake2b(BinarySecret<64>),
 }
 
@@ -38,7 +38,7 @@ impl MacKey {
 #[rasn(choice)]
 pub enum Mac {
     /// Blake2b MAC
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Blake2b(Binary<64>),
 }
 

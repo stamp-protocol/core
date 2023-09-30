@@ -22,7 +22,7 @@ use std::ops::Deref;
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum SignKeypairSignature {
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Ed25519(Binary<64>),
 }
 
@@ -39,11 +39,11 @@ impl AsRef<[u8]> for SignKeypairSignature {
 #[rasn(choice)]
 pub enum SignKeypair {
     /// Ed25519 signing keypair
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Ed25519 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         public: Binary<32>,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         secret: Option<Private<BinarySecret<32>>>,
     }
 }
@@ -171,7 +171,7 @@ impl Signable for SignKeypair {
 #[rasn(choice)]
 pub enum SignKeypairPublic {
     /// Ed25519 signing public key
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Ed25519(Binary<32>),
 }
 

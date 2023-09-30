@@ -54,11 +54,11 @@ use std::ops::Deref;
 pub enum TransactionBody {
     /// Create a new identity. The [ID][TransactionID] of this transaction will
     /// be the identity's public ID forever after.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     CreateIdentityV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         admin_keys: Vec<AdminKey>,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         policies: Vec<Policy>,
     },
     /// Replace optionally both the [admin keys][AdminKey] in the [Keychain][crate::identity::keychain::Keychain]
@@ -66,145 +66,145 @@ pub enum TransactionBody {
     ///
     /// This is more or less a hailmary recovery option that allows gaining
     /// access to the identity after some kind of catastrophic event.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     ResetIdentityV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         admin_keys: Option<Vec<AdminKey>>,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         policies: Option<Vec<Policy>>,
     },
     /// Add a new [admin key][AdminKey] to the [Keychain][crate::identity::keychain::Keychain].
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     AddAdminKeyV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         admin_key: AdminKey,
     },
     /// Edit an admin key
-    #[rasn(tag(3))]
+    #[rasn(tag(explicit(3)))]
     EditAdminKeyV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         id: AdminKeyID,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         name: Option<String>,
-        #[rasn(tag(2))]
+        #[rasn(tag(explicit(2)))]
         description: Option<Option<String>>,
     },
     /// Revokes an [AdminKey] key and moves it into the subkeys, optionally
     /// renaming it.
-    #[rasn(tag(4))]
+    #[rasn(tag(explicit(4)))]
     RevokeAdminKeyV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         id: AdminKeyID,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         reason: RevocationReason,
-        #[rasn(tag(2))]
+        #[rasn(tag(explicit(2)))]
         new_name: Option<String>,
     },
     /// Add a new [Policy] to the identity.
-    #[rasn(tag(5))]
+    #[rasn(tag(explicit(5)))]
     AddPolicyV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         policy: Policy,
     },
     /// Delete (by name) a capability policy from the identity.
-    #[rasn(tag(6))]
+    #[rasn(tag(explicit(6)))]
     DeletePolicyV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         id: PolicyID,
     },
     /// Make a new claim on this identity. The [ID][TransactionID] of this
     /// transaction will be the claim's ID.
-    #[rasn(tag(7))]
+    #[rasn(tag(explicit(7)))]
     MakeClaimV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         spec: ClaimSpec,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         name: Option<String>,
     },
     /// Edit a claim's name
-    #[rasn(tag(8))]
+    #[rasn(tag(explicit(8)))]
     EditClaimV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         claim_id: ClaimID,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         name: Option<String>,
     },
     /// Delete/remove a claim by ID.
-    #[rasn(tag(9))]
+    #[rasn(tag(explicit(9)))]
     DeleteClaimV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         claim_id: ClaimID,
     },
     /// Make a stamp that is saved and advertised with this identity.
-    #[rasn(tag(10))]
+    #[rasn(tag(explicit(10)))]
     MakeStampV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         stamp: StampEntry,
     },
     /// Revoke a stamp we previously created and store this revocation with the
     /// identity.
-    #[rasn(tag(11))]
+    #[rasn(tag(explicit(11)))]
     RevokeStampV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         stamp_id: StampID,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         reason: StampRevocationReason,
     },
     /// Accept a stamp on one of our claims into our identity. This allows those
     /// who have our identity to see the trust others have put into us.
-    #[rasn(tag(12))]
+    #[rasn(tag(explicit(12)))]
     AcceptStampV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         stamp_transaction: Box<Transaction>,
     },
     /// Delete a stamp on one of our claims.
-    #[rasn(tag(13))]
+    #[rasn(tag(explicit(13)))]
     DeleteStampV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         stamp_id: StampID,
     },
     /// Add a new subkey to our keychain.
-    #[rasn(tag(14))]
+    #[rasn(tag(explicit(14)))]
     AddSubkeyV1 { 
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         key: Key,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         name: String,
-        #[rasn(tag(2))]
+        #[rasn(tag(explicit(2)))]
         desc: Option<String>,
     },
     /// Edit the name/description of a subkey by its unique name.
-    #[rasn(tag(15))]
+    #[rasn(tag(explicit(15)))]
     EditSubkeyV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         id: KeyID,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         new_name: Option<String>,
-        #[rasn(tag(2))]
+        #[rasn(tag(explicit(2)))]
         new_desc: Option<Option<String>>,
     },
     /// Mark a subkey as revoked, allowing old signatures to be validated but
     /// without permitting new signatures to be created.
-    #[rasn(tag(16))]
+    #[rasn(tag(explicit(16)))]
     RevokeSubkeyV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         id: KeyID,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         reason: RevocationReason,
-        #[rasn(tag(2))]
+        #[rasn(tag(explicit(2)))]
         new_name: Option<String>,
     },
     /// Delete a subkey entirely from the identity.
-    #[rasn(tag(17))]
+    #[rasn(tag(explicit(17)))]
     DeleteSubkeyV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         id: KeyID,
     },
     /// Publish this identity. This transaction cannot be saved with the identity, but
     /// rather should be published to a public medium (like StampNet!!!!1)
-    #[rasn(tag(18))]
+    #[rasn(tag(explicit(18)))]
     PublishV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         transactions: Box<Transactions>,
     },
     /// Sign a message. The usual Stamp policy process applies here, so an official
@@ -214,11 +214,11 @@ pub enum TransactionBody {
     /// To create detached signatures, set `body` to None after signing.
     ///
     /// `Sign` transactions cannot be applied to the identity!
-    #[rasn(tag(19))]
+    #[rasn(tag(explicit(19)))]
     SignV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         creator: IdentityID,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         body: Option<BinaryVec>,
     },
     /// Create a transaction for use in an external network. This allows Stamp to act
@@ -236,15 +236,15 @@ pub enum TransactionBody {
     ///
     /// Note that `Ext` transactions cannot be applied to the identity...Stamp allows
     /// their creation but provides no methods for executing them.
-    #[rasn(tag(20))]
+    #[rasn(tag(explicit(20)))]
     ExtV1 {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         creator: IdentityID,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         ty: Option<BinaryVec>,
-        #[rasn(tag(2))]
+        #[rasn(tag(explicit(2)))]
         context: Option<KeyValStore>,
-        #[rasn(tag(3))]
+        #[rasn(tag(explicit(3)))]
         payload: BinaryVec,
     },
 }
@@ -447,7 +447,7 @@ impl TransactionID {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct TransactionEntry {
     /// When this transaction was created.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     created: Timestamp,
     /// This is a list of previous transactions that are not already listed by
     /// another transaction.
@@ -461,10 +461,10 @@ pub struct TransactionEntry {
     /// Note that when listing previous transactions, their `created` times must
     /// be *less than* this transaction's created time. Future transactions
     /// cannot be signed into a past one.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     previous_transactions: Vec<TransactionID>,
     /// This holds the actual transaction data.
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     body: TransactionBody,
 }
 
@@ -497,14 +497,14 @@ impl Public for TransactionEntry {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transaction {
     /// This is a hash of the transaction's `entry`
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     id: TransactionID,
     /// This holds our transaction body: any references to previous
     /// transactions as well as the transaction type/data.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     entry: TransactionEntry,
     /// The signatures on this transaction's ID.
-    #[rasn(tag(2))]
+    #[rasn(tag(explicit(2)))]
     signatures: Vec<MultisigPolicySignature>,
 }
 
@@ -933,7 +933,6 @@ mod tests {
             admin_keys: vec![admin_key1.clone(), admin_key2.clone()],
             policies: vec![policy1, policy2],
         };
-        //println!("{:?}", ser::serialize(&trans).unwrap());
         let ser = [160, 130, 1, 226, 48, 130, 1, 222, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 77, 75, 24, 6, 47, 133, 2, 89, 141, 224, 69, 202, 123, 105, 240, 103, 245, 159, 147, 177, 110, 58, 248, 115, 58, 152, 138, 220, 35, 65, 245, 200, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 52, 91, 131, 196, 94, 206, 247, 246, 234, 187, 1, 17, 143, 130, 214, 69, 34, 35, 89, 7, 194, 4, 126, 66, 161, 52, 4, 50, 159, 166, 85, 242, 21, 236, 41, 128, 9, 108, 48, 173, 252, 29, 121, 36, 216, 195, 78, 127, 7, 0, 192, 74, 102, 35, 48, 46, 196, 80, 187, 47, 9, 219, 219, 150, 62, 173, 55, 225, 136, 36, 240, 233, 204, 242, 208, 94, 109, 149, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108, 108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 125, 23, 127, 30, 113, 180, 144, 173, 12, 227, 128, 249, 87, 138, 177, 43, 176, 252, 0, 169, 141, 232, 246, 165, 85, 200, 29, 72, 194, 3, 146, 73, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 148, 34, 105, 99, 167, 187, 233, 96, 221, 201, 98, 140, 99, 217, 108, 67, 187, 129, 55, 59, 46, 83, 139, 194, 161, 52, 4, 50, 247, 253, 123, 253, 8, 207, 12, 152, 47, 37, 145, 147, 71, 146, 222, 206, 96, 37, 47, 161, 118, 141, 142, 255, 89, 50, 5, 165, 4, 240, 68, 30, 246, 102, 20, 85, 108, 54, 215, 212, 108, 242, 4, 204, 161, 216, 178, 62, 99, 156, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 155, 48, 129, 152, 48, 65, 160, 6, 48, 4, 160, 2, 5, 0, 161, 55, 162, 53, 48, 51, 160, 3, 2, 1, 1, 161, 44, 48, 42, 160, 40, 48, 38, 161, 36, 160, 34, 4, 32, 77, 75, 24, 6, 47, 133, 2, 89, 141, 224, 69, 202, 123, 105, 240, 103, 245, 159, 147, 177, 110, 58, 248, 115, 58, 152, 138, 220, 35, 65, 245, 200, 48, 83, 160, 24, 48, 22, 161, 20, 48, 18, 160, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 168, 4, 161, 2, 5, 0, 161, 55, 162, 53, 48, 51, 160, 3, 2, 1, 1, 161, 44, 48, 42, 160, 40, 48, 38, 161, 36, 160, 34, 4, 32, 125, 23, 127, 30, 113, 180, 144, 173, 12, 227, 128, 249, 87, 138, 177, 43, 176, 252, 0, 169, 141, 232, 246, 165, 85, 200, 29, 72, 194, 3, 146, 73];
         let trans_deser: TransactionBody = ser::deserialize(&ser).unwrap();
 
@@ -1050,8 +1049,8 @@ mod tests {
             name: Some("admin/all".to_string()),
             description: Some(Some("fun times".to_string())),
         };
-        let ser1 = [163, 59, 48, 57, 160, 40, 48, 38, 160, 36, 160, 34, 4, 32, 196, 139, 104, 122, 29, 216, 38, 81, 1, 179, 61, 246, 174, 11, 104, 37, 35, 78, 63, 40, 223, 158, 203, 56, 251, 40, 108, 247, 109, 174, 145, 157, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108, 108, 162, 0];
-        let ser2 = [163, 70, 48, 68, 160, 40, 48, 38, 160, 36, 160, 34, 4, 32, 196, 139, 104, 122, 29, 216, 38, 81, 1, 179, 61, 246, 174, 11, 104, 37, 35, 78, 63, 40, 223, 158, 203, 56, 251, 40, 108, 247, 109, 174, 145, 157, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108, 108, 162, 11, 12, 9, 102, 117, 110, 32, 116, 105, 109, 101, 115];
+        let ser1 = [163, 57, 48, 55, 160, 38, 160, 36, 160, 34, 4, 32, 196, 139, 104, 122, 29, 216, 38, 81, 1, 179, 61, 246, 174, 11, 104, 37, 35, 78, 63, 40, 223, 158, 203, 56, 251, 40, 108, 247, 109, 174, 145, 157, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108, 108, 162, 0];
+        let ser2 = [163, 68, 48, 66, 160, 38, 160, 36, 160, 34, 4, 32, 196, 139, 104, 122, 29, 216, 38, 81, 1, 179, 61, 246, 174, 11, 104, 37, 35, 78, 63, 40, 223, 158, 203, 56, 251, 40, 108, 247, 109, 174, 145, 157, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108, 108, 162, 11, 12, 9, 102, 117, 110, 32, 116, 105, 109, 101, 115];
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
         let trans_deser2: TransactionBody = ser::deserialize(&ser2).unwrap();
 
@@ -1086,7 +1085,7 @@ mod tests {
             reason: RevocationReason::Compromised,
             new_name: Some("admin/no-more".to_string()),
         };
-        let ser1 = [164, 67, 48, 65, 160, 40, 48, 38, 160, 36, 160, 34, 4, 32, 196, 139, 104, 122, 29, 216, 38, 81, 1, 179, 61, 246, 174, 11, 104, 37, 35, 78, 63, 40, 223, 158, 203, 56, 251, 40, 108, 247, 109, 174, 145, 157, 161, 4, 162, 2, 5, 0, 162, 15, 12, 13, 97, 100, 109, 105, 110, 47, 110, 111, 45, 109, 111, 114, 101];
+        let ser1 = [164, 65, 48, 63, 160, 38, 160, 36, 160, 34, 4, 32, 196, 139, 104, 122, 29, 216, 38, 81, 1, 179, 61, 246, 174, 11, 104, 37, 35, 78, 63, 40, 223, 158, 203, 56, 251, 40, 108, 247, 109, 174, 145, 157, 161, 4, 162, 2, 5, 0, 162, 15, 12, 13, 97, 100, 109, 105, 110, 47, 110, 111, 45, 109, 111, 114, 101];
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
 
         match (trans1, trans_deser1) {
@@ -1163,8 +1162,6 @@ mod tests {
             spec: claim2,
             name: None,
         };
-        //println!("ser: {:?}", ser::serialize(&trans1).unwrap());
-        //println!("ser: {:?}", ser::serialize(&trans2).unwrap());
         let ser1 = [167, 59, 48, 57, 160, 42, 160, 40, 160, 38, 48, 36, 161, 34, 4, 32, 2, 184, 57, 74, 2, 9, 205, 216, 210, 77, 230, 58, 45, 139, 80, 30, 92, 141, 137, 51, 230, 188, 18, 199, 110, 191, 194, 202, 152, 32, 121, 202, 161, 11, 12, 9, 109, 121, 45, 111, 108, 100, 45, 105, 100];
         let ser2 = [167, 129, 237, 48, 129, 234, 160, 129, 231, 171, 129, 228, 48, 129, 225, 160, 6, 4, 4, 2, 4, 6, 8, 161, 129, 214, 161, 129, 211, 48, 129, 208, 160, 68, 160, 66, 4, 64, 119, 249, 37, 233, 249, 41, 126, 192, 130, 174, 249, 214, 25, 238, 96, 41, 134, 177, 61, 93, 231, 220, 146, 159, 54, 3, 254, 67, 22, 189, 177, 177, 170, 118, 103, 129, 79, 157, 40, 241, 56, 172, 68, 104, 137, 194, 194, 58, 81, 150, 160, 43, 100, 122, 73, 124, 199, 138, 203, 141, 205, 240, 150, 171, 161, 129, 135, 48, 129, 132, 160, 129, 129, 160, 28, 160, 26, 4, 24, 34, 41, 154, 149, 54, 35, 146, 15, 173, 244, 166, 49, 240, 239, 127, 92, 42, 149, 212, 205, 94, 166, 231, 195, 161, 97, 4, 95, 248, 230, 162, 110, 59, 33, 11, 236, 61, 105, 238, 140, 31, 173, 90, 138, 143, 186, 156, 215, 157, 7, 126, 192, 81, 170, 134, 154, 198, 255, 226, 238, 165, 164, 138, 143, 142, 234, 235, 13, 68, 28, 157, 203, 33, 141, 209, 108, 240, 91, 170, 93, 218, 115, 58, 203, 152, 190, 60, 144, 9, 40, 228, 92, 241, 53, 195, 36, 171, 131, 57, 62, 89, 100, 64, 54, 216, 10, 165, 27, 144, 221, 181, 29, 44, 52, 190, 155, 214, 183, 250, 81, 50, 209, 92];
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
@@ -1199,6 +1196,7 @@ mod tests {
         }
     }
 
+    /*
     #[test]
     fn trans_deser_edit_claim_v1() { unimplemented!(); }
 
@@ -1237,5 +1235,6 @@ mod tests {
 
     #[test]
     fn trans_deser_ext_v1() { unimplemented!(); }
+    */
 }
 

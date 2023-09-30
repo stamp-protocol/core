@@ -21,17 +21,17 @@ use serde_derive::{Serialize, Deserialize};
 #[rasn(choice)]
 pub enum Signature {
     /// A detached signature
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     Detached {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         sig: SignedObject<SignKeypairSignature>,
     },
     /// A signature with embedded data.
-    #[rasn(tag(1))]
+    #[rasn(tag(explicit(1)))]
     Attached {
-        #[rasn(tag(0))]
+        #[rasn(tag(explicit(0)))]
         sig: SignedObject<SignKeypairSignature>,
-        #[rasn(tag(1))]
+        #[rasn(tag(explicit(1)))]
         data: BinaryVec,
     },
 }

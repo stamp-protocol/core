@@ -44,7 +44,7 @@ use std::collections::HashMap;
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transactions {
     /// The actual transactions.
-    #[rasn(tag(0))]
+    #[rasn(tag(explicit(0)))]
     transactions: Vec<Transaction>,
 }
 
