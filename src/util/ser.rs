@@ -386,48 +386,26 @@ mod tests {
     }
 
     #[test]
-    fn ser_sequence_vec() {
-        #[derive(AsnType, Clone, Debug, Decode, Encode)]
-        #[rasn(delegate)]
-        struct Timestamp(u64);
-
-        #[derive(AsnType, Clone, Debug, Decode, Encode)]
+    fn ser_vec_enum_implicit_tag() {
+        #[derive(Debug, Clone, AsnType, Encode, Decode)]
         #[rasn(choice)]
-        enum TransactionBody {
+        pub enum MultisigPolicySignature {
             #[rasn(tag(0))]
-            Increase(u32),
-            #[rasn(tag(1))]
-            Decrease(u32),
-            #[rasn(tag(2))]
-            Reset,
+            Key {
+                #[rasn(tag(0))]
+                key: String,
+            },
         }
 
-        #[derive(AsnType, Clone, Debug, Decode, Encode)]
-        struct Transaction {
-            #[rasn(tag(0))]
-            created: Timestamp,
-            #[rasn(tag(1))]
-            body: TransactionBody,
-        }
+        let transactions1 = vec![
+            MultisigPolicySignature::Key {
+                key: String::from("key"),
+            },
+        ];
 
-        #[derive(AsnType, Clone, Debug, Decode, Encode)]
-        struct Transactions {
-            #[rasn(tag(0))]
-            transactions: Vec<Transaction>,
-        }
-
-        let transactions1 = Transactions {
-            transactions: vec![
-                Transaction { created: Timestamp(4), body: TransactionBody::Reset },
-                Transaction { created: Timestamp(5), body: TransactionBody::Increase(42) },
-                Transaction { created: Timestamp(6), body: TransactionBody::Decrease(12) },
-            ],
-        };
-
-        let ser1 = serialize(&transactions1).unwrap();
-        println!("ser1: {:?}", ser1);
-        let transactions1_2: Transactions = deserialize(&ser1).unwrap();
-        println!("trans2: {:?}", transactions1_2);
+        let ser1 = rasn::der::encode(&transactions1).unwrap();
+        let transactions1_2: Vec<MultisigPolicySignature> = rasn::der::decode(&ser1[..]).unwrap();
+        assert_eq!(transactions1_2.len(), 1);
     }
 }
 
