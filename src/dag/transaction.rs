@@ -243,7 +243,7 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(1)))]
         ty: Option<BinaryVec>,
         #[rasn(tag(explicit(2)))]
-        context: Option<KeyValStore>,
+        context: Option<KeyValStore<BinaryVec, BinaryVec>>,
         #[rasn(tag(explicit(3)))]
         payload: BinaryVec,
     },

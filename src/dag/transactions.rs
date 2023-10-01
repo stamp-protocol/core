@@ -777,7 +777,7 @@ impl Transactions {
     }
 
     /// Create a transaction for use in an external system.
-    pub fn ext<T: Into<Timestamp> + Clone, K: Into<KeyValStore>>(&self, hash_with: &HashAlgo, now: T, previous_transactions: Vec<TransactionID>, ty: Option<BinaryVec>, context: Option<K>, payload: BinaryVec) -> Result<Transaction> {
+    pub fn ext<T: Into<Timestamp> + Clone, K: Into<KeyValStore<BinaryVec, BinaryVec>>>(&self, hash_with: &HashAlgo, now: T, previous_transactions: Vec<TransactionID>, ty: Option<BinaryVec>, context: Option<K>, payload: BinaryVec) -> Result<Transaction> {
         let creator = self.identity_id().ok_or(Error::DagEmpty)?;
         let body = TransactionBody::ExtV1 {
             creator,

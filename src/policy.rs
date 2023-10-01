@@ -206,7 +206,7 @@ pub enum Context {
     ExtType(BinaryVec),
     /// Allows actions on external transactions containing a key/value pair
     #[rasn(tag(explicit(10)))]
-    ExtContext(KeyValEntry),
+    ExtContext(KeyValEntry<BinaryVec, BinaryVec>),
     /// Allows actions on external transactions matching a key and *prefix* of a value.
     ///
     /// For instance:
@@ -251,7 +251,7 @@ pub enum Context {
     /// As you can see, the *value* is matched via prefis, but the key must be an
     /// exact match. Or else.
     #[rasn(tag(explicit(11)))]
-    ExtContextPrefix(KeyValEntry),
+    ExtContextPrefix(KeyValEntry<BinaryVec, BinaryVec>),
 }
 
 impl Context {

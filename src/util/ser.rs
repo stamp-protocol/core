@@ -13,7 +13,6 @@ use crate::{
 };
 use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag};
 use serde::{Serialize, Deserialize, ser::Serializer, de::Deserializer};
-use std::ops::Deref;
 use zeroize::Zeroize;
 
 pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
@@ -243,42 +242,42 @@ impl<'de> serde::Deserialize<'de> for BinaryVec {
 /// tables are not supported (*cough* ASN1).
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct KeyValEntry {
+pub struct KeyValEntry<K, V> {
     /// The key
     #[rasn(tag(explicit(0)))]
-    key: BinaryVec,
+    key: K,
     /// The value
     #[rasn(tag(explicit(1)))]
-    val: BinaryVec,
+    val: V,
 }
 
-impl KeyValEntry {
+impl<K, V> KeyValEntry<K, V> {
     /// Quick onstructor for KeyValEntry
-    pub fn new(key: BinaryVec, val: BinaryVec) -> Self {
+    pub fn new(key: K, val: V) -> Self {
         Self { key, val }
     }
 }
 
 /// A key/value store that can be serialized as an ASN1 "map."
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
-pub struct KeyValStore(Vec<KeyValEntry>);
+pub struct KeyValStore<K, V>(Vec<KeyValEntry<K, V>>);
 
-impl KeyValStore {
+impl<K: PartialEq, V> KeyValStore<K, V> {
     /// Get a value out of this kv store by key.
-    pub fn get<T: AsRef<[u8]>>(&self, key: T) -> Option<&BinaryVec> {
+    pub fn get(&self, key: &K) -> Option<&V> {
         self.0.iter()
             .rev()
-            .find(|x| x.key().deref().as_slice() == key.as_ref())
+            .find(|x| x.key() == key)
             .map(|x| x.val())
     }
 }
 
-impl std::ops::Deref for KeyValStore {
-    type Target = Vec<KeyValEntry>;
+impl<K, V> std::ops::Deref for KeyValStore<K, V> {
+    type Target = Vec<KeyValEntry<K, V>>;
     fn deref(&self) -> &Self::Target { &self.0 }
 }
 
-impl<const N: usize> std::convert::From<[(&[u8], &[u8]); N]> for KeyValStore {
+impl<const N: usize> std::convert::From<[(&[u8], &[u8]); N]> for KeyValStore<BinaryVec, BinaryVec> {
     fn from(map: [(&[u8], &[u8]); N]) -> Self {
         let kv = map.into_iter()
             .map(|(key, val)| KeyValEntry::new(BinaryVec::from(Vec::from(key)), BinaryVec::from(Vec::from(val))))
@@ -287,7 +286,7 @@ impl<const N: usize> std::convert::From<[(&[u8], &[u8]); N]> for KeyValStore {
     }
 }
 
-impl<const N: usize> std::convert::From<[(&str, &str); N]> for KeyValStore {
+impl<const N: usize> std::convert::From<[(&str, &str); N]> for KeyValStore<BinaryVec, BinaryVec> {
     fn from(map: [(&str, &str); N]) -> Self {
         let kv = map.into_iter()
             .map(|(key, val)| KeyValEntry::new(BinaryVec::from(Vec::from(key.as_bytes())), BinaryVec::from(Vec::from(val.as_bytes()))))
