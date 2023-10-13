@@ -31,7 +31,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{BinaryVec, KeyValStore, SerdeBinary, SerText},
+        ser::{BinaryVec, HashMapAsn1, SerdeBinary, SerText},
     },
 };
 use getset;
@@ -777,15 +777,16 @@ impl Transactions {
     }
 
     /// Create a transaction for use in an external system.
-    pub fn ext<T: Into<Timestamp> + Clone, K: Into<KeyValStore<BinaryVec, BinaryVec>>>(&self, hash_with: &HashAlgo, now: T, previous_transactions: Vec<TransactionID>, ty: Option<BinaryVec>, context: Option<K>, payload: BinaryVec) -> Result<Transaction> {
+    pub fn ext<T: Into<Timestamp> + Clone, K: Into<HashMapAsn1<BinaryVec, BinaryVec>>>(&self, hash_with: &HashAlgo, now: T, previous_transactions: Vec<TransactionID>, ty: Option<BinaryVec>, context: Option<K>, payload: BinaryVec) -> Result<Transaction> {
         let creator = self.identity_id().ok_or(Error::DagEmpty)?;
         let body = TransactionBody::ExtV1 {
             creator,
             ty,
+            previous_transactions,
             context: context.map(|x| x.into()),
             payload,
         };
-        Transaction::new(TransactionEntry::new(now, previous_transactions, body), hash_with)
+        self.prepare_transaction(hash_with, now, body)
     }
 }
 
@@ -1663,7 +1664,7 @@ mod tests {
 
         let mut ext_mod = ext.clone();
         match ext_mod.entry_mut().body_mut() {
-            TransactionBody::ExtV1 { creator: _creator, ty: _ty, context: _context, payload: ref mut body } => {
+            TransactionBody::ExtV1 { payload: ref mut body, .. } => {
                 // NICE TRY, SALLY. UGH.
                 *body = BinaryVec::from(Vec::from("SEND $6 TO SALLY".as_bytes()));
             }

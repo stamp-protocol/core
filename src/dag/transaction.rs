@@ -38,7 +38,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{self, BinaryVec, KeyValStore, SerdeBinary, SerText},
+        ser::{self, BinaryVec, HashMapAsn1, SerdeBinary, SerText},
     },
 };
 use getset;
@@ -224,9 +224,8 @@ pub enum TransactionBody {
     /// Create a transaction for use in an external network. This allows Stamp to act
     /// as a transactional medium for other networks. If the members of that network
     /// can speak Stamp, they can use it to create and sign custom transactions.
-    /// `Ext` transactions can also benefit not just from signatures and formatting,
-    /// but from the `previous_transactions` field which allows DAG-based causal
-    /// ordering.
+    /// `Ext` transactions use the policy system, allowing an identity to manage which
+    /// keys can issue which transactions.
     ///
     /// `Ext` allows specifying an optional transaction type and optional set of
     /// binary contexts, which can be used for attaching arbitrary key-value data
@@ -238,13 +237,30 @@ pub enum TransactionBody {
     /// their creation but provides no methods for executing them.
     #[rasn(tag(explicit(20)))]
     ExtV1 {
+        /// The identity that created this transaction
         #[rasn(tag(explicit(0)))]
         creator: IdentityID,
+        /// The optional transaction type. Can be used to segment different transactions
+        /// from each other in mixed networks.
         #[rasn(tag(explicit(1)))]
         ty: Option<BinaryVec>,
+        /// Tells us which *external* transaction(s) came before. This is distinct from
+        /// [`TransactionEntry.previous_transactions`][TransactionEntry], which for external
+        /// transactions stores the previous transaction IDs *of the identity that issued the
+        /// external transaction*, whereas this field allows listing previous transactions
+        /// for the external transactions.
+        ///
+        /// The distinction is important: keeping `TransactionEntry.previous_transactions`
+        /// scoped to the identity means that external transactions can be verified against
+        /// an identity at a point-in-time.
         #[rasn(tag(explicit(2)))]
-        context: Option<KeyValStore<BinaryVec, BinaryVec>>,
+        previous_transactions: Vec<TransactionID>,
+        /// The context allows setting arbitrary, binary key-value pairs in this transaction
+        /// which can be used for policy matching, routing in p2p networks, etc.
         #[rasn(tag(explicit(3)))]
+        context: Option<HashMapAsn1<BinaryVec, BinaryVec>>,
+        /// The actual transaction body, serialized however you like.
+        #[rasn(tag(explicit(4)))]
         payload: BinaryVec,
     },
 }
@@ -303,7 +319,7 @@ impl TransactionBody {
                 transactions: Box::new(transactions.reencrypt(old_master_key, new_master_key)?),
             },
             Self::SignV1 { creator, body } => Self::SignV1 { creator, body },
-            Self::ExtV1 { creator, ty, context, payload } => Self::ExtV1 { creator, ty, context, payload },
+            Self::ExtV1 { creator, ty, previous_transactions, context, payload } => Self::ExtV1 { creator, ty, previous_transactions, context, payload },
         };
         Ok(new_self)
     }
@@ -345,7 +361,7 @@ impl Public for TransactionBody {
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
             Self::PublishV1 { transactions } => Self::PublishV1 { transactions: Box::new(transactions.strip_private()) },
             Self::SignV1 { creator, body } => Self::SignV1 { creator, body },
-            Self::ExtV1 { creator, ty, context, payload } => Self::ExtV1 { creator, ty, context, payload },
+            Self::ExtV1 { creator, ty, previous_transactions, context, payload } => Self::ExtV1 { creator, ty, previous_transactions, context, payload },
         }
     }
 
