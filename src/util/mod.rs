@@ -15,7 +15,7 @@ pub(crate) mod sign;
 #[cfg(test)]
 pub(crate) mod test;
 
-pub use ser::{base64_encode, base64_decode, SerdeBinary, SerText, Binary, BinarySecret, BinaryVec, KeyValEntry};
+pub use ser::{base64_encode, base64_decode, HashMapAsn1, SerdeBinary, SerText, Binary, BinarySecret, BinaryVec};
 
 macro_rules! object_id {
     (
@@ -144,7 +144,7 @@ impl Deref for Timestamp {
 
 impl From<NaiveDateTime> for Timestamp {
     fn from(naive: NaiveDateTime) -> Self {
-        Self(DateTime::<Utc>::from_utc(naive, Utc))
+        Self(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
     }
 }
 
@@ -174,7 +174,7 @@ impl From<Timestamp> for Date {
 impl From<Date> for Timestamp {
     fn from(date: Date) -> Self {
         // UGH I hate unwraps, but this should never fail sooo....
-        Self(DateTime::<Utc>::from_utc(date.and_hms_opt(0, 0, 0).unwrap(), Utc))
+        Self(DateTime::<Utc>::from_naive_utc_and_offset(date.and_hms_opt(0, 0, 0).unwrap(), Utc))
     }
 }
 
