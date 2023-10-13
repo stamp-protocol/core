@@ -66,7 +66,9 @@
 //! // identity, such as private keys. Generally, you'd create this using a passphrase:
 //! let salt = Hash::new_blake2b_512("2022-12-06T11:59:59-0800".as_bytes()).unwrap();
 //! let passphrase = "lumpy coal makes good sandwhiches";
-//! let master_key = derive_secret_key(passphrase.as_bytes(), salt.as_bytes(), KDF_OPS_MODERATE, KDF_MEM_MODERATE).unwrap();
+//! // here's how you generate your master key (commented out because it's slow)
+//! //let master_key = derive_secret_key(passphrase.as_bytes(), salt.as_bytes(), KDF_OPS_MODERATE, KDF_MEM_MODERATE).unwrap();
+//! # let master_key = SecretKey::new_xchacha20poly1305_from_slice(Hash::new_blake2b_256(passphrase.as_bytes()).unwrap().as_bytes()).unwrap();
 //!
 //! // Next, we'll create an admin key. Admin keys are how we sign changes to our identity,
 //! // including its creation. All private/secret keys in the identity (including Admin keys)
