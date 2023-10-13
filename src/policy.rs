@@ -18,7 +18,7 @@ use crate::{
         identity::{Identity, IdentityID},
         keychain::{AdminKey, AdminKeyID, AdminKeypair, AdminKeypairPublic, AdminKeypairSignature},
     },
-    util::ser::{self, BinaryVec, KeyValEntry},
+    util::ser::{self, BinaryVec},
 };
 use getset;
 use glob::Pattern;
@@ -204,54 +204,81 @@ pub enum Context {
     /// Allows actions on external transactions of a certain type
     #[rasn(tag(explicit(9)))]
     ExtType(BinaryVec),
-    /// Allows actions on external transactions containing a key/value pair
+    /// Allows actions on external transactions of a certain type by prefix.
+    ///
+    /// So if we have a type of `turtl/op/v2` and a `Context::ExtTypePrefix("turtl/op/")`
+    /// that would match.
+    ///
+    /// ```
+    /// use stamp_core::policy::Context;
+    /// let context = Context::ExtTypePrefix(b"turtl/".to_vec().into());
+    ///
+    /// // The dude abides.
+    /// context.test(&Context::ExtType(b"turtl/op/v1".to_vec().into())).unwrap();
+    /// context.test(&Context::ExtType(b"turtl/checkpoint/v1".to_vec().into())).unwrap();
+    /// // This will not stand, man.
+    /// context.test(&Context::ExtType(b"/turtl/op/v1".to_vec().into())).unwrap_err();
+    /// ```
     #[rasn(tag(explicit(10)))]
-    ExtContext(KeyValEntry<BinaryVec, BinaryVec>),
+    ExtTypePrefix(BinaryVec),
+    /// Allows actions on external transactions containing a key/value pair
+    #[rasn(tag(explicit(11)))]
+    ExtContext {
+        #[rasn(tag(explicit(0)))]
+        key: BinaryVec,
+        #[rasn(tag(explicit(1)))]
+        val: BinaryVec,
+    },
     /// Allows actions on external transactions matching a key and *prefix* of a value.
     ///
     /// For instance:
     ///
     /// ```
     /// use stamp_core::policy::Context;
-    /// use stamp_core::util::{BinaryVec, KeyValEntry};
-    /// let context = Context::ExtContextPrefix(KeyValEntry::new(
-    ///     BinaryVec::from(vec![1, 2, 3]),
-    ///     BinaryVec::from(vec![4, 5, 6]),
-    /// ));
+    /// use stamp_core::util::{BinaryVec};
+    /// let context = Context::ExtContextPrefix {
+    ///     key: BinaryVec::from(vec![1, 2, 3]),
+    ///     val: BinaryVec::from(vec![4, 5, 6]),
+    /// };
     ///
     /// // The dude abides.
     /// context.test(
-    ///     &Context::ExtContext(KeyValEntry::new(
-    ///         BinaryVec::from(vec![1, 2, 3]),
-    ///         BinaryVec::from(vec![4, 5, 6, 42, 83, 129])
-    ///     ))
+    ///     &Context::ExtContext {
+    ///         key: BinaryVec::from(vec![1, 2, 3]),
+    ///         val: BinaryVec::from(vec![4, 5, 6, 42, 83, 129])
+    ///     }
     /// ).unwrap();
     ///
     /// // This will not stand, man.
     /// context.test(
-    ///     &Context::ExtContext(KeyValEntry::new(
-    ///         BinaryVec::from(vec![3, 2, 1]),
-    ///         BinaryVec::from(vec![4, 5, 6, 42, 83, 129])
-    ///     ))
+    ///     &Context::ExtContext {
+    ///         key: BinaryVec::from(vec![3, 2, 1]),
+    ///         val: BinaryVec::from(vec![4, 5, 6, 42, 83, 129])
+    ///     }
     /// ).unwrap_err();
     /// context.test(
-    ///     &Context::ExtContext(KeyValEntry::new(
-    ///         BinaryVec::from(vec![1, 2, 3, 4]),
-    ///         BinaryVec::from(vec![4, 5, 6])
-    ///     ))
+    ///     &Context::ExtContext {
+    ///         key: BinaryVec::from(vec![1, 2, 3, 4]),
+    ///         val: BinaryVec::from(vec![4, 5, 6])
+    ///     }
     /// ).unwrap_err();
     /// context.test(
-    ///     &Context::ExtContext(KeyValEntry::new(
-    ///         BinaryVec::from(vec![1, 2, 3]),
-    ///         BinaryVec::from(vec![4, 5, 7])
-    ///     ))
+    ///     &Context::ExtContext {
+    ///         key: BinaryVec::from(vec![1, 2, 3]),
+    ///         val: BinaryVec::from(vec![4, 5, 7])
+    ///     }
     /// ).unwrap_err();
     /// ```
     ///
-    /// As you can see, the *value* is matched via prefis, but the key must be an
+    /// As you can see, the *value* is matched via prefix, but the key must be an
     /// exact match. Or else.
-    #[rasn(tag(explicit(11)))]
-    ExtContextPrefix(KeyValEntry<BinaryVec, BinaryVec>),
+    #[rasn(tag(explicit(12)))]
+    ExtContextPrefix {
+        #[rasn(tag(explicit(0)))]
+        key: BinaryVec,
+        #[rasn(tag(explicit(1)))]
+        val: BinaryVec,
+    }
 }
 
 impl Context {
@@ -347,9 +374,9 @@ impl Context {
             TransactionBody::SignV1 { .. } => {}
             TransactionBody::ExtV1 { ty, context, .. } => {
                 ty.as_ref().map(|t| contexts.push(Self::ExtType(t.clone())));
-                context.as_ref().map(|c| {
-                    for con in c.deref() {
-                        contexts.push(Self::ExtContext(con.clone()))
+                context.as_ref().map(|exists| {
+                    for (k, v) in exists.iter() {
+                        contexts.push(Self::ExtContext { key: k.clone(), val: v.clone() });
                     }
                 });
             }
@@ -425,9 +452,12 @@ impl Context {
             }
             (Self::ClaimType(ty1), Self::ClaimType(ty2)) => ty1 == ty2,
             (Self::ExtType(ty1), Self::ExtType(ty2)) => ty1 == ty2,
-            (Self::ExtContext(c1), Self::ExtContext(c2)) => c1 == c2,
-            (Self::ExtContextPrefix(prefix), Self::ExtContext(context)) => {
-                context.key() == prefix.key() && context.val().starts_with(prefix.val().deref())
+            (Self::ExtTypePrefix(p1), Self::ExtType(ty2)) => ty2.starts_with(p1),
+            (Self::ExtContext { key: c1k, val: c1v }, Self::ExtContext { key: c2k, val: c2v }) => {
+                c1k == c2k && c1v == c2v
+            }
+            (Self::ExtContextPrefix { key: prefix_key, val: prefix_val }, Self::ExtContext { key: context_key, val: context_val }) => {
+                context_key == prefix_key && context_val.starts_with(prefix_val.deref())
             }
             _ => false,
         };
@@ -757,10 +787,10 @@ mod tests {
             Context::NameGlob("GANDALFFFF-*".into()),
             Context::ClaimType(ContextClaimType::Email),
             Context::ExtType(BinaryVec::from(Vec::from("order-create".as_bytes()))),
-            Context::ExtContext(KeyValEntry::new(
-                BinaryVec::from(Vec::from("department".as_bytes())),
-                BinaryVec::from(Vec::from("inventory/receiving".as_bytes()))
-            )),
+            Context::ExtContext {
+                key: BinaryVec::from(Vec::from("department".as_bytes())),
+                val: BinaryVec::from(Vec::from("inventory/receiving".as_bytes()))
+            }
         ];
 
         for round1 in combos.iter() {   // FIGHT
@@ -806,41 +836,57 @@ mod tests {
             Err(Error::PolicyContextMismatch)
         );
 
-        let conextprefix = Context::ExtContextPrefix(KeyValEntry::new(
-            Vec::from("department".as_bytes()).into(),
-            Vec::from("inventory/".as_bytes()).into(),
-        ));
-        conextprefix.test(&Context::ExtContext(KeyValEntry::new(
-            Vec::from("department".as_bytes()).into(),
-            Vec::from("inventory/".as_bytes()).into(),
-        ))).unwrap();
-        conextprefix.test(&Context::ExtContext(KeyValEntry::new(
-            Vec::from("department".as_bytes()).into(),
-            Vec::from("inventory/orders".as_bytes()).into(),
-        ))).unwrap();
-        conextprefix.test(&Context::ExtContext(KeyValEntry::new(
-            Vec::from("department".as_bytes()).into(),
-            Vec::from("inventory/widgets/incoming".as_bytes()).into(),
-        ))).unwrap();
+        let typeprefix = Context::ExtTypePrefix(b"turtl/op/".to_vec().into());
+        typeprefix.test(&Context::ExtType(b"turtl/op/".to_vec().into())).unwrap();
+        typeprefix.test(&Context::ExtType(b"turtl/op/v1".to_vec().into())).unwrap();
         assert_eq!(
-            conextprefix.test(&Context::ExtContextPrefix(KeyValEntry::new(
-                Vec::from("department".as_bytes()).into(),
-                Vec::from("inventory/".as_bytes()).into(),
-            ))),
+            typeprefix.test(&Context::ExtType(b"turtl/checkpoint/v1".to_vec().into())),
+            Err(Error::PolicyContextMismatch),
+        );
+        assert_eq!(
+            typeprefix.test(&Context::ExtType(b"/turtl/op/v1".to_vec().into())),
+            Err(Error::PolicyContextMismatch),
+        );
+        assert_eq!(
+            typeprefix.test(&Context::ExtTypePrefix(b"turtl/op/v1".to_vec().into())),
+            Err(Error::PolicyContextMismatch),
+        );
+
+        let conextprefix = Context::ExtContextPrefix {
+            key: Vec::from("department".as_bytes()).into(),
+            val: Vec::from("inventory/".as_bytes()).into(),
+        };
+        conextprefix.test(&Context::ExtContext {
+            key: Vec::from("department".as_bytes()).into(),
+            val: Vec::from("inventory/".as_bytes()).into(),
+        }).unwrap();
+        conextprefix.test(&Context::ExtContext {
+            key: Vec::from("department".as_bytes()).into(),
+            val: Vec::from("inventory/orders".as_bytes()).into(),
+        }).unwrap();
+        conextprefix.test(&Context::ExtContext {
+            key: Vec::from("department".as_bytes()).into(),
+            val: Vec::from("inventory/widgets/incoming".as_bytes()).into(),
+        }).unwrap();
+        assert_eq!(
+            conextprefix.test(&Context::ExtContextPrefix {
+                key: Vec::from("department".as_bytes()).into(),
+                val: Vec::from("inventory/".as_bytes()).into(),
+            }),
             Err(Error::PolicyContextMismatch)
         );
         assert_eq!(
-            conextprefix.test(&Context::ExtContext(KeyValEntry::new(
-                Vec::from("repartment".as_bytes()).into(),
-                Vec::from("inventory/".as_bytes()).into(),
-            ))),
+            conextprefix.test(&Context::ExtContext {
+                key: Vec::from("repartment".as_bytes()).into(),
+                val: Vec::from("inventory/".as_bytes()).into(),
+            }),
             Err(Error::PolicyContextMismatch)
         );
         assert_eq!(
-            conextprefix.test(&Context::ExtContext(KeyValEntry::new(
-                Vec::from("department".as_bytes()).into(),
-                Vec::from("zing/".as_bytes()).into(),
-            ))),
+            conextprefix.test(&Context::ExtContext {
+                key: Vec::from("department".as_bytes()).into(),
+                val: Vec::from("zing/".as_bytes()).into(),
+            }),
             Err(Error::PolicyContextMismatch)
         );
 
@@ -1172,28 +1218,28 @@ mod tests {
             body_type: TransactionBodyType::ExtV1,
             context: Context::Any(vec![
                 Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
-                Context::ExtContext(KeyValEntry::new(
-                    Vec::from("department".as_bytes()).into(),
-                    Vec::from("inventory".as_bytes()).into(),
-                )),
-                Context::ExtContext(KeyValEntry::new(
-                    Vec::from("budget".as_bytes()).into(),
-                    Vec::from("production/inventory/widgets".as_bytes()).into(),
-                )),
+                Context::ExtContext {
+                    key: Vec::from("department".as_bytes()).into(),
+                    val: Vec::from("inventory".as_bytes()).into(),
+                },
+                Context::ExtContext {
+                    key: Vec::from("budget".as_bytes()).into(),
+                    val: Vec::from("production/inventory/widgets".as_bytes()).into(),
+                },
             ]),
         };
         let testcap3 = Capability::Transaction {
             body_type: TransactionBodyType::ExtV1,
             context: Context::Any(vec![
                 Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
-                Context::ExtContext(KeyValEntry::new(
-                    Vec::from("department".as_bytes()).into(),
-                    Vec::from("inventory".as_bytes()).into(),
-                )),
-                Context::ExtContext(KeyValEntry::new(
-                    Vec::from("budget".as_bytes()).into(),
-                    Vec::from("current/not-the-capital-account".as_bytes()).into(), // thank you, we do our best
-                )),
+                Context::ExtContext {
+                    key: Vec::from("department".as_bytes()).into(),
+                    val: Vec::from("inventory".as_bytes()).into(),
+                },
+                Context::ExtContext {
+                    key: Vec::from("budget".as_bytes()).into(),
+                    val: Vec::from("current/not-the-capital-account".as_bytes()).into(), // thank you, we do our best
+                },
             ]),
         };
         let capabilities4 = vec![
@@ -1201,14 +1247,14 @@ mod tests {
                 body_type: TransactionBodyType::ExtV1,
                 context: Context::All(vec![
                     Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
-                    Context::ExtContext(KeyValEntry::new(
-                        Vec::from("department".as_bytes()).into(),
-                        Vec::from("inventory".as_bytes()).into(),
-                    )),
-                    Context::ExtContextPrefix(KeyValEntry::new(
-                        Vec::from("budget".as_bytes()).into(),
-                        Vec::from("production/inventory/".as_bytes()).into(),
-                    )),
+                    Context::ExtContext {
+                        key: Vec::from("department".as_bytes()).into(),
+                        val: Vec::from("inventory".as_bytes()).into(),
+                    },
+                    Context::ExtContextPrefix {
+                        key: Vec::from("budget".as_bytes()).into(),
+                        val: Vec::from("production/inventory/".as_bytes()).into(),
+                    },
                 ]),
             },
         ];
