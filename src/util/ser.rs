@@ -7,12 +7,16 @@
 //! readily supported by rust, we kind of have to take things into our own hands
 //! here and just make some serialization calls.
 
+use core::hash::Hash;
 use crate::{
     error::{Error, Result},
     util::Public,
 };
 use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag};
 use serde::{Serialize, Deserialize, ser::Serializer, de::Deserializer};
+use std::collections::HashMap;
+use std::convert::From;
+use std::ops::{Deref, DerefMut};
 use zeroize::Zeroize;
 
 pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
@@ -103,7 +107,7 @@ impl<const N: usize> Binary<N> {
 
 impl_asn1_binary! { Binary }
 
-impl<const N: usize> std::ops::Deref for Binary<N> {
+impl<const N: usize> Deref for Binary<N> {
     type Target = [u8; N];
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -178,29 +182,29 @@ impl<'de, const N: usize> serde::Deserialize<'de> for BinarySecret<N> {
 }
 
 /// Defines a container for variable-length binary data in octet form.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BinaryVec(Vec<u8>);
 
-impl std::convert::From<Vec<u8>> for BinaryVec {
+impl From<Vec<u8>> for BinaryVec {
     fn from(vec: Vec<u8>) -> Self {
         Self(vec)
     }
 }
 
-impl std::convert::From<BinaryVec> for Vec<u8> {
+impl From<BinaryVec> for Vec<u8> {
     fn from(binary: BinaryVec) -> Self {
         let BinaryVec(inner) = binary;
         inner
     }
 }
 
-impl std::ops::Deref for BinaryVec {
+impl Deref for BinaryVec {
     type Target = Vec<u8>;
     fn deref(&self) -> &Self::Target { &self.0 }
 }
 
 #[cfg(test)]
-impl std::ops::DerefMut for BinaryVec {
+impl DerefMut for BinaryVec {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
 }
 
@@ -241,8 +245,7 @@ impl<'de> serde::Deserialize<'de> for BinaryVec {
 /// Mainly useful for representing hash-table-esque data in places where hash
 /// tables are not supported (*cough* ASN1).
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct KeyValEntry<K, V> {
+struct KeyValEntry< K, V> {
     /// The key
     #[rasn(tag(explicit(0)))]
     key: K,
@@ -258,40 +261,80 @@ impl<K, V> KeyValEntry<K, V> {
     }
 }
 
-/// A key/value store that can be serialized as an ASN1 "map."
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
-pub struct KeyValStore<K, V>(Vec<KeyValEntry<K, V>>);
+/// Wraps a [HashMap] in a way that allows for ASN1 (de)serialization.
+#[derive(Clone, Debug)]
+pub struct HashMapAsn1<K, V>(HashMap<K, V>);
 
-impl<K: PartialEq, V> KeyValStore<K, V> {
-    /// Get a value out of this kv store by key.
-    pub fn get(&self, key: &K) -> Option<&V> {
-        self.0.iter()
-            .rev()
-            .find(|x| x.key() == key)
-            .map(|x| x.val())
-    }
-}
-
-impl<K, V> std::ops::Deref for KeyValStore<K, V> {
-    type Target = Vec<KeyValEntry<K, V>>;
+impl<K, V> Deref for HashMapAsn1<K, V> {
+    type Target = HashMap<K, V>;
     fn deref(&self) -> &Self::Target { &self.0 }
 }
 
-impl<const N: usize> std::convert::From<[(&[u8], &[u8]); N]> for KeyValStore<BinaryVec, BinaryVec> {
-    fn from(map: [(&[u8], &[u8]); N]) -> Self {
-        let kv = map.into_iter()
-            .map(|(key, val)| KeyValEntry::new(BinaryVec::from(Vec::from(key)), BinaryVec::from(Vec::from(val))))
-            .collect::<Vec<_>>();
-        Self(kv)
+impl<K, V> DerefMut for HashMapAsn1<K, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+
+impl<K, V> From<HashMap<K, V>> for HashMapAsn1<K, V> {
+    fn from(map: HashMap<K, V>) -> Self {
+        Self(map)
     }
 }
 
-impl<const N: usize> std::convert::From<[(&str, &str); N]> for KeyValStore<BinaryVec, BinaryVec> {
-    fn from(map: [(&str, &str); N]) -> Self {
-        let kv = map.into_iter()
-            .map(|(key, val)| KeyValEntry::new(BinaryVec::from(Vec::from(key.as_bytes())), BinaryVec::from(Vec::from(val.as_bytes()))))
+impl<K: AsnType, V: AsnType> AsnType for HashMapAsn1<K, V> {
+    const TAG: Tag = Tag::SEQUENCE;
+}
+
+impl<K: Encode, V: Encode> Encode for HashMapAsn1<K, V> {
+    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+        let entries = self.iter()
+            .map(|(k, v)| KeyValEntry::new(k, v))
             .collect::<Vec<_>>();
-        Self(kv)
+        encoder.encode_sequence_of(tag, &entries[..], constraints)?;
+        Ok(())
+    }
+}
+
+impl<K: Decode + Eq + Hash, V: Decode> Decode for HashMapAsn1<K, V> {
+    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+        let vec: Vec<KeyValEntry<K, V>> = decoder.decode_sequence_of(tag, constraints)?;
+        let mut map = HashMap::with_capacity(vec.len());
+        for KeyValEntry { key, val } in vec {
+            map.insert(key, val);
+        }
+        Ok(Self(map))
+    }
+}
+
+impl<K: Serialize, V: Serialize> Serialize for HashMapAsn1<K, V> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de, K: Deserialize<'de> + Eq + Hash, V: Deserialize<'de>> serde::Deserialize<'de> for HashMapAsn1<K, V> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let map = HashMap::<K, V>::deserialize(deserializer)?;
+        Ok(Self(map))
+    }
+}
+
+impl<const N: usize> From<[(&[u8], &[u8]); N]> for HashMapAsn1<BinaryVec, BinaryVec> {
+    fn from(map: [(&[u8], &[u8]); N]) -> Self {
+        let mut hash = HashMap::with_capacity(N);
+        for (key, val) in map.into_iter() {
+            hash.insert(BinaryVec::from(Vec::from(key)), BinaryVec::from(Vec::from(val)));
+        }
+        Self(hash)
+    }
+}
+
+impl<const N: usize> From<[(&str, &str); N]> for HashMapAsn1<BinaryVec, BinaryVec> {
+    fn from(map: [(&str, &str); N]) -> Self {
+        let mut hash = HashMap::with_capacity(N);
+        for (key, val) in map.into_iter() {
+            hash.insert(BinaryVec::from(Vec::from(key.as_bytes())), BinaryVec::from(Vec::from(val.as_bytes())));
+        }
+        Self(hash)
     }
 }
 
@@ -318,7 +361,7 @@ pub(crate) mod timestamp {
             chrono::DateTime::deserialize(deserializer)
         } else {
             let naive = chrono::naive::serde::ts_nanoseconds::deserialize(deserializer)?;
-            Ok(DateTime::<Utc>::from_utc(naive, Utc))
+            Ok(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
         }
     }
 }
@@ -384,6 +427,11 @@ mod tests {
         assert_eq!(id5, id5_2);
     }
 
+    // This should remain disabled until https://github.com/XAMPPRocky/rasn/issues/165 is fixed.
+    //
+    // In fact, it might make sense to just take the hit on the extra handful of bytes that
+    // explicit tagging uses and move on. Still undecided though, for now.
+    /*
     #[test]
     fn ser_vec_enum_implicit_tag() {
         #[derive(Debug, Clone, AsnType, Encode, Decode)]
@@ -406,5 +454,6 @@ mod tests {
         let transactions1_2: Vec<MultisigPolicySignature> = rasn::der::decode(&ser1[..]).unwrap();
         assert_eq!(transactions1_2.len(), 1);
     }
+    */
 }
 
