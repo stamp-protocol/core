@@ -79,7 +79,7 @@ pub struct Dag {
 
 impl Dag {
     /// Takes a flat list of transactions and returns a set of DAGs that model those transactions.
-    pub fn from_transactions(transactions: &Vec<Transaction>) -> Result<Dag> {
+    pub fn from_transactions(transactions: &Vec<Transaction>) -> Dag {
         // create our DAG object.
         let mut dag = Dag::default();
 
@@ -129,7 +129,7 @@ impl Dag {
         dag.visited = visited;
         dag.missing = missing_transactions;
         dag.tail = tail_nodes;
-        Ok(dag)
+        dag
     }
 
     /// Walk the DAG, starting from the head, and running a function on each node in-order.
@@ -375,7 +375,7 @@ mod tests {
               [A, B] <- [C],
               [C] <- [D],
               [D] <- [E],
-              [E, G] <- [F],
+              [E] <- [F, G],
           ],
           []
         };
@@ -397,8 +397,8 @@ mod tests {
             }
         }
         println!("---");
-        let _dag = Dag::from_transactions(&transaction_list).unwrap();
-        //println!("{:?}", dags);
+        let dag = Dag::from_transactions(&transaction_list);
+        println!("{:?}", dag);
     }
 
     // given the same set of transactions *but in a different order* the exact same DAG
