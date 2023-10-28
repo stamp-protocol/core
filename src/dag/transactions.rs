@@ -730,21 +730,9 @@ mod tests {
         },
         policy::{Capability, Context, MultisigPolicy, MultisigPolicySignature, Policy, PolicyContainer, TransactionBodyType},
         private::{PrivateWithMac, MaybePrivate},
-        util::{Date, Url, ser::BinaryVec, test},
+        util::{Date, Url, ser::BinaryVec, test::{self, sign_and_push}},
     };
     use std::str::FromStr;
-
-    macro_rules! sign_and_push {
-        ($master_key:expr, $admin_key:expr, $transactions:expr, $([ $fn:ident, $($args:expr),* ])*) => {{
-            let mut trans_tmp = $transactions;
-            $(
-                let trans = trans_tmp.$fn(&HashAlgo::Blake2b256, $($args),*).unwrap();
-                let trans_signed = trans.sign($master_key, $admin_key).unwrap();
-                trans_tmp = trans_tmp.push_transaction(trans_signed).unwrap();
-            )*
-            trans_tmp
-        }};
-    }
 
     fn genesis_time(now: Timestamp) -> (SecretKey, Transactions, AdminKey) {
         test::create_fake_identity(now)

@@ -617,7 +617,7 @@ impl Transaction {
         macro_rules! search_capabilities {
             ($identity:expr) => {
                 let mut found_match = false;
-                let contexts = Context::contexts_from_transaction(self, $identity);
+                let contexts = Context::contexts_from_transaction_body(self.entry().body(), $identity);
                 for policy in $identity.policies() {
                     if policy.validate_transaction(self, &contexts).is_ok() {
                         found_match = true;
@@ -1224,45 +1224,18 @@ mod tests {
         }
     }
 
-    /*
-    #[test]
-    fn trans_deser_edit_claim_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_delete_claim_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_make_stamp_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_revoke_stamp_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_accept_stamp_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_delete_stamp_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_add_subkey_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_edit_subkey_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_revoke_subkey_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_delete_subkey_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_publish_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_sign_v1() { unimplemented!(); }
-
-    #[test]
-    fn trans_deser_ext_v1() { unimplemented!(); }
-    */
+    #[ignore] #[test] fn trans_deser_edit_claim_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_delete_claim_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_make_stamp_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_revoke_stamp_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_accept_stamp_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_delete_stamp_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_add_subkey_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_edit_subkey_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_revoke_subkey_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_delete_subkey_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_publish_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_sign_v1() { todo!(); }
+    #[ignore] #[test] fn trans_deser_ext_v1() { todo!(); }
 }
 

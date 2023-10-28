@@ -283,9 +283,9 @@ pub enum Context {
 
 impl Context {
     /// Takes a transaction and returns all the contexts it covers.
-    pub(crate) fn contexts_from_transaction(transaction: &Transaction, identity: &Identity) -> Vec<Self> {
+    pub(crate) fn contexts_from_transaction_body(transaction_body: &TransactionBody, identity: &Identity) -> Vec<Self> {
         let mut contexts = Vec::new();
-        match transaction.entry().body() {
+        match transaction_body {
             TransactionBody::CreateIdentityV1 { .. } => {}
             TransactionBody::ResetIdentityV1 { .. } => {}
             TransactionBody::AddAdminKeyV1 { admin_key } => {
@@ -777,7 +777,7 @@ mod tests {
         crypto::base::{HashAlgo, SecretKey},
         identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
         private::MaybePrivate,
-        util::{self, Timestamp, Url},
+        util::{self, Timestamp, Url, test::sign_and_push},
     };
 
     #[test]
@@ -1297,7 +1297,7 @@ mod tests {
             ClaimSpec::Url(MaybePrivate::new_public(Url::parse("http://timmy.com").unwrap())),
             Some("primary-url"),
         ).unwrap();
-        let contexts = Context::contexts_from_transaction(&transaction1, &identity);
+        let contexts = Context::contexts_from_transaction_body(transaction1.entry().body(), &identity);
 
         assert_eq!(
             policy.validate_transaction(&transaction1, &contexts),
@@ -1332,8 +1332,116 @@ mod tests {
     }
 
     #[test]
-    fn contexts_from_transaction() {
-        todo!("Need comprehensive tests for contexts_from_transaction()");
+    fn contexts_from_transaction_body_create_identity_v1() {
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(Timestamp::now());
+        let identity = transactions.build_identity().unwrap();
+        assert_eq!(
+            Context::contexts_from_transaction_body(
+                transactions.transactions()[0].entry().body(),
+                &identity,
+            ),
+            vec![],
+        );
     }
+
+    #[test]
+    fn contexts_from_transaction_body_reset_identity_v1() {
+        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(Timestamp::now());
+        let policies = match transactions.transactions()[0].entry().body() {
+            TransactionBody::CreateIdentityV1 { policies, .. } => policies.clone(),
+            _ => panic!("how strange"),
+        };
+        let transactions = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+            [ reset_identity, Timestamp::now(), Some(vec![admin_key.clone()]), Some(policies.clone()) ]
+        };
+        let identity = transactions.build_identity().unwrap();
+        assert_eq!(
+            Context::contexts_from_transaction_body(
+                transactions.transactions()[1].entry().body(),
+                &identity,
+            ),
+            vec![],
+        );
+    }
+
+    #[test]
+    fn contexts_from_transaction_body_add_admin_key_v1() {
+        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(Timestamp::now());
+        let admin_keypair2 = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let admin_key2 = AdminKey::new(admin_keypair2, "Alpha", None);
+        let transactions = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+            [ add_admin_key, Timestamp::now(), admin_key2.clone() ]
+        };
+        let identity = transactions.build_identity().unwrap();
+        assert_eq!(
+            Context::contexts_from_transaction_body(
+                transactions.transactions()[1].entry().body(),
+                &identity,
+            ),
+            vec![
+                Context::AdminKeyID(admin_key2.key_id()),
+                Context::KeyID(admin_key2.key_id().into()),
+                Context::Name(admin_key2.name().clone()),
+            ],
+        );
+    }
+
+    #[test]
+    fn contexts_from_transaction_body_edit_admin_key_v1() {
+        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(Timestamp::now());
+        let admin_keypair2 = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let admin_key2 = AdminKey::new(admin_keypair2, "turtl/manager", None);
+        let transactions = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+            [ add_admin_key, Timestamp::now(), admin_key2.clone() ]
+        };
+        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+            [ edit_admin_key, Timestamp::now(), admin_key2.key_id(), Some("turtl/manage".to_string()), None ]
+        };
+        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+            [ edit_admin_key, Timestamp::now(), admin_key2.key_id(), None, Some(Some("management key".to_string())) ]
+        };
+        let identity2 = transactions2.build_identity().unwrap();
+        let identity3 = transactions3.build_identity().unwrap();
+        assert_eq!(
+            Context::contexts_from_transaction_body(
+                transactions2.transactions()[2].entry().body(),
+                &identity2,
+            ),
+            vec![
+                Context::Name("turtl/manage".to_string()),
+                Context::AdminKeyID(admin_key2.key_id()),
+                Context::KeyID(admin_key2.key_id().into()),
+            ],
+        );
+        assert_eq!(
+            Context::contexts_from_transaction_body(
+                transactions3.transactions()[2].entry().body(),
+                &identity3,
+            ),
+            vec![
+                Context::Name("turtl/manager".to_string()),
+                Context::AdminKeyID(admin_key2.key_id()),
+                Context::KeyID(admin_key2.key_id().into()),
+            ],
+        );
+    }
+
+    #[ignore] #[test] fn contexts_from_transaction_body_revoke_admin_key_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_add_policy_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_delete_policy_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_make_claim_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_edit_claim_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_delete_claim_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_make_stamp_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_revoke_stamp_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_accept_stamp_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_delete_stamp_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_add_subkey_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_edit_subkey_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_revoke_subkey_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_delete_subkey_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_publish_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_sign_v1() { todo!(); }
+    #[ignore] #[test] fn contexts_from_transaction_body_ext_v1() { todo!(); }
 }
 

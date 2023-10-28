@@ -651,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    fn dag_walk_transaction_order() {
+    fn dag_from_transactions_walk_transaction_order() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
         let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity_deterministic(now, b"Hi I'm Butch");
         #[allow(non_snake_case, unused_mut)]
@@ -676,6 +676,10 @@ mod tests {
            []
         };
         let dag = Dag::from_transactions(&transaction_list);
+        assert_eq!(
+            dag.visited().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["E", "A", "F", "G", "B", "C", "D", "H"],
+        );
         let mut visited = Vec::new();
         dag.walk(|node, _ancestry, _anc_idx| {
             visited.push(node.transaction().id().clone());
@@ -688,13 +692,56 @@ mod tests {
     }
 
     #[test]
-    fn dag_from_transactions_walk_order_timestamp_tid() {
-        todo!("set the same timestamp on some sibling transactions and verify the order in the DAG");
-    }
-
-    #[test]
     fn dag_from_transactions_walk_complex_branch() {
-        todo!("set up a very branchy dag with many nodes and verify the order");
+        let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity_deterministic(now, b"Hi I'm Butch");
+        #[allow(non_snake_case, unused_mut)]
+        let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
+           transactions,
+           [A(0), B(20), C(10), D(30), E(0), F(15), G(16), H(5), I(6), J(2), K(22), L(30), M(20), N(20), O(0), P(13), Q(24)],
+           [
+               [A] <- [B],
+               [B] <- [C, D, E],
+               [A, C] <- [F, G],
+               [D] <- [H, I],
+               [E] <- [J],
+               [H, I, J] <- [K],
+               [F] <- [L],
+               [G, K, L] <- [M],
+               [M, L] <- [N],
+               [M] <- [O],
+               [N] <- [P],
+               [P] <- [Q],
+           ],
+           []
+        };
+        let dag = Dag::from_transactions(&transaction_list);
+        assert_eq!(
+            dag.head().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["A"],
+        );
+        assert_eq!(
+            dag.tail().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["O", "Q"],
+        );
+        assert_eq!(
+            dag.visited().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["A", "B", "E", "J", "C", "F", "G", "D", "H", "I", "K", "L", "M", "O", "N", "P", "Q"],
+        );
+        assert_eq!(
+            dag.unvisited().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            Vec::<&'static str>::new(),
+        );
+        assert_eq!(dag.missing.len(), 0);
+        let mut visited = Vec::new();
+        dag.walk(|node, _, _| {
+            visited.push(node.transaction().id().clone());
+            Ok(())
+        }).unwrap();
+        assert_eq!(
+            visited.iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["A", "B", "E", "J", "C", "F", "G", "D", "H", "I", "K", "L", "M", "O", "N", "P", "Q"],
+        )
     }
 }
 

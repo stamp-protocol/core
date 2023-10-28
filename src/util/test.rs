@@ -86,6 +86,19 @@ pub(crate) fn generate_combinations<T: Clone>(vals: &Vec<T>) -> Vec<Vec<T>> {
     out
 }
 
+macro_rules! sign_and_push {
+    ($master_key:expr, $admin_key:expr, $transactions:expr, $([ $fn:ident, $($args:expr),* ])*) => {{
+        let mut trans_tmp = $transactions;
+        $(
+            let trans = trans_tmp.$fn(&crate::crypto::base::HashAlgo::Blake2b256, $($args),*).unwrap();
+            let trans_signed = trans.sign($master_key, $admin_key).unwrap();
+            trans_tmp = trans_tmp.push_transaction(trans_signed).unwrap();
+        )*
+        trans_tmp
+    }};
+}
+pub(crate) use sign_and_push;
+
 macro_rules! make_dag_chain {
     (
         $transactions:expr,
