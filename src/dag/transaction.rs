@@ -450,6 +450,18 @@ impl std::fmt::Display for TransactionID {
     }
 }
 
+impl std::cmp::PartialOrd for TransactionID {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.deref().as_bytes().partial_cmp(other.deref().as_bytes())
+    }
+}
+
+impl std::cmp::Ord for TransactionID {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.deref().as_bytes().cmp(other.deref().as_bytes())
+    }
+}
+
 #[cfg(test)]
 impl TransactionID {
     pub(crate) fn random() -> Self {
@@ -644,7 +656,7 @@ impl Transaction {
                         search_capabilities! { &identity }
                         Ok(())
                     }
-                    _ => Err(Error::DagNoGenesis)?,
+                    _ => Err(Error::DagGenesisError)?,
                 }
             }
         }

@@ -24,38 +24,39 @@ pub use crate::{
         },
     },
     error::{Error, Result},
+    util::Timestamp,
 };
 use getset::{Getters, MutGetters};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Defines a node in a DAG. Each node can have multiple previous nodes and multiple next nodes.
 /// It's crazy out here.
-#[derive(Clone, Debug, PartialEq, Getters, MutGetters)]
+#[derive(Clone, Debug, Getters, MutGetters)]
 #[getset(get = "pub", get_mut = "pub(crate)")]
-pub struct DagNode {
+pub struct DagNode<'a> {
     /// The nodes that came before this one
-    prev: Vec<TransactionID>,
+    prev: Vec<&'a TransactionID>,
     /// The nodes that come after this one
-    next: Vec<TransactionID>,
+    next: Vec<&'a TransactionID>,
     /// The transaction this node points to.
-    transaction_id: TransactionID,
+    transaction: &'a Transaction,
 }
 
-impl DagNode {
-    fn new_with_prev(transaction_id: TransactionID, prev: Vec<TransactionID>) -> Self {
+impl<'a> DagNode<'a> {
+    fn new_with_prev(transaction: &'a Transaction, prev: Vec<&'a TransactionID>) -> Self {
         Self {
             prev,
             next: Vec::new(),
-            transaction_id,
+            transaction,
         }
     }
 }
 
 /// Allows modeling a DAG (directed acyclic graph) using a linked list-ish structure that can be
 /// traversed both forward and back.
-#[derive(Clone, Debug, Default, PartialEq, Getters, MutGetters)]
+#[derive(Clone, Debug, Default, Getters, MutGetters)]
 #[getset(get = "pub", get_mut = "pub(crate)")]
-pub struct Dag {
+pub struct Dag<'a> {
     /// The head/start of the DAG. Can be multiple nodes because technically we can start with
     /// "conflicting" branches. In the case of Stamp DAGs, this is not true: we must have *one
     /// single start transaction* (the genesis) and this will be enforced. However, for other DAGs
@@ -65,19 +66,26 @@ pub struct Dag {
     /// The tail/end of our DAG. This is any transactions that are not listed in some known
     /// transaction's `previous_transactions` list.
     tail: Vec<TransactionID>,
-    /// Holds an index of transaction IDs to internal DAG nodes
-    index: HashMap<TransactionID, DagNode>,
-    /// Transactions that we processed while walking the DAG. If this has less transactions in it
-    /// than the `index` then it means we have a broken chain and/or a circular reference
-    /// somewhere. In a healthy DAG, `visited` and `index` will have the same number of entries.
-    visited: HashSet<TransactionID>,
+    /// Holds an index of transaction IDs to internal DAG nodes. This is useful because instead of
+    /// DAG nodes referencing each other directly and having to have Box<Blah> everywhere, we just
+    /// store the IDs and put the nodes in one single lookup table.
+    index: HashMap<TransactionID, DagNode<'a>>,
+    /// Transactions that we processed while walking the DAG, in the order they were processed.
+    /// If this has less transactions in it than the `index` then it means we have a broken chain
+    /// and/or a circular reference somewhere. In a healthy DAG, `visited` and `index` will have
+    /// the same number of entries.
+    visited: Vec<TransactionID>,
+    /// Transactions that were not processed while creating the DAG. This is generally because of
+    /// missing links or missing transactions in the chain. This will be mutually exclusive from
+    /// `missing`, so to get *all unprocessed transactions* you would combine the sets.
+    unvisited: HashSet<TransactionID>,
     /// Transactions that we don't have in our `index` but were referenced while building the DAG.
     /// These generally represent transactions that we are waiting to sync on and are "breaking the
     /// chain" so to speak.
     missing: HashSet<TransactionID>,
 }
 
-impl Dag {
+impl<'a> Dag<'a> {
     /// Takes a flat list of transactions and returns a set of DAGs that model those transactions.
     pub fn from_transactions(transactions: &Vec<Transaction>) -> Dag {
         // create our DAG object.
@@ -85,25 +93,38 @@ impl Dag {
 
         // index our transactions into the DAG.
         for trans in transactions {
-            dag.index_mut().insert(trans.id().clone(), DagNode::new_with_prev(trans.id().clone(), trans.entry().previous_transactions().clone()));
+            dag.index_mut().insert(trans.id().clone(), DagNode::new_with_prev(trans, trans.entry().previous_transactions().iter().collect::<Vec<_>>()));
         }
 
         // holds locations at which our chain breaks, ie we reference a transaction that cannot be
         // found. this helps us split up our DAGs later on.
         let mut missing_transactions = HashSet::new();
 
+        // stores transactions we encounter that have no previous transactions (ie, they start the
+        // DAG). we make a separate container instead of pushing directly into `dag.head` because
+        // we need to also push in the transaction's timestamp, which dag.head doesn't care about.
+        // we do this so we can sort by timestamp before processing the dag, with the goal of
+        // getting deterministic outputs in our final DAG object regardless of the order of
+        // transactions passed in.
+        let mut head_transactions = Vec::new();
+
+        // this is a temporary index that stores &TransactionID -> &Timestamp lookups, allowing us
+        // to iterate and sort the `next` elements for each DAG node.
+        let mut trans_created_idx = HashMap::with_capacity(transactions.len());
+
         // now loop over our transactions again and update our .next[] references.
         // after this, we'll have both forward and backward links for all available transactions.
         for trans in transactions {
+            trans_created_idx.insert(trans.id(), trans.entry().created().timestamp_millis());
             let prev = trans.entry().previous_transactions();
             if prev.len() == 0 {
                 // cool, we found a head node. track it.
-                dag.head_mut().push(trans.id().clone());
+                head_transactions.push((trans.entry().created(), trans.id().clone()));
             } else {
                 for prev_id in prev {
                     match dag.index_mut().get_mut(&prev_id) {
                         Some(previous_node) => {
-                            previous_node.next_mut().push(trans.id().clone());
+                            previous_node.next_mut().push(trans.id());
                         }
                         None => {
                             // we're referencing a node we cannot find. this means we have a break in
@@ -115,24 +136,54 @@ impl Dag {
             }
         }
 
+        // now, for each DAG node, sort its `prev` and `next` nodes by (timestamp ASC, transction_id
+        // ASC). this gives us detemrinistic ordering in our DAG.
+        for (_, node) in dag.index_mut() {
+            node.prev_mut().sort_unstable_by_key(|tid| {
+                let created = trans_created_idx.get(tid).map(|x| x.clone()).unwrap_or(i64::MAX);
+                (created, tid.clone())
+            });
+            node.next_mut().sort_unstable_by_key(|tid| {
+                let created = trans_created_idx.get(tid).map(|x| x.clone()).unwrap_or(i64::MAX);
+                (created, tid.clone())
+            });
+        }
+
+        // sort our head transactions by create time ASC, transaction id ASC, then store the sorted
+        // transaction IDs into `dag.head`. this makes walking the DAG deterministic.
+        head_transactions.sort_unstable();
+        *dag.head_mut() = head_transactions.into_iter()
+            .map(|(_, tid)| tid)
+            .collect::<Vec<_>>();
+
         // walk our dag and look for tail nodes and problems (missing nodes, circular links, etc)
         let mut tail_nodes = Vec::new();
-        let (visited, missing) = dag.walk(|node, ancestry| {
-            println!("- walk: {} -- {:?}", node.transaction_id(), ancestry);
+        // NOTE: we unwrap() here because we know for a fact that this walk() always returns Ok().
+        // if this changes in the future, *please* update the logic accordingly, possibly wrapping
+        // `from_transactions()` in a Result...
+        let (visited, missing) = dag.walk(|node, _ancestry, _ancestry_idx| {
             if node.next().len() == 0 {
-                tail_nodes.push(node.transaction_id().clone());
+                tail_nodes.push(node.transaction().id().clone());
             }
-        });
+            Ok(())
+        }).unwrap();
         for entry in missing {
             missing_transactions.insert(entry);
         }
         dag.visited = visited;
+        dag.unvisited = dag.find_unvisited();
         dag.missing = missing_transactions;
         dag.tail = tail_nodes;
         dag
     }
 
     /// Walk the DAG, starting from the head, and running a function on each node in-order.
+    ///
+    /// In-order here means we follow causal order, but between branches of the DAG nodes, we sort
+    /// by (timestamp ASC, transaction id ASC). This gives us consistent ordering that preserves
+    /// the causal chain, but where we cannot order via the DAG chain we rely on timestamp instead,
+    /// and in the case of timestamp conflict, we run the transaction ID with the lower sort order
+    /// first.
     ///
     /// If we hit a merge, we don't continue past the merge of the branches until each of the
     /// branches has run. This also tracks branches and merges via a numeric value assigned to each
@@ -156,146 +207,155 @@ impl Dag {
     /// - Known nodes visited during the walk
     /// - Nodes referenced by some visited node that don't exist in the DAG (missing nodes)
     ///
-    /// And so these are the things we return. In that order.
-    pub fn walk<F>(&self, opfn: F) -> (HashSet<TransactionID>, HashSet<TransactionID>)
-        where F: FnMut(&DagNode, &Vec<u32>),
+    /// And so these are the things we return. In that order. As a tuple.
+    pub fn walk<F>(&self, mut opfn: F) -> Result<(Vec<TransactionID>, HashSet<TransactionID>)>
+        where F: FnMut(&DagNode, &Vec<u32>, &HashMap<TransactionID, Vec<u32>>) -> Result<()>,
     {
-        /// A state object to help us track our DAG walk
-        struct WalkState<'a, F> {
-            cur_branch: u32,
-            index: &'a HashMap<TransactionID, DagNode>,
-            visited: HashSet<TransactionID>,
-            missing_transactions: HashSet<TransactionID>,
-            branch_tracker: HashMap<&'a TransactionID, Vec<u32>>,
-            opfn: F,
-        }
+        // the nodes we have visited *in the order we visited them*
+        let mut visited = Vec::with_capacity(self.index().len());
+        // the nodes we have visited in a format that allows for quick lookups
+        let mut visited_set: HashSet<TransactionID> = HashSet::with_capacity(self.index().len());
+        // transactions we've come across that were referenced by id but could not be found in the
+        // index
+        let mut missing_transactions: HashSet<TransactionID> = Default::default();
+        // our main ordering mechanism. when processing a transaction, we push the next
+        // transactions into this ordered set. when done, we pop the first transaction off the set
+        // and loop again. this effectively allows sorting by causal order BUT with the benefit
+        // that pending transactions are ordered by timestamp/transaction ID as well.
+        let mut pending_transactions: BTreeSet<(Timestamp, TransactionID)> = Default::default();
+        // this tracks the current branch number, user to catalog branches/merges and ancestry.
+        let mut cur_branch: u32 = 0;
+        // this assigns an ancestry (aka Vec<Branch>) to each node.
+        //
+        // it's important to note that nodes are assigned ancestry in a feed-forward way: the
+        // current node being processed assigns the ancestry for the node(s) that come after it!
+        let mut branch_tracker: HashMap<TransactionID, Vec<u32>> = HashMap::new();
 
-        impl<'a, F> WalkState<'a, F>
-            where F: FnMut(&'a DagNode, &Vec<u32>),
-        {
-            /// Create a new state.
-            fn new(index: &'a HashMap<TransactionID, DagNode>, opfn: F) -> Self {
-                WalkState {
-                    cur_branch: 0,
-                    index,
-                    visited: Default::default(),
-                    missing_transactions: Default::default(),
-                    branch_tracker: Default::default(),
-                    opfn,
-                }
-            }
+        // a helper function to grab the current branch id and increment the counter.
+        let mut next_branch = || {
+            let prev = cur_branch;
+            cur_branch += 1;
+            prev
+        };
 
-            /// Increments our branch number and returns the original.
-            fn next_branch(&mut self) -> u32 {
-                let branch_num = self.cur_branch;
-                // add one to cur_branch
-                self.cur_branch += 1;
-                branch_num
-            }
-
-            /// Helps us merge branches into one transaction, tracking our ancestors as we go.
-            fn merge_branch(&mut self, mut ancestors: Vec<u32>, transaction_id: &TransactionID) -> Vec<u32> {
-                if let Some(prev_ancestors) = self.branch_tracker.remove(transaction_id) {
-                    for ancestor in prev_ancestors {
-                        ancestors.push(ancestor);
-                    }
-                }
-                ancestors.push(self.next_branch());
-                ancestors.sort();
-                ancestors.dedup();
-                ancestors
-            }
-
-            /// This recursive function does all our dirty work. Such a dirty boy.
-            ///
-            /// This walks the DAG, following branches it finds until a merge, at which point it
-            /// waits for all the other branches going into that merge to be run before continuing.
-            /// In effect, this runs our `opfn()` function for each transaction branch in order.
-            fn visit(&mut self, transaction_id: &'a TransactionID, ancestry: &Vec<u32>) {
-                // find the DagNode associated with this transaction ID. if we don't have one, mark
-                // it as missing and move on with life.
-                let node = match self.index.get(transaction_id) {
-                    Some(node) => node,
+        // a helper macro to keep me from getting carpal tunnel. effectively looks in the main
+        // index for a transaction and if found, runs the given block, otherwise pushes the
+        // transaction ID into the missing transactions list.
+        macro_rules! with_trans {
+            ($id:expr, $node:ident, $run:block) => {{
+                match self.index().get($id) {
+                    Some($node) => { $run }
                     None => {
-                        self.missing_transactions.insert(transaction_id.clone());
-                        return;
+                        missing_transactions.insert($id.clone());
                     }
-                };
-
-                // clone the ancestry we were given. it's ours now.
-                let mut ancestry = ancestry.clone();
-
-                // if we have more than one previous node, we need to determine if all the previous
-                // nodes have already been visited. if not, we cannot "run" this node yet. so stop
-                // asking.
-                if node.prev().len() > 1 {
-                    let mut all_prev_nodes_visited = true;
-                    for prev in node.prev() {
-                        if self.visited.get(prev).is_none() {
-                            all_prev_nodes_visited = false;
-                        }
-                    }
-
-                    if !all_prev_nodes_visited {
-                        // push our ancestors into a temporary holding location until this
-                        // transaction is ready to merge. effectively, this allows us to track
-                        // which branches got us to this point so that when the merge happens, it
-                        // can note ALL the ancestors that fed into it, not just the one that
-                        // triggered the final merge.
-                        //
-                        // note that we don't care about order or dupes here. this will be fixed
-                        // and we have people that do these things for us. the best people. see
-                        // `WalkState.merge_branch()`
-                        let entry = self.branch_tracker.entry(transaction_id).or_insert(Vec::new());
-                        for x in ancestry {
-                            entry.push(x);
-                        }
-                        // we can't run this node, so go running back up the stack to mommy.
-                        return;
-                    }
-
-                    // we can run this node!
-                    //
-                    // so what we're going to do is create a new branch for this merge, then merge
-                    // all the ancestors of the branches that fed into this node into one ancestor
-                    // set which is what `merge_branch()` does for us.
-                    ancestry = self.merge_branch(ancestry, transaction_id);
                 }
+            }}
+        }
 
-                // ok at this point we're ready to run our node, so we mark it as visited (as one
-                // might do) and run our heroic opfn(), passing it the node and the ancestry.
-                self.visited.insert(node.transaction_id().clone());
-                (self.opfn)(node, &ancestry);
+        // loop over our head nodes and push them into the pending list. they are going to kick off
+        // our main loop
+        for tid in self.head() {
+            with_trans! { tid, node, {
+                // NOTE: we can assign branch ids sequentially here because the head nodes are
+                // sorted before this function is ever called. therefor, the head nodes are going
+                // to be in the same position in the btree that they are when we loop over them.
+                pending_transactions.insert((node.transaction().entry().created().clone(), tid.clone()));
+                // each head node gets its own branch.
+                branch_tracker.insert(tid.clone(), vec![next_branch()]);
+            }}
+        }
 
-                // now recurth uhhhhuhuhuhuh.
-                let next_len = node.next().len();
-                for trans_id in node.next() {
-                    // clone our ancestry *again* (sorry) since each next node will potentially get
-                    // its own unique copy
-                    let mut ancestry_next = ancestry.clone();
-                    // if we have more than one next node, each one should get a new branch num
-                    // assigned to it, so we push that onto the end of our ancestry. if we only
-                    // have one next node, it should have the same branch number as the current
-                    // node, so we don't futz with ancestry at all.
-                    if next_len > 1 {
-                        ancestry_next.push(self.next_branch());
-                    }
-                    // now do it all again on the next node!!!1
-                    self.visit(trans_id, &ancestry_next);
+        // this is the main loop. we pop an item off the pending list and run it. if it has
+        // transactions following, they will be added to the pending list and we continue ad
+        // nauseum. if the transaction is a merge, we do not process it until all the transactions
+        // before it have been run.
+        while let Some((_, tid)) = pending_transactions.pop_first() {
+            // grab our ancestry from the branch tracker.
+            let mut ancestry = match branch_tracker.get(&tid) {
+                Some(anc) => anc.clone(),
+                // should NOT happen, but unwrap isn't acceptable here soooo...
+                None => {
+                    missing_transactions.insert(tid.clone());
+                    continue;
                 }
+            };
+
+            // check if we're looping. this should likely never be true, but can't be too careful
+            // these days...
+            if visited_set.contains(&tid) {
+                // we've already seen this node. circular references are bad, m'kay?
+                continue;
             }
+
+            with_trans! { &tid, node, {
+                // if we have more than one previous transaction, we have to make sure that all the
+                // previous transactions have run before we can run this one!
+                if node.prev().len() > 1 {
+                    let mut visited_all_prev = true;
+                    for tid_prev in node.prev() {
+                        if !visited_set.contains(tid_prev) {
+                            visited_all_prev = false;
+                            break;
+                        }
+                    }
+
+                    // if we still have previous transactions that have yet to run, bail. they will
+                    // add this transaction into the pending list again and we'll have our time to
+                    // shine.
+                    if !visited_all_prev {
+                        continue;
+                    }
+
+                    // gee whillickers, we've visited all the previous transactions! harvest their
+                    // dumb ancestry and add it to our own, adding another branch to signify our
+                    // merge on this joyous occasion.
+                    for tid_prev in node.prev() {
+                        if let Some(prev_ancestors) = branch_tracker.get(tid_prev) {
+                            for prev_ancestor in prev_ancestors {
+                                ancestry.push(prev_ancestor.clone());
+                            }
+                        }
+                    }
+                    ancestry.push(next_branch());
+                    ancestry.sort();
+                    ancestry.dedup();
+                }
+
+                // track that we've seen this transaction
+                visited.push(tid.clone());
+                visited_set.insert(tid.clone());
+
+                // run our user-supplied operation
+                opfn(node, &ancestry, &branch_tracker)?;
+
+                // if we only have one next node, we don't need to fuss with ancestry at all: we
+                // can just set it as is.
+                //
+                // however if we have multiple next nodes, we need to create a new branch id for
+                // each of them.
+                if node.next().len() == 1 {
+                    let ntid = node.next()[0];
+                    with_trans! { ntid, node_next, {
+                        branch_tracker.insert(ntid.clone(), ancestry);
+                        pending_transactions.insert((node_next.transaction().entry().created().clone(), ntid.clone()));
+                    }}
+                } else {
+                    // the next nodes were sorted before walk() is called, so we can sequentially
+                    // assign branch nums here.
+                    for &ntid in node.next() {
+                        with_trans! { ntid, next_node, {
+                            let mut ancestry_next = ancestry.clone();
+                            ancestry_next.push(next_branch());
+                            branch_tracker.insert(ntid.clone(), ancestry_next);
+                            pending_transactions.insert((next_node.transaction().entry().created().clone(), ntid.clone()));
+                        }}
+                    }
+                }
+            }}
         }
 
-        let mut state = WalkState::new(self.index(), opfn);
-        // loop over each of the nodes in our DAG head and run our visitor on them. each one gets a
-        // unique branch id.
-        for trans_id in self.head() {
-            let ancestry = vec![state.next_branch()];
-            state.visit(trans_id, &ancestry);
-        }
-        // grab the important stuff and .. the rest into stack-allocated oblivion
-        let WalkState { visited, missing_transactions, .. } = state;
-        (visited, missing_transactions)
+        // cool, we're done!
+        Ok((visited, missing_transactions))
     }
 
     /// Given a set of nodes visited from [`Dag::walk()`], find the nodes that are unvisited from
@@ -315,97 +375,326 @@ impl Dag {
 mod tests {
     use super::*;
     use crate::{
-        crypto::base::HashAlgo,
         util::{
             Timestamp,
-            ser::{BinaryVec, HashMapAsn1}
+            ser::{BinaryVec, HashMapAsn1},
+            test::make_dag_chain,
         }
     };
-
-    macro_rules! make_chain {
-        (
-            $transactions:expr,
-            [$($names:ident),*],
-            [$([$($from:ident),*] <- [$($to:ident),*],)*],
-            [$($omit:ident),*]
-        ) => {{
-            let trans = &$transactions;
-            $(
-                let mut $names = trans.ext(&HashAlgo::Blake2b256, Timestamp::now(), vec![], None, None::<HashMapAsn1<BinaryVec, BinaryVec>>, Vec::from(format!("{} HERE", stringify!($names)).as_bytes()).into()).unwrap();
-                $names.entry_mut().set_previous_transactions(vec![]);
-            )*
-            $(
-                {
-                    let from = vec![$($from.id().clone()),*];
-                    $(
-                        // note that we can override the previous transactions without re-signing
-                        // here because we don't verify sigs at all for these tests
-                        for prev in &from {
-                            $to.entry_mut().previous_transactions_mut().push(prev.clone());
-                        }
-                    )*
-                }
-            )*
-            let omit = vec![$($omit.id().clone()),*];
-            let mut ret = vec![$($names),*];
-            ret.retain(|x| !omit.contains(x.id()));
-            ret
-        }}
-    }
+    use std::str::FromStr;
 
     #[test]
-    fn order_dag_works() {
+    fn dag_from_transactions_walk_simple() {
         let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(Timestamp::now());
         #[allow(non_snake_case, unused_mut)]
-        //let transaction_list = make_chain! {
-           //transactions,
-           //[A, B, C, D, E, F, G],
-           //[
-               //[A, B] <- [C],
-               //[C] <- [D, E],
-               //[E] <- [F],
-               //[D, F] <- [G],
-           //],
-           //[]
-        //};
-        let transaction_list = make_chain! {
-          transactions,
-          [A, B, C, D, E, F, G],
-          [
-              [A, B] <- [C],
-              [C] <- [D],
-              [D] <- [E],
-              [E] <- [F, G],
-          ],
-          []
+        let (transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
+           transactions,
+           [A(0), B(1), C(2), D(3), E(4), F(5), G(6)],
+           [
+               [A, B] <- [C],
+               [C] <- [D, E],
+               [E] <- [F],
+               [D, F] <- [G],
+           ],
+           []
         };
-        //let transaction_list = make_chain! {
-           //transactions,
-           //[A, B, C, D],
-           //[
-               //[A] <- [B],
-               //[B] <- [C],
-               //[C] <- [D],
-           //],
-           //[C]
-        //};
-        println!("--- transaction chain ---");
-        for trans in &transaction_list {
-            println!("{}", trans.id());
-            for prev in trans.entry().previous_transactions() {
-                println!("  > {}", prev);
-            }
-        }
-        println!("---");
         let dag = Dag::from_transactions(&transaction_list);
-        println!("{:?}", dag);
+        assert_eq!(
+            dag.head().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["A", "B"],
+        );
+        assert_eq!(
+            dag.tail().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["G"],
+        );
+        assert_eq!(
+            dag.visited().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["A", "B", "C", "D", "E", "F", "G"],
+        );
+        assert_eq!(dag.missing().len(), 0);
+
+        let dag_nodes = dag.index().iter()
+            .map(|(tid, node)| {
+                (
+                    tid_to_name.get(tid).unwrap().clone(),
+                    (
+                        node.prev().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+                        node.next().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(dag_nodes.len(), 7);
+        assert_eq!(
+            dag_nodes.get("A").unwrap(),
+            &(vec![], vec!["C"])
+        );
+        assert_eq!(
+            dag_nodes.get("B").unwrap(),
+            &(vec![], vec!["C"])
+        );
+        assert_eq!(
+            dag_nodes.get("C").unwrap(),
+            &(vec!["A", "B"], vec!["D", "E"])
+        );
+        assert_eq!(
+            dag_nodes.get("D").unwrap(),
+            &(vec!["C"], vec!["G"])
+        );
+        assert_eq!(
+            dag_nodes.get("E").unwrap(),
+            &(vec!["C"], vec!["F"])
+        );
+        assert_eq!(
+            dag_nodes.get("F").unwrap(),
+            &(vec!["E"], vec!["G"])
+        );
+        assert_eq!(
+            dag_nodes.get("G").unwrap(),
+            &(vec!["D", "F"], vec![])
+        );
+
+        let mut visited = Vec::new();
+        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), ancestry.clone())); Ok(()) }).unwrap();
+        assert_eq!(
+            visited,
+            vec![
+                ("A", vec![0]),
+                ("B", vec![1]),
+                ("C", vec![0, 1, 2]),
+                ("D", vec![0, 1, 2, 3]),
+                ("E", vec![0, 1, 2, 4]),
+                ("F", vec![0, 1, 2, 4]),
+                ("G", vec![0, 1, 2, 3, 4, 5]),
+            ],
+        );
     }
 
     // given the same set of transactions *but in a different order* the exact same DAG
     // structure should be returned.
     #[test]
-    fn order_dag_deterministic() {
-        todo!();
+    fn dag_from_transactions_walk_deterministic() {
+        let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity_deterministic(now, b"hi i'm butch");
+        #[allow(non_snake_case, unused_mut)]
+        let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
+           transactions,
+           [A(0), B(1), C(2), D(3), E(4), F(5), G(6)],
+           [
+               [A, B] <- [C],
+               [C] <- [D, E],
+               [E] <- [F],
+               [D, F] <- [G],
+           ],
+           []
+        };
+        transaction_list.sort_by_key(|x| x.id().clone());
+        let dag = Dag::from_transactions(&transaction_list);
+        assert_eq!(
+            dag.head().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["A", "B"],
+        );
+        assert_eq!(
+            dag.tail().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["G"],
+        );
+        assert_eq!(
+            dag.visited().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["A", "B", "C", "D", "E", "F", "G"],
+        );
+        assert_eq!(dag.missing().len(), 0);
+
+        let dag_nodes = dag.index().iter()
+            .map(|(tid, node)| {
+                (
+                    tid_to_name.get(tid).unwrap().clone(),
+                    (
+                        node.prev().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+                        node.next().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(dag_nodes.len(), 7);
+        assert_eq!(
+            dag_nodes.get("A").unwrap(),
+            &(vec![], vec!["C"])
+        );
+        assert_eq!(
+            dag_nodes.get("B").unwrap(),
+            &(vec![], vec!["C"])
+        );
+        assert_eq!(
+            dag_nodes.get("C").unwrap(),
+            &(vec!["A", "B"], vec!["D", "E"])
+        );
+        assert_eq!(
+            dag_nodes.get("D").unwrap(),
+            &(vec!["C"], vec!["G"])
+        );
+        assert_eq!(
+            dag_nodes.get("E").unwrap(),
+            &(vec!["C"], vec!["F"])
+        );
+        assert_eq!(
+            dag_nodes.get("F").unwrap(),
+            &(vec!["E"], vec!["G"])
+        );
+        assert_eq!(
+            dag_nodes.get("G").unwrap(),
+            &(vec!["D", "F"], vec![])
+        );
+
+        let mut visited = Vec::new();
+        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), ancestry.clone())); Ok(()) });
+        assert_eq!(
+            visited,
+            vec![
+                ("A", vec![0]),
+                ("B", vec![1]),
+                ("C", vec![0, 1, 2]),
+                ("D", vec![0, 1, 2, 3]),
+                ("E", vec![0, 1, 2, 4]),
+                ("F", vec![0, 1, 2, 4]),
+                ("G", vec![0, 1, 2, 3, 4, 5]),
+            ],
+        );
+    }
+
+    #[test]
+    fn dag_from_transactions_walk_missing() {
+        let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(now);
+        #[allow(non_snake_case, unused_mut)]
+        let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
+           transactions,
+           [A(0), B(1), C(2), D(3), E(4), F(5), G(6)],
+           [
+               [A, B] <- [C],
+               [C] <- [D, E],
+               [E] <- [F],
+               [D, F] <- [G],
+           ],
+           [C]  // remove C
+        };
+        transaction_list.sort_by_key(|x| x.id().clone());
+        let dag = Dag::from_transactions(&transaction_list);
+        assert_eq!(
+            dag.head().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["A", "B"],
+        );
+        assert_eq!(
+            dag.tail().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["A", "B"],
+        );
+        assert_eq!(
+            dag.visited().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["A", "B"],
+        );
+        let mut unvisited = dag.unvisited().iter()
+            .map(|x| tid_to_name.get(x).unwrap().clone())
+            .collect::<Vec<_>>();
+        unvisited.sort_unstable();
+        assert_eq!(
+            unvisited,
+            vec!["D", "E", "F", "G"],
+        );
+        assert_eq!(dag.missing().len(), 1);
+
+        let dag_nodes = dag.index().iter()
+            .map(|(tid, node)| {
+                (
+                    tid_to_name.get(tid).unwrap().clone(),
+                    (
+                        node.prev().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+                        node.next().iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(dag_nodes.len(), 6);
+        assert_eq!(
+            dag_nodes.get("A").unwrap(),
+            &(vec![], vec![])
+        );
+        assert_eq!(
+            dag_nodes.get("B").unwrap(),
+            &(vec![], vec![])
+        );
+        assert_eq!(dag_nodes.get("C"), None);
+        assert_eq!(
+            dag_nodes.get("D").unwrap(),
+            &(vec!["C"], vec!["G"])
+        );
+        assert_eq!(
+            dag_nodes.get("E").unwrap(),
+            &(vec!["C"], vec!["F"])
+        );
+        assert_eq!(
+            dag_nodes.get("F").unwrap(),
+            &(vec!["E"], vec!["G"])
+        );
+        assert_eq!(
+            dag_nodes.get("G").unwrap(),
+            &(vec!["D", "F"], vec![])
+        );
+
+        let mut visited = Vec::new();
+        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), ancestry.clone())); Ok(()) }).unwrap();
+        assert_eq!(
+            visited,
+            vec![
+                ("A", vec![0]),
+                ("B", vec![1]),
+            ],
+        );
+    }
+
+    #[test]
+    fn dag_walk_transaction_order() {
+        let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity_deterministic(now, b"Hi I'm Butch");
+        #[allow(non_snake_case, unused_mut)]
+        let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
+           transactions,
+           // set up a chain where B's timestamp comes after C, which means if we sort just be
+           // timestamp then the causal chain will break. however, if we sort by causal chain THEN
+           // timestamp when running transactions, we're gonna have a good time.
+           //
+           // note that A and E have the same timestamp. with our deterministic identity, we've
+           // created a situation where E's ID is lower than A's. thus, E should come before A in
+           // the sort.
+           [A(0), B(20), C(10), D(30), E(0), F(15), G(16), H(5)],
+           [
+               [A] <- [B],
+               [B] <- [C],
+               [C] <- [D],
+               [E] <- [F],
+               [F] <- [G],
+               [D, G] <- [H],
+           ],
+           []
+        };
+        let dag = Dag::from_transactions(&transaction_list);
+        let mut visited = Vec::new();
+        dag.walk(|node, ancestry, _anc_idx| {
+            visited.push(node.transaction().id().clone());
+            Ok(())
+        }).unwrap();
+        assert_eq!(
+            visited.iter().map(|x| tid_to_name.get(x).unwrap().clone()).collect::<Vec<_>>(),
+            vec!["E", "A", "F", "G", "B", "C", "D", "H"],
+        );
+    }
+
+    #[test]
+    fn dag_from_transactions_walk_order_timestamp_tid() {
+        todo!("set the same timestamp on some sibling transactions and verify the order in the DAG");
+    }
+
+    #[test]
+    fn dag_from_transactions_walk_complex_branch() {
+        todo!("set up a very branchy dag with many nodes and verify the order");
     }
 }
 

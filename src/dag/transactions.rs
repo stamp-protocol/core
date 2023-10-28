@@ -4,7 +4,7 @@
 use crate::{
     error::{Error, Result},
     crypto::base::{HashAlgo, KeyID, SecretKey},
-    dag::{TransactionBody, TransactionID, TransactionEntry, Transaction},
+    dag::{Dag, TransactionBody, TransactionID, TransactionEntry, Transaction},
     identity::{
         claim::{
             ClaimID,
@@ -37,7 +37,7 @@ use crate::{
 use getset;
 use rasn::{Encode, Decode, AsnType};
 use serde_derive::{Serialize, Deserialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// A container that holds a set of transactions.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
@@ -212,27 +212,18 @@ impl Transactions {
 
     /// Build an identity from our heroic transactions.
     ///
-    /// Sounds easy, but it's actually a bit...odd. First we reverse our tree
-    /// of transactions so it's forward-looking. This means for any transaction
-    /// we can see which transactions come directly after it (as opposed to
-    /// directly before it).
+    /// This happens using the [`Dag`] utility helper to process and walk the transactions of the
+    /// DAG in order. Inside that walk function, each branch of the DAG gets its own branch ID, and
+    /// we use these branch IDs to create a set of identities (one-per-branch) that remains updated
+    /// as the transactions are walked. the nearest common branch to a transaction (or set of
+    /// transactions in the case of a merge) is used to *verify* the transaction, and if
+    /// verification passes, the transaction is then applied to ALL identities in its ancestry.
     ///
-    /// Then, we walk the tree and assign a unique branch number any time the
-    /// transactions branch or merge. This branch number can be looked up by
-    /// txid.
+    /// The end result is that when we pluck the root identity off of the branch tracker, it has
+    /// had all the transactions validated and applied to it *in order*, giving us a final
+    /// identity!
     ///
-    /// Lastly, instead of trying to order the transactions what we do is push
-    /// the first one onto a "pending transactions" list, then run it. Once run,
-    /// we add any transactions that come after it to the pending list. The
-    /// pending list is them sorted by the transactions dates ascending (oldest
-    /// first) and we loop again, plucking the oldest transaction off the list
-    /// and running it. Now, for each transaction we run, we also apply it to
-    /// an identity that is specific to each previous branch the transaction
-    /// descended from. This allows us to easily merge identities from many
-    /// trees as we move along, but also has the benefit that the branch-
-    /// specific identity for our first branch (0) is also our *final* identity
-    /// because ALL transactions have been applied to it. It's a big, burly mess
-    /// but it works...
+    /// Easy, right??
     ///
     /// NOTE: this algorithm handles signing key conflicts by only using the
     /// nearest branch-level identity to *validate* the current transaction,
@@ -247,6 +238,106 @@ impl Transactions {
         if transactions.len() == 0 {
             Err(Error::DagEmpty)?;
         }
+
+        let dag = Dag::from_transactions(self.transactions());
+
+        if dag.head().len() != 1 {
+            Err(Error::DagGenesisError)?;
+        }
+
+        if dag.unvisited().len() > 0 {
+            Err(Error::DagOrphanedTransaction(format!("{}", dag.unvisited().iter().next().unwrap())))?;
+        }
+
+        if dag.missing().len() > 0 {
+            Err(Error::DagMissingTransaction(format!("{}", dag.unvisited().iter().next().unwrap())))?;
+        }
+
+        let first_trans = dag.index().get(&dag.head()[0]).ok_or(Error::DagBuildError)?;
+        first_trans.transaction().verify(None)?;
+        let mut branch_identities: HashMap<u32, Identity> = HashMap::new();
+        branch_identities.insert(0, Transactions::apply_transaction(None, first_trans.transaction())?);
+        let root_identity = branch_identities.get(&0).ok_or(Error::DagMissingIdentity)?.clone();
+        dag.walk(|node, ancestry, branch_tracker| {
+            let branch = ancestry[ancestry.len() - 1];
+
+            // check if this is a merge transaction or not.
+            if node.prev().len() > 1 {
+                // ok, we're merging a set of transactions together.
+                //
+                // we first need to verify this transaction is valid. the best way to do this is to
+                // find the branch that all the to-be-merged transactions have in common, pull out
+                // the identity for that branch, and use it to verify our merge transaction.
+
+                // so first, grab all the ancestors from our previous transactions, and put them
+                // into BTreeSets so they're pre-sorted for us.
+                let ancestry_sets = node.prev().iter()
+                    .map(|tid| {
+                        branch_tracker.get(tid)
+                            .map(|ancestors| ancestors.iter().map(|x| x.clone()).collect::<BTreeSet<_>>())
+                            .ok_or(Error::DagBuildError)
+                    })
+                    .collect::<Result<Vec<BTreeSet<u32>>>>()?;
+                // now we're going to run the intersection of all the ancestry sets...
+                let intersected = match ancestry_sets.len() {
+                    0 => BTreeSet::new(),
+                    _ => ancestry_sets[1..].iter().fold(ancestry_sets[0].clone(), |mut acc, set| {
+                        acc.retain(|item| set.contains(item));
+                        acc
+                    }),
+                };
+                // and grab the highest-sorted common branch (aka the most recent one)
+                let most_recent_common_branch = intersected.last().ok_or(Error::DagBuildError)?;
+                // now grab the identity associated with this common branch and verify...
+                let most_recent_common_ancestor_identity = branch_identities.get(most_recent_common_branch).ok_or(Error::DagBuildError)?;
+                node.transaction().verify(Some(&most_recent_common_ancestor_identity))?;
+
+                // verified!
+                //
+                // now apply this transaction to all of its ancestor branches, making sure to only
+                // apply the transaction once-per-branch
+                let mut seen_branch: HashSet<u32> = HashSet::new();
+                for ancestors in ancestry_sets {
+                    // we're kind of going in reverse order here (oldest -> newest) but it
+                    // doesn't really matter.
+                    for branch in &ancestors {
+                        if seen_branch.contains(branch) {
+                            continue;
+                        }
+                        let branch_identity = branch_identities.entry(*branch).or_insert(root_identity.clone());
+                        (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), node.transaction())?;
+                        seen_branch.insert(*branch);
+                    }
+                }
+            } else if node.prev().len() == 1 {
+                // this is NOT a merge transaction, so we can simply verify the transaction against
+                // the current branch identity and if all goes well, apply it to all the ancestor
+                // identities.
+                let current_branch_identity = branch_identities.entry(*ancestry.last().unwrap()).or_insert(root_identity.clone());
+                // first verify the transaction is valid against the CURRENT branch identity.
+                node.transaction().verify(Some(&current_branch_identity))?;
+                // now apply this transaction to all of its ancestor branches
+                for branch in ancestry {
+                    let branch_identity = branch_identities.entry(*branch).or_insert(root_identity.clone());
+                    (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), node.transaction())?;
+                }
+            } else {
+                // if we're here, it means we're processing our genesis transaction. it should be
+                // the ONLY transaction that has no previous transactions, and because it was
+                // already used to create the root identity outside of the walk() loop, we don't
+                // actually need to do anything at all.
+            }
+            Ok(())
+        })?;
+
+        return Ok(branch_identities.get(&0).ok_or(Error::DagMissingIdentity)?.clone());
+
+
+        // --- GOALS: ---
+        // remove everything after this line!
+        // --- ------ ---
+
+
 
         // use the `previous_transactions` collection to build a feed-forward
         // index for transactions (basically, reverse the order of our tree).
@@ -346,7 +437,7 @@ impl Transactions {
 
         let mut state = WalkState::default();
         state.transactions_to_run.push(
-            transactions.iter().find(|x| x.entry().previous_transactions().len() == 0).ok_or(Error::DagNoGenesis)?
+            transactions.iter().find(|x| x.entry().previous_transactions().len() == 0).ok_or(Error::DagGenesisError)?
         );
         let first_trans = match state.next() {
             Some(trans) => trans,
@@ -382,9 +473,7 @@ impl Transactions {
                         for branch in first {
                             let mut has = true;
                             for anc in &ancestor_collection[1..] {
-                                if !has || !anc.contains(branch) {
-                                    has = false;
-                                }
+                                has = has && anc.contains(branch);
                             }
                             if has {
                                 found_branch = Some(branch);
@@ -836,7 +925,7 @@ mod tests {
         ($master_key:expr, $admin_key:expr, $transactions:expr, $([ $fn:ident, $($args:expr),* ])*) => {{
             let mut trans_tmp = $transactions;
             $(
-                let trans = trans_tmp.$fn(&HashAlgo::Blake2b512, $($args),*).unwrap();
+                let trans = trans_tmp.$fn(&HashAlgo::Blake2b256, $($args),*).unwrap();
                 let trans_signed = trans.sign($master_key, $admin_key).unwrap();
                 trans_tmp = trans_tmp.push_transaction(trans_signed).unwrap();
             )*
@@ -895,7 +984,6 @@ mod tests {
             [ make_claim, Timestamp::from_str("2021-04-20T00:01:56Z").unwrap(), ClaimSpec::Email(MaybePrivate::new_public(String::from("dirk.delta@hollywood.com"))), None::<String> ]
         };
         let identity1 = branch1.build_identity().unwrap();
-        let identity2 = branch2.build_identity().unwrap();
         assert_eq!(identity1.keychain().admin_keys().len(), 2);
         assert_eq!(identity1.keychain().admin_keys()[0].key_id(), admin_key.key_id());
         assert_eq!(identity1.keychain().admin_keys()[1].key_id(), admin_key_2.key_id());
@@ -906,6 +994,7 @@ mod tests {
             _ => panic!("wrong"),
         }
 
+        let identity2 = branch2.build_identity().unwrap();
         assert_eq!(identity2.keychain().admin_keys()[1].key_id(), admin_key_3.key_id());
         assert_eq!(identity2.keychain().admin_keys().len(), 2);
         assert_eq!(identity2.claims().len(), 3);

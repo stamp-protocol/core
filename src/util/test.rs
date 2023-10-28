@@ -18,19 +18,25 @@ pub(crate) fn sleep(millis: u64) {
 }
 
 pub(crate) fn create_fake_identity(now: Timestamp) -> (SecretKey, Transactions, AdminKey) {
+    create_fake_identity_deterministic(now, Hash::random_blake2b_512().as_bytes())
+}
+
+pub(crate) fn create_fake_identity_deterministic(now: Timestamp, seed: &[u8]) -> (SecretKey, Transactions, AdminKey) {
     let transactions = Transactions::new();
-    let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-    let sign = SignKeypair::new_ed25519(&master_key).unwrap();
+    let seed = Hash::new_blake2b_256(seed).unwrap();
+    let master_key = SecretKey::new_xchacha20poly1305_from_slice(seed.as_bytes()).unwrap();
+    let seed = Hash::new_blake2b_256(seed.as_bytes()).unwrap();
+    let sign = SignKeypair::new_ed25519_from_seed(&master_key, seed.as_bytes().try_into().unwrap()).unwrap();
     let admin = AdminKeypair::from(sign);
     let admin_key = AdminKey::new(admin, "Alpha", None);
     let policy = Policy::new(
         vec![Capability::Permissive],
         MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
     );
-    let trans_id = transactions
+    let trans = transactions
         .create_identity(&HashAlgo::Blake2b256, now, vec![admin_key.clone()], vec![policy]).unwrap()
         .sign(&master_key, &admin_key).unwrap();
-    let transactions2 = transactions.push_transaction(trans_id).unwrap();
+    let transactions2 = transactions.push_transaction(trans).unwrap();
     (master_key, transactions2, admin_key)
 }
 
@@ -79,4 +85,42 @@ pub(crate) fn generate_combinations<T: Clone>(vals: &Vec<T>) -> Vec<Vec<T>> {
     }
     out
 }
+
+macro_rules! make_dag_chain {
+    (
+        $transactions:expr,
+        [$($names:ident($ts:expr)),*],
+        [$([$($from:ident),*] <- [$($to:ident),*],)*],
+        [$($omit:ident),*]
+    ) => {{
+        let trans = &$transactions;
+        let mut name_to_tid = std::collections::HashMap::new();
+        let mut tid_to_name = std::collections::HashMap::new();
+        $(
+            let dt: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_timestamp(2455191939 + $ts, 0).unwrap();
+            let now = crate::util::Timestamp::from(dt);
+            let mut $names = trans.ext(&crate::crypto::base::HashAlgo::Blake2b256, now, vec![], None, None::<HashMapAsn1<BinaryVec, BinaryVec>>, Vec::from(format!("{}", stringify!($names)).as_bytes()).into()).unwrap();
+            $names.entry_mut().set_previous_transactions(vec![]);
+            name_to_tid.insert(stringify!($names), $names.id().clone());
+            tid_to_name.insert($names.id().clone(), stringify!($names));
+        )*
+        $(
+            {
+                let from = vec![$($from.id().clone()),*];
+                $(
+                    // note that we can override the previous transactions without re-signing
+                    // here because we don't verify sigs at all for these tests
+                    for prev in &from {
+                        $to.entry_mut().previous_transactions_mut().push(prev.clone());
+                    }
+                )*
+            }
+        )*
+        let omit = vec![$($omit.id().clone()),*];
+        let mut ret = vec![$($names),*];
+        ret.retain(|x| !omit.contains(x.id()));
+        (ret, tid_to_name, name_to_tid)
+    }}
+}
+pub(crate) use make_dag_chain;
 

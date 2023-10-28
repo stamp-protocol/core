@@ -84,10 +84,13 @@ pub enum Error {
     #[error("an identity is missing when applying a transaction")]
     DagMissingIdentity,
 
-    /// There are no transactions in this DAG chain that have zero previous
-    /// transactions.
-    #[error("this transaction set has no starting point")]
-    DagNoGenesis,
+    /// There was a problem finding our singular genesis transaction.
+    #[error("this transaction set has no single starting point")]
+    DagGenesisError,
+
+    /// A transaction was referenced but is missing from a DAG.
+    #[error("missing transaction referenced in DAG: {0}")]
+    DagMissingTransaction(String),
 
     /// Found a transaction that references other transactions (via its
     /// `previous_transactions`) in the DAG that do not exist.
