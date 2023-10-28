@@ -1,4 +1,4 @@
-.PHONY: all clean release doc build run test test-panic test-st macros
+.PHONY: all clean lint release doc build run test test-panic test-st macros
 
 # non-versioned include
 VARS ?= vars.mk
@@ -16,7 +16,7 @@ release: override CARGO_BUILD_ARGS += --release
 release: build
 
 doc:
-	cargo doc
+	$(CARGO) doc $(CARGO_BUILD_ARGS)
 
 test-release: override CARGO_BUILD_ARGS += --release
 test-release:
@@ -36,7 +36,13 @@ test-panic:
 test-st:
 	$(CARGO) test $(TEST) $(CARGO_BUILD_ARGS) -- --nocapture --test-threads 1
 
+lint:
+	$(CARGO) clippy $(CARGO_BUILD_ARGS) -- \
+		-A clippy::redundant_closure \
+		-A clippy::module_inception \
+		-A clippy::comparison_chain
+
 clean:
 	rm -rf target/
-	cargo clean
+	$(CARGO) clean $(CARGO_BUILD_ARGS)
 

@@ -117,12 +117,12 @@ impl<'a> Dag<'a> {
         for trans in transactions {
             trans_created_idx.insert(trans.id(), trans.entry().created().timestamp_millis());
             let prev = trans.entry().previous_transactions();
-            if prev.len() == 0 {
+            if prev.is_empty() {
                 // cool, we found a head node. track it.
                 head_transactions.push((trans.entry().created(), trans.id().clone()));
             } else {
                 for prev_id in prev {
-                    match dag.index_mut().get_mut(&prev_id) {
+                    match dag.index_mut().get_mut(prev_id) {
                         Some(previous_node) => {
                             previous_node.next_mut().push(trans.id());
                         }
@@ -138,14 +138,14 @@ impl<'a> Dag<'a> {
 
         // now, for each DAG node, sort its `prev` and `next` nodes by (timestamp ASC, transction_id
         // ASC). this gives us detemrinistic ordering in our DAG.
-        for (_, node) in dag.index_mut() {
+        for node in dag.index_mut().values_mut() {
             node.prev_mut().sort_unstable_by_key(|tid| {
-                let created = trans_created_idx.get(tid).map(|x| x.clone()).unwrap_or(i64::MAX);
-                (created, tid.clone())
+                let created = trans_created_idx.get(tid).copied().unwrap_or(i64::MAX);
+                (created, *tid)
             });
             node.next_mut().sort_unstable_by_key(|tid| {
-                let created = trans_created_idx.get(tid).map(|x| x.clone()).unwrap_or(i64::MAX);
-                (created, tid.clone())
+                let created = trans_created_idx.get(tid).copied().unwrap_or(i64::MAX);
+                (created, *tid)
             });
         }
 
@@ -162,7 +162,7 @@ impl<'a> Dag<'a> {
         // if this changes in the future, *please* update the logic accordingly, possibly wrapping
         // `from_transactions()` in a Result...
         let (visited, missing) = dag.walk(|node, _ancestry, _ancestry_idx| {
-            if node.next().len() == 0 {
+            if node.next().is_empty() {
                 tail_nodes.push(node.transaction().id().clone());
             }
             Ok(())
@@ -312,7 +312,7 @@ impl<'a> Dag<'a> {
                     for tid_prev in node.prev() {
                         if let Some(prev_ancestors) = branch_tracker.get(tid_prev) {
                             for prev_ancestor in prev_ancestors {
-                                ancestry.push(prev_ancestor.clone());
+                                ancestry.push(*prev_ancestor);
                             }
                         }
                     }
@@ -546,7 +546,7 @@ mod tests {
         );
 
         let mut visited = Vec::new();
-        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), ancestry.clone())); Ok(()) });
+        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), ancestry.clone())); Ok(()) }).unwrap();
         assert_eq!(
             visited,
             vec![
@@ -677,7 +677,7 @@ mod tests {
         };
         let dag = Dag::from_transactions(&transaction_list);
         let mut visited = Vec::new();
-        dag.walk(|node, ancestry, _anc_idx| {
+        dag.walk(|node, _ancestry, _anc_idx| {
             visited.push(node.transaction().id().clone());
             Ok(())
         }).unwrap();

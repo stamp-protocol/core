@@ -552,7 +552,7 @@ impl Keychain {
     /// Add an admin key but check for dupes
     fn add_admin_key_impl(&mut self, admin_key: AdminKey) -> Result<()> {
         let admin_key_id = admin_key.key_id();
-        if self.admin_keys().iter().find(|x| x.key_id() == admin_key_id).is_none() {
+        if !self.admin_keys().iter().any(|x| x.key_id() == admin_key_id) {
             self.admin_keys_mut().push(admin_key);
         }
         Ok(())
@@ -561,7 +561,7 @@ impl Keychain {
     /// Add a subkey but check for dupes
     fn add_subkey_impl(&mut self, subkey: Subkey) -> Result<()> {
         let key_id = subkey.key_id();
-        if self.subkeys().iter().find(|x| x.key_id() == key_id).is_none() {
+        if !self.subkeys().iter().any(|x| x.key_id() == key_id) {
             self.subkeys_mut().push(subkey);
         }
         Ok(())
@@ -657,8 +657,8 @@ impl Public for Keychain {
     }
 
     fn has_private(&self) -> bool {
-        self.admin_keys().iter().find(|x| x.key().has_private()).is_some() ||
-            self.subkeys().iter().find(|x| x.key().has_private()).is_some()
+        self.admin_keys().iter().any(|x| x.key().has_private()) ||
+            self.subkeys().iter().any(|x| x.key().has_private())
     }
 }
 

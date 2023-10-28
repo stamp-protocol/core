@@ -20,7 +20,7 @@ use std::ops::{Deref, DerefMut};
 use zeroize::Zeroize;
 
 pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
-    Ok(rasn::der::encode(obj).map_err(|_| Error::ASNSerialize)?)
+    rasn::der::encode(obj).map_err(|_| Error::ASNSerialize)
 }
 
 pub(crate) fn serialize_text<T>(obj: &T) -> Result<String>
@@ -31,7 +31,7 @@ pub(crate) fn serialize_text<T>(obj: &T) -> Result<String>
 }
 
 pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
-    Ok(rasn::der::decode(bytes).map_err(|e| Error::ASNDeserialize(e))?)
+    rasn::der::decode(bytes).map_err(|e| Error::ASNDeserialize(e))
 }
 
 /// Convert bytes to base64
@@ -145,7 +145,7 @@ impl<const N: usize> BinarySecret<N> {
     }
 
     /// Grab the inner secret value.
-    pub fn expose_secret<'a>(&'a self) -> &'a [u8; N] {
+    pub fn expose_secret(&self) -> &[u8; N] {
         &self.0
     }
 }

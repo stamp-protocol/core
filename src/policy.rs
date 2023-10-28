@@ -294,14 +294,16 @@ impl Context {
                 contexts.push(Self::Name(admin_key.name().clone()));
             }
             TransactionBody::EditAdminKeyV1 { id, .. } => {
-                identity.keychain().admin_key_by_keyid(id)
-                    .map(|admin_key| contexts.push(Self::Name(admin_key.name().clone())));
+                if let Some(admin_key) = identity.keychain().admin_key_by_keyid(id) {
+                    contexts.push(Self::Name(admin_key.name().clone()));
+                }
                 contexts.push(Self::AdminKeyID(id.clone()));
                 contexts.push(Self::KeyID(id.clone().into()));
             }
             TransactionBody::RevokeAdminKeyV1 { id, .. } => {
-                identity.keychain().admin_key_by_keyid(id)
-                    .map(|admin_key| contexts.push(Self::Name(admin_key.name().clone())));
+                if let Some(admin_key) = identity.keychain().admin_key_by_keyid(id) {
+                    contexts.push(Self::Name(admin_key.name().clone()));
+                }
                 contexts.push(Self::AdminKeyID(id.clone()));
                 contexts.push(Self::KeyID(id.clone().into()));
             }
@@ -328,19 +330,16 @@ impl Context {
             TransactionBody::RevokeStampV1 { stamp_id, .. } => {
                 contexts.push(Self::ObjectID(stamp_id.deref().clone()));
 
-                let stamp_maybe = identity.find_claim_stamp_by_id(&stamp_id);
+                let stamp_maybe = identity.find_claim_stamp_by_id(stamp_id);
                 if let Some(stamp) = stamp_maybe {
                     contexts.push(Self::IdentityID(stamp.entry().stampee().clone()));
                     contexts.push(Self::ObjectID(stamp.entry().claim_id().deref().clone()));
                 }
             }
             TransactionBody::AcceptStampV1 { stamp_transaction } => {
-                match stamp_transaction.entry().body() {
-                    TransactionBody::MakeStampV1 { stamp } => {
-                        contexts.push(Self::ObjectID(stamp.claim_id().deref().clone()));
-                        contexts.push(Self::IdentityID(stamp.stamper().clone()));
-                    }
-                    _ => {}
+                if let TransactionBody::MakeStampV1 { stamp } = stamp_transaction.entry().body() {
+                    contexts.push(Self::ObjectID(stamp.claim_id().deref().clone()));
+                    contexts.push(Self::IdentityID(stamp.stamper().clone()));
                 }
             }
             TransactionBody::DeleteStampV1 { stamp_id } => {
@@ -353,32 +352,37 @@ impl Context {
             }
             TransactionBody::AddSubkeyV1 { key, name, .. } => {
                 contexts.push(Self::Name(name.clone()));
-                contexts.push(Self::KeyID(key.key_id().clone()));
+                contexts.push(Self::KeyID(key.key_id()));
             }
             TransactionBody::EditSubkeyV1 { id, .. } => {
                 contexts.push(Self::KeyID(id.clone()));
-                identity.keychain().subkey_by_keyid(id)
-                    .map(|subkey| contexts.push(Self::Name(subkey.name().clone())));
+                if let Some(subkey) = identity.keychain().subkey_by_keyid(id) {
+                    contexts.push(Self::Name(subkey.name().clone()));
+                }
             }
             TransactionBody::RevokeSubkeyV1 { id, .. } => {
                 contexts.push(Self::KeyID(id.clone()));
-                identity.keychain().subkey_by_keyid(id)
-                    .map(|subkey| contexts.push(Self::Name(subkey.name().clone())));
+                if let Some(subkey) = identity.keychain().subkey_by_keyid(id) {
+                    contexts.push(Self::Name(subkey.name().clone()));
+                }
             }
             TransactionBody::DeleteSubkeyV1 { id } => {
                 contexts.push(Self::KeyID(id.clone()));
-                identity.keychain().subkey_by_keyid(id)
-                    .map(|subkey| contexts.push(Self::Name(subkey.name().clone())));
+                if let Some(subkey) = identity.keychain().subkey_by_keyid(id) {
+                    contexts.push(Self::Name(subkey.name().clone()));
+                }
             }
             TransactionBody::PublishV1 { .. } => {}
             TransactionBody::SignV1 { .. } => {}
             TransactionBody::ExtV1 { ty, context, .. } => {
-                ty.as_ref().map(|t| contexts.push(Self::ExtType(t.clone())));
-                context.as_ref().map(|exists| {
+                if let Some(t) = ty.as_ref() {
+                    contexts.push(Self::ExtType(t.clone()));
+                }
+                if let Some(exists) = context.as_ref() {
                     for (k, v) in exists.iter() {
                         contexts.push(Self::ExtContext { key: k.clone(), val: v.clone() });
                     }
-                });
+                }
             }
         }
         contexts
@@ -447,8 +451,8 @@ impl Context {
             (Self::KeyID(id1), Self::KeyID(id2)) => id1 == id2,
             (Self::Name(name1), Self::Name(name2)) => name1 == name2,
             (Self::NameGlob(glob1), Self::Name(name2)) => {
-                let glob = Pattern::new(&glob1)?;
-                glob.matches(&name2)
+                let glob = Pattern::new(glob1)?;
+                glob.matches(name2)
             }
             (Self::ClaimType(ty1), Self::ClaimType(ty2)) => ty1 == ty2,
             (Self::ExtType(ty1), Self::ExtType(ty2)) => ty1 == ty2,
@@ -692,20 +696,20 @@ impl Policy {
     /// Determine if this particular `CapabilityPolicy` allows performing the
     /// action `capability`.
     pub fn can(&self, capability: &Capability) -> bool {
-        self.capabilities().iter().find(|c| c.test(capability).is_ok()).is_some()
+        self.capabilities().iter().any(|c| c.test(capability).is_ok())
     }
 
     /// Determine if this particular `CapabilityPolicy` allows performing the
     /// action `capability`, and also checks the transaction's signatures against the policy
     /// to make sure we have the signatures we need to perform this action (although
     /// this function does not validate transactions, that needs to happen higher up).
-    pub(crate) fn validate_transaction(&self, transaction: &Transaction, contexts: &Vec<Context>) -> Result<()> {
+    pub(crate) fn validate_transaction(&self, transaction: &Transaction, contexts: &[Context]) -> Result<()> {
         // don't check the signature validity here. just check that we have the signatures
         // needed to satisfy the policy. signature checks happen higher level.
         self.multisig_policy().test(transaction.signatures())?;
         let transaction_capability = Capability::Transaction {
             body_type: transaction.entry().body().into(),
-            context: Context::Any(contexts.clone()),
+            context: Context::Any(Vec::from(contexts)),
         };
         if !self.can(&transaction_capability) {
             Err(Error::PolicyCapabilityMismatch)?;
@@ -1325,6 +1329,11 @@ mod tests {
             policy2.validate_transaction(&transaction3, &contexts),
             Err(Error::PolicyCapabilityMismatch)
         );
+    }
+
+    #[test]
+    fn contexts_from_transaction() {
+        todo!("Need comprehensive tests for contexts_from_transaction()");
     }
 }
 

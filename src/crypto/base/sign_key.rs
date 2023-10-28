@@ -54,7 +54,7 @@ impl Clone for SignKeypair {
             SignKeypair::Ed25519 { public, secret: secret_maybe } => {
                 SignKeypair::Ed25519 {
                     public: public.clone(),
-                    secret: secret_maybe.as_ref().map(|x| x.clone()),
+                    secret: secret_maybe.as_ref().cloned(),
                 }
             }
         }
@@ -94,7 +94,7 @@ impl SignKeypair {
         match self {
             Self::Ed25519 { secret: ref sec_locked_opt, .. } => {
                 let sec_locked = sec_locked_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let sec_bytes: [u8; 32] = sec_locked.open(master_key)?.expose_secret().clone();
+                let sec_bytes: [u8; 32] = *sec_locked.open(master_key)?.expose_secret();
                 let seckey = ed25519_consensus::SigningKey::from(sec_bytes);
                 let sig_obj = seckey.sign(data);
                 let sig = SignKeypairSignature::Ed25519(Binary::new(sig_obj.to_bytes()));
@@ -108,9 +108,9 @@ impl SignKeypair {
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
         match (self, signature) {
             (Self::Ed25519 { public: ref pubkey_bytes, .. }, SignKeypairSignature::Ed25519(ref sig_bytes)) => {
-                let pubkey = ed25519_consensus::VerificationKey::try_from(pubkey_bytes.deref().clone())
+                let pubkey = ed25519_consensus::VerificationKey::try_from(*pubkey_bytes.deref())
                     .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
-                let sig_arr: [u8; 64] = sig_bytes.deref().clone();
+                let sig_arr: [u8; 64] = *sig_bytes.deref();
                 let sig = ed25519_consensus::Signature::from(sig_arr);
                 pubkey.verify(&sig, data)
                     .map_err(|_| Error::CryptoSignatureVerificationFailed)?;

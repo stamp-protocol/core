@@ -184,7 +184,7 @@ impl StampRequest {
     ///
     /// This re-encryptes the claim with a new key, then creates a signed
     /// message to the recipient (stamper) using one of their keys.
-    pub fn new(sender_master_key: &SecretKey, sender_identity_id: &IdentityID, sender_key: &Subkey, recipient_key: &Subkey, claim: &Claim, one_time_key: SecretKey) -> Result<Message> {
+    pub fn new_message(sender_master_key: &SecretKey, sender_identity_id: &IdentityID, sender_key: &Subkey, recipient_key: &Subkey, claim: &Claim, one_time_key: SecretKey) -> Result<Message> {
         let claim_reencrypted_spec = claim.spec().clone().reencrypt(sender_master_key, &one_time_key)?;
         let mut claim_reencrypted = claim.clone();
         claim_reencrypted.set_spec(claim_reencrypted_spec);
@@ -278,8 +278,8 @@ mod tests {
                     .add_subkey(subkey_key, "default:crypto", None).unwrap();
                 let recipient_subkey = recipient_keychain.subkey_by_name("default:crypto").unwrap();
 
-                let req_msg_priv = StampRequest::new(&sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, &container_private, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
-                let req_msg_pub = StampRequest::new(&sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, &container_public, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+                let req_msg_priv = StampRequest::new_message(&sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, &container_private, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+                let req_msg_pub = StampRequest::new_message(&sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, &container_public, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
 
                 let res1 = StampRequest::open(&sender_master_key, recipient_subkey, sender_subkey, &req_msg_priv);
                 let res2 = StampRequest::open(&sender_master_key, recipient_subkey, sender_subkey, &req_msg_pub);

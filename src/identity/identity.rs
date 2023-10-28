@@ -125,7 +125,7 @@ impl Identity {
 
     /// Delete a capability policy by name
     pub(crate) fn delete_policy(mut self, id: &PolicyID) -> Result<Self> {
-        if self.policies().iter().find(|c| c.id() == id).is_none() {
+        if !self.policies().iter().any(|c| c.id() == id) {
             Err(Error::PolicyNotFound)?;
         }
         self.policies_mut().retain(|c| c.id() != id);
@@ -157,7 +157,7 @@ impl Identity {
 
     /// Make a public stamp
     pub(crate) fn make_stamp(mut self, stamp: Stamp) -> Result<Self> {
-        if self.stamps().iter().find(|s| s.id() == stamp.id()).is_none() {
+        if !self.stamps().iter().any(|s| s.id() == stamp.id()) {
             self.stamps_mut().push(stamp);
         }
         Ok(self)
@@ -176,7 +176,7 @@ impl Identity {
         let claim_id = stamp.entry().claim_id();
         let claim = self.claims_mut().iter_mut().find(|x| x.id() == claim_id)
             .ok_or(Error::IdentityClaimNotFound)?;
-        if claim.stamps().iter().find(|x| x.id() == stamp.id()).is_none() {
+        if !claim.stamps().iter().any(|x| x.id() == stamp.id()) {
             claim.stamps_mut().push(stamp);
         }
         Ok(self)
@@ -282,7 +282,7 @@ impl Identity {
     /// Determine if this identity is owned (ie, we have the private keys stored
     /// locally) or it is imported (ie, someone else's identity).
     pub fn is_owned(&self) -> bool {
-        self.keychain().admin_keys().iter().find(|k| k.has_private()).is_some()
+        self.keychain().admin_keys().iter().any(|k| k.has_private())
     }
 
     /// Test if a master key is correct.
@@ -290,7 +290,7 @@ impl Identity {
         let mut randbuf = [0u8; 32];
         OsRng.fill_bytes(&mut randbuf);
         let test_bytes = Vec::from(&randbuf[..]);
-        if self.keychain().admin_keys().len() == 0 {
+        if self.keychain().admin_keys().is_empty() {
             Err(Error::IdentityNotOwned)?;
         }
         for key in self.keychain().admin_keys() {
@@ -309,7 +309,7 @@ impl Public for Identity {
     }
 
     fn has_private(&self) -> bool {
-        self.keychain().has_private() || self.claims().iter().find(|c| c.has_private()).is_some()
+        self.keychain().has_private() || self.claims().iter().any(|c| c.has_private())
     }
 }
 

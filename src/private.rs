@@ -77,7 +77,7 @@ impl<T: Encode + Decode> Private<T> {
         let sealed = seal_key.seal(&serialized)?;
         Ok(Self {
             _phantom: PhantomData,
-            sealed: sealed,
+            sealed,
         })
     }
 
@@ -96,7 +96,7 @@ impl<T: Encode + Decode> Private<T> {
         let sealed = new_seal_key.seal(&serialized)?;
         Ok(Self {
             _phantom: PhantomData,
-            sealed: sealed,
+            sealed,
         })
     }
 }
@@ -197,7 +197,7 @@ impl<T: Encode + Decode> PrivateVerifiable<T> {
         let mac = Mac::new_blake2b(&mac_key, &ser::serialize(data)?)?;
         // store our data alongside our MAC key, allowing anybody with access
         // to this container to regenerate the MAC.
-        let inner = PrivateVerifiableInner { value: data, mac_key: mac_key };
+        let inner = PrivateVerifiableInner { value: data, mac_key };
         let serialized_inner = ser::serialize(&inner)?;
         // encrypt the data+mac_key combo
         let sealed = seal_key.seal(&serialized_inner)?;
@@ -233,7 +233,7 @@ impl<T: Encode + Decode> PrivateVerifiable<T> {
         let sealed = new_seal_key.seal(&serialized)?;
         Ok(Self {
             _phantom: PhantomData,
-            sealed: sealed,
+            sealed,
         })
     }
 }
@@ -480,10 +480,7 @@ impl<T: Clone> Public for MaybePrivate<T> {
     }
 
     fn has_private(&self) -> bool {
-        match self {
-            Self::Private(PrivateWithMac { data: Some(_), .. }) => true,
-            _ => false,
-        }
+        matches!(self, Self::Private(PrivateWithMac { data: Some(_), .. }))
     }
 }
 

@@ -243,7 +243,7 @@ pub enum ClaimSpec {
 impl ClaimSpec {
     /// Re-encrypt this claim spec's private data, if it has any
     pub(crate) fn reencrypt(self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
-        let spec = match self.clone() {
+        let spec = match self {
             Self::Identity(maybe) => Self::Identity(maybe.reencrypt(current_key, new_key)?),
             Self::Name(maybe) => Self::Name(maybe.reencrypt(current_key, new_key)?),
             Self::Birthday(maybe) => Self::Birthday(maybe.reencrypt(current_key, new_key)?),
@@ -263,7 +263,7 @@ impl ClaimSpec {
     /// Convert this spec into a public one, assuming we have the correct
     /// decrypt key.
     fn into_public(self, open_key: &SecretKey) -> Result<Self> {
-        let spec = match self.clone() {
+        let spec = match self {
             Self::Identity(maybe) => Self::Identity(maybe.into_public(open_key)?),
             Self::Name(maybe) => Self::Name(maybe.into_public(open_key)?),
             Self::Birthday(maybe) => Self::Birthday(maybe.into_public(open_key)?),

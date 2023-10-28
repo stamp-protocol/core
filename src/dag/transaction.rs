@@ -367,11 +367,11 @@ impl Public for TransactionBody {
 
     fn has_private(&self) -> bool {
         match self {
-            Self::CreateIdentityV1 { admin_keys, .. } => admin_keys.iter().find(|k| k.has_private()).is_some(),
+            Self::CreateIdentityV1 { admin_keys, .. } => admin_keys.iter().any(|k| k.has_private()),
             Self::ResetIdentityV1 { admin_keys, .. } => {
                 admin_keys
                     .as_ref()
-                    .map(|keys| keys.iter().find(|x| x.key().has_private()).is_some())
+                    .map(|keys| keys.iter().any(|x| x.key().has_private()))
                     .unwrap_or(false)
             }
             Self::AddAdminKeyV1 { admin_key } => admin_key.has_private(),
@@ -401,6 +401,7 @@ impl Public for TransactionBody {
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 pub struct TransactionID(Hash);
 
+#[cfg(test)]
 impl TransactionID {
     pub(crate) fn as_string(&self) -> String {
         format!("{}", self.deref())
@@ -580,16 +581,15 @@ impl Transaction {
 
     /// Verify that the signatures on this transaction match the transaction.
     pub(crate) fn verify_signatures(&self) -> Result<()> {
-        if self.signatures().len() == 0 {
+        if self.signatures().is_empty() {
             Err(Error::TransactionNoSignatures)?;
         }
         let ver_sig = ser::serialize(self.id().deref())?;
         for sig in self.signatures() {
             match sig {
                 MultisigPolicySignature::Key { key, signature } => {
-                    match key.verify(signature, &ver_sig[..]) {
-                        Err(_) => Err(Error::TransactionSignatureInvalid(key.clone()))?,
-                        _ => {}
+                    if key.verify(signature, &ver_sig[..]).is_err() {
+                        Err(Error::TransactionSignatureInvalid(key.clone()))?;
                     }
                 }
             }

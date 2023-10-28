@@ -93,17 +93,18 @@ impl SecretKey {
     pub fn open(&self, sealed: &Sealed) -> Result<Vec<u8>> {
         match (self, sealed.nonce()) {
             (SecretKey::XChaCha20Poly1305(ref key), SecretKeyNonce::XChaCha20Poly1305(ref nonce)) => {
-                let cipher = chacha20poly1305::XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(key.expose_secret().as_slice().clone()));
+                let cipher = chacha20poly1305::XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(key.expose_secret().as_slice()));
                 let dec = cipher.decrypt(chacha20poly1305::XNonce::from_slice(nonce.as_slice()), sealed.ciphertext().deref().as_slice()).map_err(|_| Error::CryptoOpenFailed)?;
                 Ok(dec)
             }
         }
     }
+}
 
-    /// Get the raw bytes for this key
-    pub fn as_ref(&self) -> &[u8] {
+impl AsRef<[u8]> for SecretKey {
+    fn as_ref(&self) -> &[u8] {
         match self {
-            SecretKey::XChaCha20Poly1305(ref key) => key.expose_secret().as_ref(),
+            Self::XChaCha20Poly1305(ref key) => key.expose_secret().as_ref(),
         }
     }
 }

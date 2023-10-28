@@ -40,7 +40,7 @@ use serde_derive::{Serialize, Deserialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// A container that holds a set of transactions.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Default, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transactions {
     /// The actual transactions.
@@ -51,7 +51,7 @@ pub struct Transactions {
 impl Transactions {
     /// Create a new, empty transaction set.
     pub fn new() -> Self {
-        Self {transactions: vec![]}
+        Self::default()
     }
 
     /// Returns an iterator over these transactions
@@ -61,7 +61,7 @@ impl Transactions {
 
     /// Grab the [IdentityID] from this transaction set.
     pub fn identity_id(&self) -> Option<IdentityID> {
-        if self.transactions().len() > 0 {
+        if !self.transactions().is_empty() {
             Some(self.transactions()[0].id().clone().into())
         } else {
             None
@@ -231,11 +231,11 @@ impl Transactions {
     /// branches as well. However, this algorithm does not handle other
     /// conflicts (such as duplicate entries).
     pub fn build_identity(&self) -> Result<Identity> {
-        if self.transactions().len() == 0 {
+        if self.transactions().is_empty() {
             Err(Error::DagEmpty)?;
         }
         let transactions = self.transactions.clone();
-        if transactions.len() == 0 {
+        if transactions.is_empty() {
             Err(Error::DagEmpty)?;
         }
 
@@ -245,11 +245,11 @@ impl Transactions {
             Err(Error::DagGenesisError)?;
         }
 
-        if dag.unvisited().len() > 0 {
+        if !dag.unvisited().is_empty() {
             Err(Error::DagOrphanedTransaction(format!("{}", dag.unvisited().iter().next().unwrap())))?;
         }
 
-        if dag.missing().len() > 0 {
+        if !dag.missing().is_empty() {
             Err(Error::DagMissingTransaction(format!("{}", dag.unvisited().iter().next().unwrap())))?;
         }
 
@@ -259,8 +259,6 @@ impl Transactions {
         branch_identities.insert(0, Transactions::apply_transaction(None, first_trans.transaction())?);
         let root_identity = branch_identities.get(&0).ok_or(Error::DagMissingIdentity)?.clone();
         dag.walk(|node, ancestry, branch_tracker| {
-            let branch = ancestry[ancestry.len() - 1];
-
             // check if this is a merge transaction or not.
             if node.prev().len() > 1 {
                 // ok, we're merging a set of transactions together.
@@ -274,7 +272,7 @@ impl Transactions {
                 let ancestry_sets = node.prev().iter()
                     .map(|tid| {
                         branch_tracker.get(tid)
-                            .map(|ancestors| ancestors.iter().map(|x| x.clone()).collect::<BTreeSet<_>>())
+                            .map(|ancestors| ancestors.iter().copied().collect::<BTreeSet<_>>())
                             .ok_or(Error::DagBuildError)
                     })
                     .collect::<Result<Vec<BTreeSet<u32>>>>()?;
@@ -290,7 +288,7 @@ impl Transactions {
                 let most_recent_common_branch = intersected.last().ok_or(Error::DagBuildError)?;
                 // now grab the identity associated with this common branch and verify...
                 let most_recent_common_ancestor_identity = branch_identities.get(most_recent_common_branch).ok_or(Error::DagBuildError)?;
-                node.transaction().verify(Some(&most_recent_common_ancestor_identity))?;
+                node.transaction().verify(Some(most_recent_common_ancestor_identity))?;
 
                 // verified!
                 //
@@ -315,7 +313,7 @@ impl Transactions {
                 // identities.
                 let current_branch_identity = branch_identities.entry(*ancestry.last().unwrap()).or_insert(root_identity.clone());
                 // first verify the transaction is valid against the CURRENT branch identity.
-                node.transaction().verify(Some(&current_branch_identity))?;
+                node.transaction().verify(Some(current_branch_identity))?;
                 // now apply this transaction to all of its ancestor branches
                 for branch in ancestry {
                     let branch_identity = branch_identities.entry(*branch).or_insert(root_identity.clone());
@@ -369,7 +367,7 @@ impl Transactions {
     /// when in doubt, use [`push_transaction()`][Transactions::push_transaction]
     /// instead of this method.
     pub fn push_transaction_raw(&mut self, transaction: Transaction) -> Result<Identity> {
-        if self.transactions().iter().find(|x| x.id() == transaction.id()).is_some() {
+        if self.transactions().iter().any(|x| x.id() == transaction.id()) {
             Err(Error::DuplicateTransaction)?;
         }
         let identity_maybe = match self.build_identity() {
@@ -399,7 +397,7 @@ impl Transactions {
     pub fn merge(mut branch1: Self, branch2: Self) -> Result<Self> {
         for trans2 in branch2.transactions() {
             // if it already exists, don't merge it
-            if branch1.transactions().iter().find(|t| t.id() == trans2.id()).is_some() {
+            if branch1.transactions().iter().any(|t| t.id() == trans2.id()) {
                 continue;
             }
             branch1.transactions_mut().push(trans2.clone());
@@ -442,13 +440,13 @@ impl Transactions {
     /// Determine if this identity is owned (ie, we have the private keys stored
     /// locally) or it is imported (ie, someone else's identity).
     pub fn is_owned(&self) -> bool {
-        self.transactions().iter().find(|trans| {
+        self.transactions().iter().any(|trans| {
             match trans.entry().body() {
                 TransactionBody::CreateIdentityV1 { .. } => trans.entry().body().has_private(),
                 TransactionBody::AddAdminKeyV1 { .. } => trans.entry().body().has_private(),
                 _ => false,
             }
-        }).is_some()
+        })
     }
 
     /// Test if a master key is correct.
@@ -703,7 +701,7 @@ impl Public for Transactions {
     }
 
     fn has_private(&self) -> bool {
-        self.transactions().iter().find(|x| x.has_private()).is_some()
+        self.transactions().iter().any(|x| x.has_private())
     }
 }
 

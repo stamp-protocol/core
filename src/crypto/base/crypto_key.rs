@@ -66,7 +66,7 @@ impl Clone for CryptoKeypair {
             CryptoKeypair::Curve25519XChaCha20Poly1305 { public, secret: secret_maybe } => {
                 CryptoKeypair::Curve25519XChaCha20Poly1305 {
                     public: public.clone(),
-                    secret: secret_maybe.as_ref().map(|x| x.clone()),
+                    secret: secret_maybe.as_ref().cloned(),
                 }
             }
         }
@@ -80,8 +80,8 @@ impl CryptoKeypair {
         let secret = crypto_box::SecretKey::generate(&mut rng);
         let public = secret.public_key();
         Ok(Self::Curve25519XChaCha20Poly1305 {
-            public: Binary::new(public.as_bytes().clone()),
-            secret: Some(Private::seal(master_key, &BinarySecret::new(secret.as_bytes().clone()))?),
+            public: Binary::new(*public.as_bytes()),
+            secret: Some(Private::seal(master_key, &BinarySecret::new(*secret.as_bytes()))?),
         })
     }
 
@@ -92,7 +92,7 @@ impl CryptoKeypair {
                 let mut rng = OsRng {};
                 let ephemeral_secret = crypto_box::SecretKey::generate(&mut rng);
                 let ephemeral_pubkey = ephemeral_secret.public_key();
-                let cardboard_box = crypto_box::ChaChaBox::new(&crypto_box::PublicKey::from(pubkey.deref().clone()), &ephemeral_secret);
+                let cardboard_box = crypto_box::ChaChaBox::new(&crypto_box::PublicKey::from(*pubkey.deref()), &ephemeral_secret);
                 let mut blake = blake2::Blake2b512::new();
                 blake.update(ephemeral_pubkey.as_ref());
                 blake.update(pubkey.as_ref());
@@ -115,7 +115,7 @@ impl CryptoKeypair {
         match self {
             Self::Curve25519XChaCha20Poly1305 { public: ref pubkey, secret: ref seckey_opt } => {
                 let seckey_sealed = seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let seckey = crypto_box::SecretKey::from(seckey_sealed.open(master_key)?.expose_secret().deref().clone());
+                let seckey = crypto_box::SecretKey::from(*seckey_sealed.open(master_key)?.expose_secret().deref());
                 let ephemeral_pubkey_slice = &data[0..32];
                 let ephemeral_pubkey_arr: [u8; 32] = ephemeral_pubkey_slice.try_into()
                     .map_err(|_| Error::CryptoOpenFailed)?;
@@ -141,14 +141,14 @@ impl CryptoKeypair {
         match (sender_keypair, self) {
             (Self::Curve25519XChaCha20Poly1305 { secret: ref sender_seckey_opt, .. }, Self::Curve25519XChaCha20Poly1305 { public: ref recipient_pubkey, .. }) => {
                 let sender_seckey_sealed = sender_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let sender_seckey = crypto_box::SecretKey::from(sender_seckey_sealed.open(sender_master_key)?.expose_secret().deref().clone());
-                let recipient_chacha_pubkey = crypto_box::PublicKey::from(recipient_pubkey.deref().clone());
+                let sender_seckey = crypto_box::SecretKey::from(*sender_seckey_sealed.open(sender_master_key)?.expose_secret().deref());
+                let recipient_chacha_pubkey = crypto_box::PublicKey::from(*recipient_pubkey.deref());
                 let cardboard_box = crypto_box::ChaChaBox::new(&recipient_chacha_pubkey, &sender_seckey);
                 let mut rng = OsRng {};
                 let nonce = crypto_box::generate_nonce(&mut rng);
                 let msg = cardboard_box.encrypt(&nonce, aead::Payload::from(data))
                     .map_err(|_| Error::CryptoSealFailed)?;
-                let nonce_arr = nonce.as_slice().clone().try_into()
+                let nonce_arr = nonce.as_slice().try_into()
                     .map_err(|_| Error::BadLength)?;
                 Ok(CryptoKeypairMessage::new(CryptoKeypairNonce::Curve25519XChaCha20Poly1305(Binary::new(nonce_arr)), msg))
             }
@@ -162,15 +162,15 @@ impl CryptoKeypair {
         match (self, sender_keypair) {
             (Self::Curve25519XChaCha20Poly1305 { secret: ref recipient_seckey_opt, .. }, CryptoKeypair::Curve25519XChaCha20Poly1305 { public: ref sender_pubkey, .. }) => {
                 let recipient_seckey_sealed = recipient_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let recipient_seckey = crypto_box::SecretKey::from(recipient_seckey_sealed.open(recipient_master_key)?.expose_secret().deref().clone());
+                let recipient_seckey = crypto_box::SecretKey::from(*recipient_seckey_sealed.open(recipient_master_key)?.expose_secret().deref());
                 let nonce = match message.nonce() {
                     CryptoKeypairNonce::Curve25519XChaCha20Poly1305(vec) => {
                         GenericArray::from_slice(vec.as_slice())
                     }
                 };
-                let sender_chacha_pubkey = crypto_box::PublicKey::from(sender_pubkey.deref().clone());
+                let sender_chacha_pubkey = crypto_box::PublicKey::from(*sender_pubkey.deref());
                 let cardboard_box = crypto_box::ChaChaBox::new(&sender_chacha_pubkey, &recipient_seckey);
-                cardboard_box.decrypt(&nonce, aead::Payload::from(message.ciphertext().as_slice()))
+                cardboard_box.decrypt(nonce, aead::Payload::from(message.ciphertext().as_slice()))
                     .map_err(|_| Error::CryptoOpenFailed)
             }
         }
