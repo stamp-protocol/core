@@ -66,7 +66,7 @@ pub(crate) fn setup_identity_with_subkeys() -> (SecretKey, Identity) {
 ///
 /// Useful for poor attempts at fuzzing/parameter testing. Should be ripped out
 /// and replaced with something more proper.
-pub(crate) fn generate_combinations<T: Clone>(vals: &Vec<T>) -> Vec<Vec<T>> {
+pub(crate) fn generate_combinations<T: Clone>(vals: &[T]) -> Vec<Vec<T>> {
     // we use binary counting here to accomplish the combination finding.
     // this might seem obtuse, but i have 4 hours of sleep and this seems
     // like the quickest way to get it done.

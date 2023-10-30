@@ -333,7 +333,7 @@ impl Transactions {
 
     /// Find any transactions that are not referenced as previous transactions.
     /// Effectively, the leaves of our graph.
-    fn find_leaf_transactions(transaction_list: &Vec<Transaction>) -> Vec<TransactionID> {
+    fn find_leaf_transactions(transaction_list: &[Transaction]) -> Vec<TransactionID> {
         let mut seen: HashMap<TransactionID, bool> = HashMap::new();
         for trans in transaction_list {
             for prev in trans.entry().previous_transactions() {
@@ -414,7 +414,7 @@ impl Transactions {
     /// connected the next time a new transaction is created.
     pub fn reset(mut self, txid: &TransactionID) -> Result<Self> {
         // recursively find all transactions referencing the given one
-        fn find_tx_to_rm(transactions: &Vec<Transaction>, txid: &TransactionID) -> Vec<TransactionID> {
+        fn find_tx_to_rm(transactions: &[Transaction], txid: &TransactionID) -> Vec<TransactionID> {
             let mut to_remove = Vec::new();
             for trans in transactions {
                 if trans.entry().previous_transactions().contains(txid) {

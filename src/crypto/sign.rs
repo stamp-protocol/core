@@ -47,7 +47,7 @@ impl Signature {
 
     /// If this signature has attached/embedded data, return the signature and
     /// data.
-    pub fn attached(&self) -> Option<(&SignedObject<SignKeypairSignature>, &Vec<u8>)> {
+    pub fn attached(&self) -> Option<(&SignedObject<SignKeypairSignature>, &[u8])> {
         match self {
             Self::Attached { sig: signed, data } => Some((signed, data)),
             _ => None,

@@ -633,7 +633,7 @@ impl MultisigPolicy {
     /// that the signatures *must* be validated before we get here. We're simply
     /// testing that the signatures are from keys that satisfy the policy: WE DO
     /// NOT VALIDATE THE SIGNATURES.
-    pub(crate) fn test(&self, signatures: &Vec<MultisigPolicySignature>) -> Result<()> {
+    pub(crate) fn test(&self, signatures: &[MultisigPolicySignature]) -> Result<()> {
         match self {
             Self::All(policies) => {
                 policies.iter()
@@ -1131,7 +1131,7 @@ mod tests {
             vec!["gus", "jackie", "dirk"],
             vec!["gus", "marty", "dirk"],
         ];
-        let should_pass = |names: &Vec<&str>| -> bool {
+        let should_pass = |names: &[&str]| -> bool {
             if names.len() == 0 {
                 return false;
             }

@@ -32,7 +32,7 @@ pub enum Message {
 
 impl Message {
     /// If this message is anonymous, returns the data of the anonymous message.
-    pub fn anonymous(&self) -> Option<&Vec<u8>> {
+    pub fn anonymous(&self) -> Option<&[u8]> {
         match self {
             Self::Anonymous(anon) => Some(anon),
             _ => None,
@@ -132,7 +132,7 @@ mod tests {
             }
             _ => panic!("Invalid return for signed"),
         }
-        assert_eq!(msg2.anonymous(), Some(&vec![1, 2, 3, 42]));
+        assert_eq!(msg2.anonymous(), Some(vec![1, 2, 3, 42].as_slice()));
         assert_eq!(msg2.signed().is_none(), true);
     }
 

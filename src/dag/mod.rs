@@ -87,7 +87,7 @@ pub struct Dag<'a> {
 
 impl<'a> Dag<'a> {
     /// Takes a flat list of transactions and returns a set of DAGs that model those transactions.
-    pub fn from_transactions(transactions: &Vec<Transaction>) -> Dag {
+    pub fn from_transactions(transactions: &[Transaction]) -> Dag {
         // create our DAG object.
         let mut dag = Dag::default();
 
@@ -209,7 +209,7 @@ impl<'a> Dag<'a> {
     ///
     /// And so these are the things we return. In that order. As a tuple.
     pub fn walk<F>(&self, mut opfn: F) -> Result<(Vec<TransactionID>, HashSet<TransactionID>)>
-        where F: FnMut(&DagNode, &Vec<u32>, &HashMap<TransactionID, Vec<u32>>) -> Result<()>,
+        where F: FnMut(&DagNode, &[u32], &HashMap<TransactionID, Vec<u32>>) -> Result<()>,
     {
         // the nodes we have visited *in the order we visited them*
         let mut visited = Vec::with_capacity(self.index().len());
@@ -455,7 +455,7 @@ mod tests {
         );
 
         let mut visited = Vec::new();
-        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), ancestry.clone())); Ok(()) }).unwrap();
+        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), Vec::from(ancestry))); Ok(()) }).unwrap();
         assert_eq!(
             visited,
             vec![
@@ -546,7 +546,7 @@ mod tests {
         );
 
         let mut visited = Vec::new();
-        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), ancestry.clone())); Ok(()) }).unwrap();
+        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), Vec::from(ancestry))); Ok(()) }).unwrap();
         assert_eq!(
             visited,
             vec![
@@ -640,7 +640,7 @@ mod tests {
         );
 
         let mut visited = Vec::new();
-        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), ancestry.clone())); Ok(()) }).unwrap();
+        dag.walk(|node, ancestry, _| { visited.push((tid_to_name.get(node.transaction().id()).unwrap().clone(), Vec::from(ancestry))); Ok(()) }).unwrap();
         assert_eq!(
             visited,
             vec![
