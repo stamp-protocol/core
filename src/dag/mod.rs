@@ -87,7 +87,7 @@ pub struct Dag<'a> {
 
 impl<'a> Dag<'a> {
     /// Takes a flat list of transactions and returns a set of DAGs that model those transactions.
-    pub fn from_transactions(transactions: &[Transaction]) -> Dag {
+    pub fn from_transactions(transactions: &[&'a Transaction]) -> Dag<'a> {
         // create our DAG object.
         let mut dag = Dag::default();
 
@@ -398,7 +398,7 @@ mod tests {
            ],
            []
         };
-        let dag = Dag::from_transactions(&transaction_list);
+        let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
         assert_eq!(
             dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["A", "B"],
@@ -489,7 +489,7 @@ mod tests {
            []
         };
         transaction_list.sort_by_key(|x| x.id().clone());
-        let dag = Dag::from_transactions(&transaction_list);
+        let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
         assert_eq!(
             dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["A", "B"],
@@ -578,7 +578,7 @@ mod tests {
            [C]  // remove C
         };
         transaction_list.sort_by_key(|x| x.id().clone());
-        let dag = Dag::from_transactions(&transaction_list);
+        let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
         assert_eq!(
             dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["A", "B"],
@@ -675,7 +675,7 @@ mod tests {
            ],
            []
         };
-        let dag = Dag::from_transactions(&transaction_list);
+        let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
         assert_eq!(
             dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["E", "A", "F", "G", "B", "C", "D", "H"],
@@ -715,7 +715,7 @@ mod tests {
            ],
            []
         };
-        let dag = Dag::from_transactions(&transaction_list);
+        let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
         assert_eq!(
             dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["A"],

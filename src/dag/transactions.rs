@@ -239,7 +239,7 @@ impl Transactions {
             Err(Error::DagEmpty)?;
         }
 
-        let dag = Dag::from_transactions(self.transactions());
+        let dag = Dag::from_transactions(&self.transactions().iter().collect::<Vec<_>>());
 
         if dag.head().len() != 1 {
             Err(Error::DagGenesisError)?;
