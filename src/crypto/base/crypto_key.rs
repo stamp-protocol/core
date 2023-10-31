@@ -115,7 +115,7 @@ impl CryptoKeypair {
         match self {
             Self::Curve25519XChaCha20Poly1305 { public: ref pubkey, secret: ref seckey_opt } => {
                 let seckey_sealed = seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let seckey = crypto_box::SecretKey::from(*seckey_sealed.open(master_key)?.expose_secret().deref());
+                let seckey = crypto_box::SecretKey::from(*seckey_sealed.open(master_key)?.expose_secret());
                 let ephemeral_pubkey_slice = &data[0..32];
                 let ephemeral_pubkey_arr: [u8; 32] = ephemeral_pubkey_slice.try_into()
                     .map_err(|_| Error::CryptoOpenFailed)?;
@@ -141,7 +141,7 @@ impl CryptoKeypair {
         match (sender_keypair, self) {
             (Self::Curve25519XChaCha20Poly1305 { secret: ref sender_seckey_opt, .. }, Self::Curve25519XChaCha20Poly1305 { public: ref recipient_pubkey, .. }) => {
                 let sender_seckey_sealed = sender_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let sender_seckey = crypto_box::SecretKey::from(*sender_seckey_sealed.open(sender_master_key)?.expose_secret().deref());
+                let sender_seckey = crypto_box::SecretKey::from(*sender_seckey_sealed.open(sender_master_key)?.expose_secret());
                 let recipient_chacha_pubkey = crypto_box::PublicKey::from(*recipient_pubkey.deref());
                 let cardboard_box = crypto_box::ChaChaBox::new(&recipient_chacha_pubkey, &sender_seckey);
                 let mut rng = OsRng {};
@@ -162,7 +162,7 @@ impl CryptoKeypair {
         match (self, sender_keypair) {
             (Self::Curve25519XChaCha20Poly1305 { secret: ref recipient_seckey_opt, .. }, CryptoKeypair::Curve25519XChaCha20Poly1305 { public: ref sender_pubkey, .. }) => {
                 let recipient_seckey_sealed = recipient_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let recipient_seckey = crypto_box::SecretKey::from(*recipient_seckey_sealed.open(recipient_master_key)?.expose_secret().deref());
+                let recipient_seckey = crypto_box::SecretKey::from(*recipient_seckey_sealed.open(recipient_master_key)?.expose_secret());
                 let nonce = match message.nonce() {
                     CryptoKeypairNonce::Curve25519XChaCha20Poly1305(vec) => {
                         GenericArray::from_slice(vec.as_slice())
