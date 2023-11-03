@@ -131,7 +131,7 @@ impl Decode for Timestamp {
         let ts = <i64>::decode_with_tag_and_constraints(decoder, tag, constraints)?;
         let dt = match chrono::Utc.timestamp_millis_opt(ts) {
             chrono::offset::LocalResult::Single(dt) => dt,
-            _ => Err(rasn::de::Error::custom("could not deserialize Url"))?,
+            _ => Err(rasn::de::Error::custom("could not deserialize Url", rasn::Codec::Der))?,
         };
         Ok(dt.into())
     }
@@ -270,7 +270,7 @@ impl Decode for Url {
     fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
         let url_str: &str = &decoder.decode_utf8_string(tag, constraints)?;
         let url = url::Url::parse(url_str)
-            .map_err(|_| rasn::de::Error::custom("could not deserialize Url"))?;
+            .map_err(|_| rasn::de::Error::custom("could not deserialize Url", rasn::Codec::Der))?;
         Ok(Self(url))
     }
 }

@@ -86,7 +86,7 @@ macro_rules! impl_asn1_binary {
             fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
                 let vec = decoder.decode_octet_string(tag, constraints)?;
                 let arr = vec.try_into()
-                    .map_err(|_| rasn::de::Error::no_valid_choice("octet string is incorrect length"))?;
+                    .map_err(|_| rasn::de::Error::no_valid_choice("octet string is incorrect length", rasn::Codec::Der))?;
                 Ok(Self(arr))
             }
         }
