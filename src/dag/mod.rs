@@ -27,7 +27,7 @@ pub use crate::{
     util::Timestamp,
 };
 use getset::{Getters, MutGetters};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Defines a node in a DAG. Each node can have multiple previous nodes and multiple next nodes.
 /// It's crazy out here.
@@ -211,6 +211,30 @@ impl<'a> Dag<'a> {
     pub fn walk<F>(&self, mut opfn: F) -> Result<(Vec<TransactionID>, HashSet<TransactionID>)>
         where F: FnMut(&DagNode, &[u32], &HashMap<TransactionID, Vec<u32>>) -> Result<()>,
     {
+        /// stored with the `pending_transactions` as a way to instruct nodes whether they should
+        /// use the given ancestry as-is or whether they should grab a new branch and append it to
+        /// the end.
+        ///
+        /// this makes it so we don't have to sort the node.next() entries, and instead can
+        /// lazy-load our ancetry so it corresponds directly to node order.
+        struct AncestryGrabber {
+            /// The ancestry of the previous node
+            ancestry: Vec<u32>,
+            /// Whether or not we should register a new branch
+            grab_next_branch: bool,
+        }
+
+        impl AncestryGrabber {
+            fn new(ancestry: Vec<u32>, grab_next_branch: bool) -> Self {
+                Self { ancestry, grab_next_branch }
+            }
+
+            fn consume(self) -> (Vec<u32>, bool) {
+                let Self { ancestry, grab_next_branch } = self;
+                (ancestry, grab_next_branch)
+            }
+        }
+
         // the nodes we have visited *in the order we visited them*
         let mut visited = Vec::with_capacity(self.index().len());
         // the nodes we have visited in a format that allows for quick lookups
@@ -222,14 +246,20 @@ impl<'a> Dag<'a> {
         // transactions into this ordered set. when done, we pop the first transaction off the set
         // and loop again. this effectively allows sorting by causal order BUT with the benefit
         // that pending transactions are ordered by timestamp/transaction ID as well.
-        let mut pending_transactions: BTreeSet<(Timestamp, TransactionID)> = Default::default();
+        //
+        // the key is the transaction's timestamp, the transaction's ID, and the transaction that
+        // created this entry (if any). the value is a struct that stores ancestry and determines
+        // if we need to create a new branch for this node when it runs.
+        let mut pending_transactions: BTreeMap<(Timestamp, TransactionID, Option<TransactionID>), AncestryGrabber> = Default::default();
         // this tracks the current branch number, user to catalog branches/merges and ancestry.
         let mut cur_branch: u32 = 0;
-        // this assigns an ancestry (aka Vec<Branch>) to each node.
-        //
-        // it's important to note that nodes are assigned ancestry in a feed-forward way: the
-        // current node being processed assigns the ancestry for the node(s) that come after it!
-        let mut branch_tracker: HashMap<TransactionID, Vec<u32>> = HashMap::new();
+        // Stores the ancestry of each node as they are being processed. This allows ancestry
+        // lookups of nodes that have been previously seen.
+        let mut branch_tracker: HashMap<TransactionID, Vec<u32>> = HashMap::with_capacity(self.index().len());
+        // this is used by merging nodes (ie, has prev_transactions.len() > 1) to store the
+        // ancestry of the previous nodes so they can all be merged together when the merge is
+        // ready.
+        let mut branch_merge_tracker: HashMap<TransactionID, Vec<Vec<u32>>> = HashMap::new();
 
         // a helper function to grab the current branch id and increment the counter.
         let mut next_branch = || {
@@ -259,9 +289,10 @@ impl<'a> Dag<'a> {
                 // NOTE: we can assign branch ids sequentially here because the head nodes are
                 // sorted before this function is ever called. therefor, the head nodes are going
                 // to be in the same position in the btree that they are when we loop over them.
-                pending_transactions.insert((node.transaction().entry().created().clone(), tid.clone()));
-                // each head node gets its own branch.
-                branch_tracker.insert(tid.clone(), vec![next_branch()]);
+                pending_transactions.insert(
+                    (node.transaction().entry().created().clone(), tid.clone(), None),
+                    AncestryGrabber::new(vec![], true),
+                );
             }}
         }
 
@@ -269,17 +300,7 @@ impl<'a> Dag<'a> {
         // transactions following, they will be added to the pending list and we continue ad
         // nauseum. if the transaction is a merge, we do not process it until all the transactions
         // before it have been run.
-        while let Some((_, tid)) = pending_transactions.pop_first() {
-            // grab our ancestry from the branch tracker.
-            let mut ancestry = match branch_tracker.get(&tid) {
-                Some(anc) => anc.clone(),
-                // should NOT happen, but unwrap isn't acceptable here soooo...
-                None => {
-                    missing_transactions.insert(tid.clone());
-                    continue;
-                }
-            };
-
+        while let Some(((_, tid, _prev_transaction_id), ancestry_grabber)) = pending_transactions.pop_first() {
             // check if we're looping. this should likely never be true, but can't be too careful
             // these days...
             if visited_set.contains(&tid) {
@@ -287,39 +308,45 @@ impl<'a> Dag<'a> {
                 continue;
             }
 
+            let (mut ancestry, grab_next_branch) = ancestry_grabber.consume();
+
             with_trans! { &tid, node, {
                 // if we have more than one previous transaction, we have to make sure that all the
                 // previous transactions have run before we can run this one!
                 if node.prev().len() > 1 {
-                    let mut visited_all_prev = true;
-                    for tid_prev in node.prev() {
-                        if !visited_set.contains(tid_prev) {
-                            visited_all_prev = false;
-                            break;
-                        }
-                    }
+                    // push the ancestors we were given for the previous node into our merge
+                    // tracker for THIS node.
+                    let entry = branch_merge_tracker.entry(tid.clone()).or_default();
+                    (*entry).push(ancestry.clone());
 
-                    // if we still have previous transactions that have yet to run, bail. they will
-                    // add this transaction into the pending list again and we'll have our time to
-                    // shine.
-                    if !visited_all_prev {
+                    if entry.len() < node.prev().len() {
                         continue;
                     }
 
                     // gee whillickers, we've visited all the previous transactions! harvest their
                     // dumb ancestry and add it to our own, adding another branch to signify our
                     // merge on this joyous occasion.
-                    for tid_prev in node.prev() {
-                        if let Some(prev_ancestors) = branch_tracker.get(tid_prev) {
-                            for prev_ancestor in prev_ancestors {
-                                ancestry.push(*prev_ancestor);
+                    match branch_merge_tracker.remove(&tid) {
+                        Some(ancestor_vec_vec) => {
+                            for ancestor_vec in ancestor_vec_vec {
+                                for ancestor in ancestor_vec {
+                                    ancestry.push(ancestor);
+                                }
                             }
+                        }
+                        None => {
+                            missing_transactions.insert(tid.clone());
+                            continue;
                         }
                     }
                     ancestry.push(next_branch());
                     ancestry.sort();
                     ancestry.dedup();
+                } else if grab_next_branch {
+                    ancestry.push(next_branch());
                 }
+
+                branch_tracker.insert(tid.clone(), ancestry.clone());
 
                 // track that we've seen this transaction
                 visited.push(tid.clone());
@@ -336,18 +363,20 @@ impl<'a> Dag<'a> {
                 if node.next().len() == 1 {
                     let ntid = node.next()[0];
                     with_trans! { ntid, node_next, {
-                        branch_tracker.insert(ntid.clone(), ancestry);
-                        pending_transactions.insert((node_next.transaction().entry().created().clone(), ntid.clone()));
+                        pending_transactions.insert(
+                            (node_next.transaction().entry().created().clone(), ntid.clone(), Some(tid.clone())),
+                            AncestryGrabber::new(ancestry, false),
+                        );
                     }}
                 } else {
                     // the next nodes were sorted before walk() is called, so we can sequentially
                     // assign branch nums here.
                     for &ntid in node.next() {
                         with_trans! { ntid, next_node, {
-                            let mut ancestry_next = ancestry.clone();
-                            ancestry_next.push(next_branch());
-                            branch_tracker.insert(ntid.clone(), ancestry_next);
-                            pending_transactions.insert((next_node.transaction().entry().created().clone(), ntid.clone()));
+                            pending_transactions.insert(
+                                (next_node.transaction().entry().created().clone(), ntid.clone(), Some(tid.clone())),
+                                AncestryGrabber::new(ancestry.clone(), true),
+                            );
                         }}
                     }
                 }
@@ -734,13 +763,37 @@ mod tests {
         );
         assert_eq!(dag.missing.len(), 0);
         let mut visited = Vec::new();
-        dag.walk(|node, _, _| {
-            visited.push(node.transaction().id().clone());
+        dag.walk(|node, ancestry, idx| {
+            visited.push(
+                (
+                    node.transaction().id().clone(),
+                    Vec::from(ancestry),
+                    idx.get(node.transaction().id()).map(|x| x.as_slice()) == Some(ancestry)
+                )
+            );
             Ok(())
         }).unwrap();
         assert_eq!(
-            visited.iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
-            vec!["A", "B", "E", "J", "C", "F", "G", "D", "H", "I", "K", "L", "M", "O", "N", "P", "Q"],
+            visited.into_iter().map(|(tid, ancestry, eq)| (*tid_to_name.get(&tid).unwrap(), ancestry, eq)).collect::<Vec<_>>(),
+            vec![
+                ("A", vec![0], true),
+                ("B", vec![0, 1], true),
+                ("E", vec![0, 1, 2], true),
+                ("J", vec![0, 1, 2], true),
+                ("C", vec![0, 1, 3], true),
+                ("F", vec![0, 1, 3, 4], true),
+                ("G", vec![0, 1, 3, 5], true),
+                ("D", vec![0, 1, 6], true),
+                ("H", vec![0, 1, 6, 7], true),
+                ("I", vec![0, 1, 6, 8], true),
+                ("K", vec![0, 1, 2, 6, 7, 8, 9], true),
+                ("L", vec![0, 1, 3, 4], true),
+                ("M", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], true),
+                ("O", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], true),
+                ("N", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12], true),
+                ("P", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12], true),
+                ("Q", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12], true),
+            ],
         )
     }
 }
