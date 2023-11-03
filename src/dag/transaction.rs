@@ -453,7 +453,7 @@ impl std::fmt::Display for TransactionID {
 
 impl std::cmp::PartialOrd for TransactionID {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.deref().as_bytes().partial_cmp(other.deref().as_bytes())
+        Some(self.deref().as_bytes().cmp(other.deref().as_bytes()))
     }
 }
 
@@ -597,10 +597,16 @@ impl Transaction {
         Ok(())
     }
 
-    /// Verify this transaction's validity. We have to make sure its ID matches
-    /// the hash of its public contents, and we have to make sure the signatures
-    /// satisfy a policy which has the capabilities the transaction requires.
-    pub fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
+    /// Verify the hash on this transaction matches the transaction entry's hash, and also verify
+    /// the signatures of that hash.
+    ///
+    /// This is useful if you need to validate a transaction is "valid" up until the point where
+    /// you need a copy of the full identity (so that the policies can be checked). In other words,
+    /// if you need a verify a transaction but don't have all the information you need to run
+    /// `Transaction.verify()` then you can run this as a self-contained way of verification, as
+    /// long as you keep in mind that the transaction ultimately needs to be checked against a
+    /// built identity.
+    pub fn verify_hash_and_signatures(&self) -> Result<()> {
         let serialized = ser::serialize(&self.entry().strip_private())?;
         // first verify the transaction's hash.
         let transaction_hash = match self.id().deref() {
@@ -613,6 +619,14 @@ impl Transaction {
 
         // now verify the signatures on the stinkin transaction
         self.verify_signatures()?;
+        Ok(())
+    }
+
+    /// Verify this transaction's validity. We have to make sure its ID matches
+    /// the hash of its public contents, and we have to make sure the signatures
+    /// satisfy a policy which has the capabilities the transaction requires.
+    pub fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
+        self.verify_hash_and_signatures()?;
 
         macro_rules! search_capabilities {
             ($identity:expr) => {
