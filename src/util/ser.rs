@@ -427,11 +427,6 @@ mod tests {
         assert_eq!(id5, id5_2);
     }
 
-    // This should remain disabled until https://github.com/XAMPPRocky/rasn/issues/165 is fixed.
-    //
-    // In fact, it might make sense to just take the hit on the extra handful of bytes that
-    // explicit tagging uses and move on. Still undecided though, for now.
-    /*
     #[test]
     fn ser_vec_enum_implicit_tag() {
         #[derive(Debug, Clone, AsnType, Encode, Decode)]
@@ -454,6 +449,5 @@ mod tests {
         let transactions1_2: Vec<MultisigPolicySignature> = rasn::der::decode(&ser1[..]).unwrap();
         assert_eq!(transactions1_2.len(), 1);
     }
-    */
 }
 
