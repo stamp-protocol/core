@@ -676,6 +676,17 @@ impl Transaction {
         }
     }
 
+    /// Determines if this transaction has been signed by a given key.
+    pub fn is_signed_by(&self, admin_key: &AdminKeypairPublic) -> bool {
+        self.signatures().iter()
+            .find(|sig| {
+                match sig {
+                    MultisigPolicySignature::Key { key, .. } => key == admin_key,
+                }
+            })
+            .is_some()
+    }
+
     /// Reencrypt this transaction.
     pub(crate) fn reencrypt(mut self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let new_body = self.entry().body().clone().reencrypt(old_master_key, new_master_key)?;
@@ -867,6 +878,16 @@ mod tests {
     }
 
     #[test]
+    fn trans_verify_hash_and_signatures() {
+        let now = Timestamp::now();
+        let (_master_key1, transactions1, _admin_key1) = test::create_fake_identity(now.clone());
+        let (_master_key2, mut transactions2, _admin_key2) = test::create_fake_identity(now.clone());
+        transactions1.transactions()[0].verify_hash_and_signatures().unwrap();
+        *transactions2.transactions_mut()[0].signatures_mut() = transactions1.transactions()[0].signatures().clone();
+        assert!(matches!(transactions2.transactions()[0].verify_hash_and_signatures(), Err(Error::TransactionSignatureInvalid(_))));
+    }
+
+    #[test]
     fn trans_new_verify() {
         let now = Timestamp::now();
         let (_master_key, transactions, admin_key) = test::create_fake_identity(now.clone());
@@ -898,6 +919,15 @@ mod tests {
             policies: vec![],
         });
         assert!(matches!(trans5.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
+    }
+
+    #[test]
+    fn trans_is_signed_by() {
+        let now = Timestamp::now();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(now.clone());
+        let admin_key2 = AdminKeypair::new_ed25519(&master_key).unwrap();
+        assert!(transactions.transactions()[0].is_signed_by(&admin_key.key().clone().into()));
+        assert!(!transactions.transactions()[0].is_signed_by(&admin_key2.clone().into()));
     }
 
     #[test]
