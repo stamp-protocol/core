@@ -10,7 +10,9 @@ use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
 
-/// A key for deriving a MAC
+/// A key for deriving a MAC.
+///
+/// Mmkay.
 #[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum MacKey {
@@ -20,7 +22,7 @@ pub enum MacKey {
 }
 
 impl MacKey {
-    /// Create a new blacke2b MAC key
+    /// Create a new blake2b MAC key
     pub fn new_blake2b() -> Result<Self> {
         let mut randbuf = [0u8; 64];
         OsRng.fill_bytes(&mut randbuf);
@@ -40,16 +42,6 @@ pub enum Mac {
     /// Blake2b MAC
     #[rasn(tag(explicit(0)))]
     Blake2b(Binary<64>),
-}
-
-impl Deref for Mac {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Mac::Blake2b(bytes) => &(bytes.deref())[..],
-        }
-    }
 }
 
 impl Mac {
@@ -83,6 +75,16 @@ impl Mac {
             }
         }
         Ok(())
+    }
+}
+
+impl Deref for Mac {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Mac::Blake2b(bytes) => &(bytes.deref())[..],
+        }
     }
 }
 

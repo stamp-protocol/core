@@ -1,4 +1,7 @@
-use blake2::Digest;
+use blake2::{
+    Digest,
+    digest::{FixedOutput, Mac},
+};
 use crate::{
     error::{Error, Result},
     util::{
@@ -44,6 +47,17 @@ impl Hash {
         hasher.update(message);
         let genarr = hasher.finalize();
         let arr: [u8; 64] = genarr.as_slice().try_into()
+            .map_err(|_| Error::BadLength)?;
+        Ok(Self::Blake2b512(Binary::new(arr)))
+    }
+
+    /// Create a blake2b (512 bit) hash derived from a secret key, salt, personal data, and a
+    /// message. This can be used for MAC and key stretching.
+    pub fn new_blake2b_512_keyed(key_bytes: &[u8], salt: &[u8], personal: &[u8], message: &[u8]) -> Result<Self> {
+        let mut hasher = blake2::Blake2bMac512::new_with_salt_and_personal(key_bytes, salt, personal)
+            .map_err(|_| Error::CryptoBadKey)?;
+        hasher.update(message);
+        let arr: [u8; 64] = hasher.finalize_fixed().as_slice().try_into()
             .map_err(|_| Error::BadLength)?;
         Ok(Self::Blake2b512(Binary::new(arr)))
     }
@@ -163,6 +177,21 @@ pub(crate) mod tests {
         match &hash3 {
             Hash::Blake2b512(bin) => {
                 assert_eq!(base64_encode(bin.deref()), "80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQ");
+            }
+            _ => panic!("Not possible"),
+        }
+    }
+
+    #[test]
+    fn hash_blake2b_512_keyed() {
+        let msg = b"that kook dropped in on me. we need to send him a (cryptographically hashed) message.";
+        let key = b"mac stuff";
+        let salt = b"";
+        let personal = b"";
+        let hash = Hash::new_blake2b_512_keyed(key, salt, personal, msg).unwrap();
+        match &hash {
+            Hash::Blake2b512(bin) => {
+                assert_eq!(base64_encode(bin.deref()), "Y3ULFER3MO_urLj8YrGayPWBAyVcp0ud78oJjAp8dODaNYsel7siifJpMsAYXNyyHMp1Xs6Hrs3HGXcaEFuzfQ");
             }
             _ => panic!("Not possible"),
         }
