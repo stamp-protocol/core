@@ -1,4 +1,4 @@
-use chacha20poly1305::aead::{Aead, NewAead};
+use chacha20poly1305::aead::{Aead, KeyInit};
 use crate::{
     error::{Error, Result},
     util::ser::{Binary, BinarySecret, BinaryVec, SerdeBinary},

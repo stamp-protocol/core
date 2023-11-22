@@ -1,5 +1,4 @@
 use blake2::{Digest, digest::crypto_common::generic_array::GenericArray};
-use chacha20poly1305::aead::{self, Aead};
 use crate::{
     crypto::base::{KeyID, SecretKey},
     error::{Error, Result},
@@ -9,6 +8,7 @@ use crate::{
         ser::{Binary, BinarySecret, BinaryVec},
     },
 };
+use crypto_box::aead::{Aead as CryptoboxAead, AeadCore as CryptoboxAeadCore};
 use rand::rngs::OsRng;
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
@@ -81,7 +81,7 @@ impl CryptoKeypair {
         let public = secret.public_key();
         Ok(Self::Curve25519XChaCha20Poly1305 {
             public: Binary::new(*public.as_bytes()),
-            secret: Some(Private::seal(master_key, &BinarySecret::new(*secret.as_bytes()))?),
+            secret: Some(Private::seal(master_key, &BinarySecret::new(secret.to_bytes()))?),
         })
     }
 
@@ -100,7 +100,7 @@ impl CryptoKeypair {
                 let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into()
                     .map_err(|_| Error::CryptoSealFailed)?;
                 let nonce = nonce_arr.into();
-                let mut enc = cardboard_box.encrypt(&nonce, aead::Payload::from(data))
+                let mut enc = cardboard_box.encrypt(&nonce, data)
                     .map_err(|_| Error::CryptoSealFailed)?;
                 let mut pubvec = Vec::from(ephemeral_pubkey.as_ref());
                 pubvec.append(&mut enc);
@@ -129,7 +129,7 @@ impl CryptoKeypair {
                 let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into()
                     .map_err(|_| Error::CryptoSealFailed)?;
                 let nonce = nonce_arr.into();
-                cardboard_box.decrypt(&nonce, aead::Payload::from(ciphertext))
+                cardboard_box.decrypt(&nonce, ciphertext)
                     .map_err(|_| Error::CryptoOpenFailed)
             }
         }
@@ -145,8 +145,8 @@ impl CryptoKeypair {
                 let recipient_chacha_pubkey = crypto_box::PublicKey::from(*recipient_pubkey.deref());
                 let cardboard_box = crypto_box::ChaChaBox::new(&recipient_chacha_pubkey, &sender_seckey);
                 let mut rng = OsRng {};
-                let nonce = crypto_box::generate_nonce(&mut rng);
-                let msg = cardboard_box.encrypt(&nonce, aead::Payload::from(data))
+                let nonce = crypto_box::ChaChaBox::generate_nonce(&mut rng);
+                let msg = cardboard_box.encrypt(&nonce, data)
                     .map_err(|_| Error::CryptoSealFailed)?;
                 let nonce_arr = nonce.as_slice().try_into()
                     .map_err(|_| Error::BadLength)?;
@@ -170,7 +170,7 @@ impl CryptoKeypair {
                 };
                 let sender_chacha_pubkey = crypto_box::PublicKey::from(*sender_pubkey.deref());
                 let cardboard_box = crypto_box::ChaChaBox::new(&sender_chacha_pubkey, &recipient_seckey);
-                cardboard_box.decrypt(nonce, aead::Payload::from(message.ciphertext().as_slice()))
+                cardboard_box.decrypt(nonce, message.ciphertext().as_slice())
                     .map_err(|_| Error::CryptoOpenFailed)
             }
         }

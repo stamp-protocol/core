@@ -44,5 +44,5 @@ lint:
 
 clean:
 	rm -rf target/
-	$(CARGO) clean $(CARGO_BUILD_ARGS)
+	$(CARGO) clean
 

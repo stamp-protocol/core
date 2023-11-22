@@ -12,7 +12,7 @@ use crate::{
         sign::Signable,
     },
 };
-use rand::{RngCore, rngs::OsRng};
+use rand::rngs::OsRng;
 use rand_chacha::rand_core::{RngCore as RngCoreChaCha, SeedableRng};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};

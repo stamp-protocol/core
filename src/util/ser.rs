@@ -7,6 +7,7 @@
 //! readily supported by rust, we kind of have to take things into our own hands
 //! here and just make some serialization calls.
 
+use base64::Engine as _;
 use core::hash::Hash;
 use crate::{
     error::{Error, Result},
@@ -36,11 +37,11 @@ pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
 
 /// Convert bytes to base64
 pub fn base64_encode<T: AsRef<[u8]>>(bytes: T) -> String {
-    base64::encode_config(bytes.as_ref(), base64::URL_SAFE_NO_PAD)
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes.as_ref())
 }
 
 pub fn base64_decode<T: AsRef<[u8]>>(bytes: T) -> Result<Vec<u8>> {
-    Ok(base64::decode_config(bytes.as_ref(), base64::URL_SAFE_NO_PAD)?)
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(bytes.as_ref())?)
 }
 
 /// A default implementation for (de)serializing an object to or from binary
