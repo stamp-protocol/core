@@ -729,7 +729,7 @@ mod tests {
             stamp::Confidence,
         },
         policy::{Capability, Context, MultisigPolicy, MultisigPolicySignature, Policy, PolicyContainer, TransactionBodyType},
-        private::{PrivateWithMac, MaybePrivate},
+        private::{PrivateWithHmac, MaybePrivate},
         util::{Date, Url, ser::BinaryVec, test::{self, sign_and_push}},
     };
     use std::str::FromStr;
@@ -1359,7 +1359,7 @@ mod tests {
 
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithMac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair.clone()), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair.clone()), "default:crypto", Some("Use this to send me emails") ]
@@ -1388,7 +1388,7 @@ mod tests {
 
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithMac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
@@ -1425,7 +1425,7 @@ mod tests {
 
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithMac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
@@ -1457,7 +1457,7 @@ mod tests {
 
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithMac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
@@ -1849,7 +1849,7 @@ mod tests {
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Second", None);
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithMac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
         let transactions3 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
@@ -1891,7 +1891,7 @@ mod tests {
 
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithMac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]

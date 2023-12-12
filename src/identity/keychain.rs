@@ -15,7 +15,7 @@
 use crate::{
     error::{Error, Result},
     crypto::base::{KeyID, SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
-    private::{PrivateWithMac},
+    private::{PrivateWithHmac},
     util::{Public, sign::Signable, ser},
 };
 use getset;
@@ -222,7 +222,7 @@ pub enum Key {
     Crypto(CryptoKeypair),
     /// A symmetric encryption key.
     #[rasn(tag(explicit(2)))]
-    Secret(PrivateWithMac<SecretKey>),
+    Secret(PrivateWithHmac<SecretKey>),
 }
 
 impl Key {
@@ -237,7 +237,7 @@ impl Key {
     }
 
     /// Create a new secret key
-    pub fn new_secret(key: PrivateWithMac<SecretKey>) -> Self {
+    pub fn new_secret(key: PrivateWithHmac<SecretKey>) -> Self {
         Self::Secret(key)
     }
 
@@ -258,7 +258,7 @@ impl Key {
     }
 
     /// Returns the `SecretKey` if this is a secret key.
-    pub fn as_secretkey(&self) -> Option<&PrivateWithMac<SecretKey>> {
+    pub fn as_secretkey(&self) -> Option<&PrivateWithHmac<SecretKey>> {
         match self {
             Self::Secret(ref x) => Some(x),
             _ => None,
@@ -270,7 +270,7 @@ impl Key {
         match self {
             Self::Sign(keypair) => keypair.key_id(),
             Self::Crypto(keypair) => keypair.key_id(),
-            Self::Secret(pwh) => KeyID::SecretKey(pwh.mac().clone()),
+            Self::Secret(pwh) => KeyID::SecretKey(pwh.hmac().clone()),
         }
     }
 
@@ -702,7 +702,7 @@ mod tests {
         let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
-        let key6 = Key::Secret(PrivateWithMac::seal(&master_key, secret_key).unwrap());
+        let key6 = Key::Secret(PrivateWithHmac::seal(&master_key, secret_key).unwrap());
 
         let keys = vec![key4, key5, key6];
         macro_rules! keytype {
@@ -719,7 +719,7 @@ mod tests {
     fn key_serde() {
         let master_key = SecretKey::new_xchacha20poly1305().unwrap();
         let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let key = Key::Secret(PrivateWithMac::seal(&master_key, secret_key).unwrap());
+        let key = Key::Secret(PrivateWithHmac::seal(&master_key, secret_key).unwrap());
         let ser = key.serialize().unwrap();
         let key2 = Key::deserialize(ser.as_slice()).unwrap();
         assert!(key.as_secretkey().is_some());
@@ -736,7 +736,7 @@ mod tests {
         let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
-        let key6 = Key::Secret(PrivateWithMac::seal(&master_key, secret_key).unwrap());
+        let key6 = Key::Secret(PrivateWithHmac::seal(&master_key, secret_key).unwrap());
 
         let val4 = key4.as_signkey().unwrap().sign(&master_key, b"hi i'm butch").unwrap();
         let val5 = key5.as_cryptokey().unwrap().seal_anonymous(b"sufferin succotash").unwrap();
@@ -775,7 +775,7 @@ mod tests {
         let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
-        let key6 = Key::Secret(PrivateWithMac::seal(&master_key, secret_key).unwrap());
+        let key6 = Key::Secret(PrivateWithHmac::seal(&master_key, secret_key).unwrap());
 
         assert!(key4.has_private());
         assert!(key5.has_private());
@@ -894,7 +894,7 @@ mod tests {
         let (master_key, keychain) = keychain_new();
         let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithMac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
         let sign = Key::new_sign(sign_keypair);
         let crypto = Key::new_crypto(crypto_keypair);
         let secret = Key::new_secret(secret_key);
@@ -967,7 +967,7 @@ mod tests {
         let (master_key, keychain) = keychain_new();
         let sign = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
         let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap());
-        let secret = Key::new_secret(PrivateWithMac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap());
+        let secret = Key::new_secret(PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap());
         let keychain = keychain
             .add_subkey(sign, "sign", None).unwrap()
             .add_subkey(crypto, "crypto", None).unwrap()

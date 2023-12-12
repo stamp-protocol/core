@@ -22,13 +22,13 @@ mod secret_key;
 mod sign_key;
 mod crypto_key;
 mod hash;
-mod mac;
+mod hmac;
 
 pub use secret_key::*;
 pub use sign_key::*;
 pub use crypto_key::*;
 pub use hash::*;
-pub use mac::*;
+pub use hmac::*;
 
 /// A constant that provides a default for CPU difficulty for interactive key derivation
 pub const KDF_OPS_INTERACTIVE: u32 = 2;
@@ -46,7 +46,7 @@ pub const KDF_OPS_SENSITIVE: u32 = 4;
 pub const KDF_MEM_SENSITIVE: u32 = 1048576;
 
 /// A value that lets us reference keys by a unique identifier (pubkey for asymc keypairs
-/// and MAC for secret keys).
+/// and HMAC for secret keys).
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum KeyID {
@@ -55,7 +55,7 @@ pub enum KeyID {
     #[rasn(tag(explicit(1)))]
     CryptoKeypair(CryptoKeypairPublic),
     #[rasn(tag(explicit(2)))]
-    SecretKey(Mac),
+    SecretKey(Hmac),
 }
 
 impl KeyID {
@@ -67,8 +67,8 @@ impl KeyID {
             Self::CryptoKeypair(CryptoKeypairPublic::Curve25519XChaCha20Poly1305(pubkey)) => {
                 ser::base64_encode(pubkey.as_ref())
             }
-            Self::SecretKey(mac) => {
-                ser::base64_encode(mac.deref())
+            Self::SecretKey(hmac) => {
+                ser::base64_encode(hmac.deref())
             }
         }
     }
@@ -90,7 +90,7 @@ impl KeyID {
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn random_secret() -> Self {
-        Self::SecretKey(Mac::new_blake2b(&MacKey::new_blake2b().unwrap(), b"get a job").unwrap())
+        Self::SecretKey(Hmac::new_blake2b(&HmacKey::new_blake2b().unwrap(), b"get a job").unwrap())
     }
 }
 

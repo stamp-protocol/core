@@ -35,7 +35,7 @@ pub enum Error {
 
     /// An MAC failed to verify.
     #[error("the given MAC combo does not verify")]
-    CryptoMacVerificationFailed,
+    CryptoHmacVerificationFailed,
 
     /// Could not generate key from password
     #[error("key derivation from password failed")]

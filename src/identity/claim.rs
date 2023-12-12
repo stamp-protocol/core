@@ -417,7 +417,7 @@ pub(crate) mod tests {
     use crate::{
         error::Error,
         identity::{IdentityID},
-        private::PrivateWithMac,
+        private::PrivateWithHmac,
     };
     use std::convert::TryFrom;
     use std::str::FromStr;
@@ -493,7 +493,7 @@ pub(crate) mod tests {
                 let (_master_key, spec, spec2) = make_specs!($claimmaker, $val);
                 assert_eq!(spec.has_private(), true);
                 match $getmaybe(spec.clone()) {
-                    MaybePrivate::Private(PrivateWithMac { data: Some(_), .. }) => {},
+                    MaybePrivate::Private(PrivateWithHmac { data: Some(_), .. }) => {},
                     _ => panic!("bad maybe val: {}", stringify!($claimtype)),
                 }
                 let claim = Claim::new(ClaimID::random(), spec, None);
