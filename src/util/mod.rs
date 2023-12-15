@@ -38,13 +38,13 @@ macro_rules! object_id {
         #[allow(dead_code)]
         impl $name {
             pub(crate) fn blank() -> Self {
-                let hash = crate::crypto::base::Hash::Blake2b512(crate::util::ser::Binary::new([0u8; 64]));
+                let hash = crate::crypto::base::Hash::Blake3(crate::util::ser::Binary::new([0u8; 32]));
                 $name(crate::dag::TransactionID::from(hash))
             }
 
             #[cfg(test)]
             pub(crate) fn random() -> Self {
-                let hash = crate::crypto::base::Hash::random_blake2b_512();
+                let hash = crate::crypto::base::Hash::random_blake3();
                 $name(crate::dag::TransactionID::from(hash))
             }
         }
@@ -298,9 +298,9 @@ mod tests {
             TestID
         }
 
-        let hash1 = Hash::new_blake2b_512(b"get a job").unwrap();
-        let hash2 = Hash::new_blake2b_512(b"hot one today!").unwrap();
-        let hash3 = Hash::new_blake2b_512(b"YEAH?!").unwrap();
+        let hash1 = Hash::new_blake3(b"get a job").unwrap();
+        let hash2 = Hash::new_blake3(b"hot one today!").unwrap();
+        let hash3 = Hash::new_blake3(b"YEAH?!").unwrap();
 
         let id1 = TestID::from(TransactionID::from(hash1));
         let id2 = TestID::from(TransactionID::from(hash2));
@@ -309,9 +309,9 @@ mod tests {
         let string_id1 = String::try_from(&id1).unwrap();
         let string_id2 = String::try_from(&id2).unwrap();
         let string_id3 = String::try_from(&id3).unwrap();
-        assert_eq!(&string_id1, "emMTrxVrn5BZ4rM75UN20fFYurs3883OwVgDL62RkAjOv_ikAXNrGVpgiVKuYe_5nrL-j0N-XaZ66c6eEvVTVAA");
-        assert_eq!(&string_id2, "xIckNqLUDYNitx_Ig50QwMI6k8_5V1EVy5wApqjEBFvqCFb7837FdmI93jjfc67yR1B8Id8eURmWAaX8dBllNwA");
-        assert_eq!(&string_id3, "2RDIGtU9_p-hLMFpvO2mNGcH-7zLKwUhWCiCXtGvrQHYXdBx_1i6jCjmuKzOHgM8jaxH13kRbcxodk7gmWOOkQA");
+        assert_eq!(&string_id1, "He7UaLB48wVhf85NXb5PlCpYuXdYsWCzJ48-IFikVXwA");
+        assert_eq!(&string_id2, "Hcbsu5WKLBJZ58TGznj1Beqs0Ta-c4r1pLta6Y0wrnYA");
+        assert_eq!(&string_id3, "aVAFYuZJXDC0cT44V0Edi0IhylIs0eaxobc_7LI4KRUA");
 
         let id1_2 = TestID::try_from(string_id1.as_str()).unwrap();
         let id2_2 = TestID::try_from(string_id2.as_str()).unwrap();

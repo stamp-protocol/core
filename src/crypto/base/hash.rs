@@ -1,7 +1,3 @@
-use blake2::{
-    Digest,
-    digest::{FixedOutput, Mac},
-};
 use crate::{
     error::{Error, Result},
     util::{
@@ -16,10 +12,8 @@ use std::ops::Deref;
 /// An enum we can pass to various signing functions to tell them which hashing
 /// algorithm to use.
 pub enum HashAlgo {
-    /// Blake2b 512
-    Blake2b512,
-    /// Blake2b 256
-    Blake2b256,
+    /// Blake3
+    Blake3,
 }
 
 /// A cryptographic hash. By defining this as an enum, we allow expansion of
@@ -31,67 +25,30 @@ pub enum HashAlgo {
 #[derive(Clone, Debug, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Hash {
-    /// Blake2b 512bit hash
+    /// Blake3 256bit hash
     #[rasn(tag(explicit(0)))]
-    Blake2b512(Binary<64>),
-
-    /// Blake2b 512bit hash
-    #[rasn(tag(explicit(1)))]
-    Blake2b256(Binary<32>),
+    Blake3(Binary<32>),
 }
 
 impl Hash {
-    /// Create a new blake2b (512 bit) hash from a message
-    pub fn new_blake2b_512(message: &[u8]) -> Result<Self> {
-        let mut hasher = blake2::Blake2b512::new();
-        hasher.update(message);
-        let genarr = hasher.finalize();
-        let arr: [u8; 64] = genarr.as_slice().try_into()
-            .map_err(|_| Error::BadLength)?;
-        Ok(Self::Blake2b512(Binary::new(arr)))
-    }
-
-    /// Create a blake2b (512 bit) hash derived from a secret key, salt, personal data, and a
-    /// message. This can be used for MAC and key stretching.
-    pub fn new_blake2b_512_keyed(key_bytes: &[u8], salt: &[u8], personal: &[u8], message: &[u8]) -> Result<Self> {
-        let mut hasher = blake2::Blake2bMac512::new_with_salt_and_personal(key_bytes, salt, personal)
-            .map_err(|_| Error::CryptoBadKey)?;
-        hasher.update(message);
-        let arr: [u8; 64] = hasher.finalize_fixed().as_slice().try_into()
-            .map_err(|_| Error::BadLength)?;
-        Ok(Self::Blake2b512(Binary::new(arr)))
-    }
-
-    /// Create a new blake2b (256 bit) hash from a message
-    pub fn new_blake2b_256(message: &[u8]) -> Result<Self> {
-        let mut hasher = blake2::Blake2b::<blake2::digest::consts::U32>::new();
-        hasher.update(message);
-        let genarr = hasher.finalize();
-        let arr: [u8; 32] = genarr.as_slice().try_into()
-            .map_err(|_| Error::BadLength)?;
-        Ok(Self::Blake2b256(Binary::new(arr)))
+    /// Create a new blake3 (512 bit) hash from a message
+    pub fn new_blake3(message: &[u8]) -> Result<Self> {
+        let hash = blake3::hash(message);
+        let arr: [u8; 32] = hash.as_bytes().clone();
+        Ok(Self::Blake3(Binary::new(arr)))
     }
 
     #[cfg(test)]
-    pub(crate) fn random_blake2b_512() -> Self {
-        let mut randbuf = [0u8; 64];
-        OsRng.fill_bytes(&mut randbuf);
-        Self::Blake2b512(Binary::new(randbuf))
-    }
-
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn random_blake2b_256() -> Self {
+    pub(crate) fn random_blake3() -> Self {
         let mut randbuf = [0u8; 32];
         OsRng.fill_bytes(&mut randbuf);
-        Self::Blake2b256(Binary::new(randbuf))
+        Self::Blake3(Binary::new(randbuf))
     }
 
     /// Return the byte slice representing this hash.
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            Self::Blake2b512(bin) => bin.deref(),
-            Self::Blake2b256(bin) => bin.deref(),
+            Self::Blake3(bin) => bin.deref(),
         }
     }
 }
@@ -106,11 +63,8 @@ impl TryFrom<&Hash> for String {
             vec
         }
         let enc = match hash {
-            Hash::Blake2b512(bin) => {
+            Hash::Blake3(bin) => {
                 bin_with_tag(bin, 0)
-            }
-            Hash::Blake2b256(bin) => {
-                bin_with_tag(bin, 1)
             }
         };
         Ok(ser::base64_encode(&enc[..]))
@@ -126,14 +80,9 @@ impl TryFrom<&str> for Hash {
         let bytes = &dec[0..dec.len() - 1];
         let hash = match tag {
             0 => {
-                let arr: [u8; 64] = bytes.try_into()
-                    .map_err(|_| Error::BadLength)?;
-                Self::Blake2b512(Binary::new(arr))
-            }
-            1 => {
                 let arr: [u8; 32] = bytes.try_into()
                     .map_err(|_| Error::BadLength)?;
-                Self::Blake2b256(Binary::new(arr))
+                Self::Blake3(Binary::new(arr))
             }
             _ => Err(Error::CryptoAlgoMismatch)?,
         };
@@ -153,78 +102,29 @@ pub(crate) mod tests {
     use crate::util::ser::base64_encode;
 
     #[test]
-    fn hash_blake2b_512_encode_decode_fmt() {
+    fn hash_blake3_encode_decode_fmt() {
         let msg = b"that kook dropped in on me. we need to send him a (cryptographically hashed) message.";
-        let hash = Hash::new_blake2b_512(&msg[..]).unwrap();
+        let hash = Hash::new_blake3(&msg[..]).unwrap();
         match &hash {
-            Hash::Blake2b512(bin) => {
-                assert_eq!(base64_encode(bin.deref()), "80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQ");
+            Hash::Blake3(bin) => {
+                assert_eq!(base64_encode(bin.deref()), "WZtRlW37zRXCMzX95hUmVPU0NCrf0U8HonMc-0bb-Pg");
             }
-            _ => panic!("Not possible"),
         }
         let bytes = ser::serialize(&hash).unwrap();
-        assert_eq!(ser::base64_encode(&bytes[..]), String::from("oEIEQPNA71VgGRdHwoY4VZ9HOdNt_duXyEOXX2NE-zRYJYY_qWi-cEfrWn0Zej_GGyhFka0Nvu7t7LdQL4NGyD0ayqE"));
-        assert_eq!(format!("{}", hash), String::from("80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQA"));
+        assert_eq!(ser::base64_encode(&bytes[..]), String::from("oCIEIFmbUZVt-80VwjM1_eYVJlT1NDQq39FPB6JzHPtG2_j4"));
+        assert_eq!(format!("{}", hash), String::from("WZtRlW37zRXCMzX95hUmVPU0NCrf0U8HonMc-0bb-PgA"));
         let hash2: Hash = ser::deserialize(&bytes).unwrap();
         match &hash2 {
-            Hash::Blake2b512(bin) => {
-                assert_eq!(base64_encode(bin.deref()), "80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQ");
+            Hash::Blake3(bin) => {
+                assert_eq!(base64_encode(bin.deref()), "WZtRlW37zRXCMzX95hUmVPU0NCrf0U8HonMc-0bb-Pg");
             }
-            _ => panic!("Not possible"),
         }
 
-        let hash3 = Hash::try_from("80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQA").unwrap();
+        let hash3 = Hash::try_from("WZtRlW37zRXCMzX95hUmVPU0NCrf0U8HonMc-0bb-PgA").unwrap();
         match &hash3 {
-            Hash::Blake2b512(bin) => {
-                assert_eq!(base64_encode(bin.deref()), "80DvVWAZF0fChjhVn0c5023925fIQ5dfY0T7NFglhj-paL5wR-tafRl6P8YbKEWRrQ2-7u3st1Avg0bIPRrKoQ");
+            Hash::Blake3(bin) => {
+                assert_eq!(base64_encode(bin.deref()), "WZtRlW37zRXCMzX95hUmVPU0NCrf0U8HonMc-0bb-Pg");
             }
-            _ => panic!("Not possible"),
-        }
-    }
-
-    #[test]
-    fn hash_blake2b_512_keyed() {
-        let msg = b"that kook dropped in on me. we need to send him a (cryptographically hashed) message.";
-        let key = b"mac stuff";
-        let salt = b"";
-        let personal = b"";
-        let hash = Hash::new_blake2b_512_keyed(key, salt, personal, msg).unwrap();
-        match &hash {
-            Hash::Blake2b512(bin) => {
-                assert_eq!(base64_encode(bin.deref()), "Y3ULFER3MO_urLj8YrGayPWBAyVcp0ud78oJjAp8dODaNYsel7siifJpMsAYXNyyHMp1Xs6Hrs3HGXcaEFuzfQ");
-            }
-            _ => panic!("Not possible"),
-        }
-    }
-
-    #[test]
-    fn hash_blake2b_256_encode_decode_fmt() {
-        let msg = b"that kook dropped in on me. we need to send him a (cryptographically hashed) message.";
-        let hash = Hash::new_blake2b_256(&msg[..]).unwrap();
-        match &hash {
-            Hash::Blake2b256(bin) => {
-                assert_eq!(base64_encode(bin.deref()), "2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NI");
-            }
-            _ => panic!("Not possible"),
-        }
-
-        let bytes = ser::serialize(&hash).unwrap();
-        assert_eq!(ser::base64_encode(&bytes[..]), String::from("oSIEINqp-KnuVdCDj1WFke6oU8_UU-GkA96ZgP-hxNuAOtjS"));
-        assert_eq!(format!("{}", hash), String::from("2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NIB"));
-        let hash2: Hash = ser::deserialize(&bytes).unwrap();
-        match &hash2 {
-            Hash::Blake2b256(bin) => {
-                assert_eq!(base64_encode(bin.deref()), "2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NI");
-            }
-            _ => panic!("Not possible"),
-        }
-
-        let hash3 = Hash::try_from("2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NIB").unwrap();
-        match &hash3 {
-            Hash::Blake2b256(bin) => {
-                assert_eq!(base64_encode(bin.deref()), "2qn4qe5V0IOPVYWR7qhTz9RT4aQD3pmA_6HE24A62NI");
-            }
-            _ => panic!("Not possible"),
         }
     }
 }

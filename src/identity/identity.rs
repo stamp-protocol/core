@@ -646,7 +646,7 @@ mod tests {
         let admin = AdminKeypair::new_ed25519_from_seed(&master_key, seeds[0]).unwrap();
         let admin_key = AdminKey::new(admin.clone(), "alpha", None);
 
-        let id = IdentityID::from(TransactionID::from(Hash::new_blake2b_256(b"get a job").unwrap()));
+        let id = IdentityID::from(TransactionID::from(Hash::new_blake3(b"get a job").unwrap()));
         let capability = Policy::new(
             vec![Capability::Permissive],
             MultisigPolicy::MOfN { must_have: 1, participants: vec![admin.into()] }
@@ -656,11 +656,11 @@ mod tests {
         let ser = identity.serialize_text().unwrap();
         assert_eq!(ser.trim(), r#"---
 id:
-  Blake2b256: lxvoCQLf9GhP6rHsDYBYbS6pPMg6ja0F0xF32CVulp8
+  Blake3: He7UaLB48wVhf85NXb5PlCpYuXdYsWCzJ48-IFikVXw
 created: "1977-06-07T04:32:06Z"
 policies:
   - id:
-      Blake2b256: T5pi6qfapwpI3c7NkMATSBci1xYitVgrF2OGe5iP0jI
+      Blake3: 8Zse00lvEkvvNQZT6RavqGPIuf5axUgFjOTxx-okjKQ
     policy:
       capabilities:
         - Permissive

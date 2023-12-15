@@ -1,4 +1,3 @@
-use blake2::{Digest, digest::crypto_common::generic_array::GenericArray};
 use crate::{
     crypto::base::{KeyID, SecretKey},
     error::{Error, Result},
@@ -8,7 +7,7 @@ use crate::{
         ser::{Binary, BinarySecret, BinaryVec},
     },
 };
-use crypto_box::aead::{Aead as CryptoboxAead, AeadCore as CryptoboxAeadCore};
+use crypto_box::aead::{Aead as CryptoboxAead, AeadCore as CryptoboxAeadCore, generic_array::GenericArray};
 use rand::rngs::OsRng;
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
@@ -93,10 +92,10 @@ impl CryptoKeypair {
                 let ephemeral_secret = crypto_box::SecretKey::generate(&mut rng);
                 let ephemeral_pubkey = ephemeral_secret.public_key();
                 let cardboard_box = crypto_box::ChaChaBox::new(&crypto_box::PublicKey::from(*pubkey.deref()), &ephemeral_secret);
-                let mut blake = blake2::Blake2b512::new();
+                let mut blake = blake3::Hasher::new();
                 blake.update(ephemeral_pubkey.as_ref());
                 blake.update(pubkey.as_ref());
-                let nonce_vec = Vec::from(blake.finalize().as_slice());
+                let nonce_vec = Vec::from(blake.finalize().as_bytes());
                 let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into()
                     .map_err(|_| Error::CryptoSealFailed)?;
                 let nonce = nonce_arr.into();
@@ -122,10 +121,10 @@ impl CryptoKeypair {
                 let ephemeral_pubkey = crypto_box::PublicKey::from(ephemeral_pubkey_arr);
                 let ciphertext = &data[32..];
                 let cardboard_box = crypto_box::ChaChaBox::new(&ephemeral_pubkey, &seckey);
-                let mut blake = blake2::Blake2b512::new();
+                let mut blake = blake3::Hasher::new();
                 blake.update(ephemeral_pubkey.as_ref());
                 blake.update(pubkey.as_ref());
-                let nonce_vec = Vec::from(blake.finalize().as_slice());
+                let nonce_vec = Vec::from(blake.finalize().as_bytes());
                 let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into()
                     .map_err(|_| Error::CryptoSealFailed)?;
                 let nonce = nonce_arr.into();

@@ -671,7 +671,7 @@ mod tests {
     };
 
     fn get_master_key() -> SecretKey {
-        let hash = Hash::new_blake2b_512(b"my goat hurts".as_slice()).unwrap();
+        let hash = Hash::new_blake3(b"my goat hurts".as_slice()).unwrap();
         let seed: [u8; 32] = hash.as_bytes()[0..32].try_into().unwrap();
         SecretKey::new_xchacha20poly1305_from_slice(&seed).unwrap()
     }
@@ -679,7 +679,7 @@ mod tests {
     #[test]
     fn admin_ser() {
         let master_key = get_master_key();
-        let hash = Hash::new_blake2b_512(b"i will, bye").unwrap();
+        let hash = Hash::new_blake3(b"i will, bye").unwrap();
         let seed: [u8; 32] = hash.as_bytes()[0..32].try_into().unwrap();
         let kp = SignKeypair::new_ed25519_from_seed(&master_key, &seed).unwrap();
         let admin = AdminKeypair::from(kp);
@@ -689,7 +689,7 @@ mod tests {
         let ser_inner = util::ser::serialize(sig_inner).unwrap();
         assert_eq!(ser, ser_inner);
         assert_eq!(
-            "oEIEQKcTXzZt0l8VzWJt3oXI1woTLErwye9I4G2mh5yHNljtuDlu4f-5gEaojHFZOXroMolhB1MlsaG9d4qWGb-ERw8",
+            "oEIEQM9CNF1X6aP7OMtn7pnGAf82bpGc64kHhP31mxiyoC3H2PBZl0rulmtrup9-2qqE279JeJa7OjJ1KFJFlV-xgQM",
             util::ser::base64_encode(&ser).as_str()
         );
     }

@@ -466,7 +466,7 @@ impl std::cmp::Ord for TransactionID {
 #[cfg(test)]
 impl TransactionID {
     pub(crate) fn random() -> Self {
-        Self(Hash::random_blake2b_512())
+        Self(Hash::random_blake3())
     }
 }
 
@@ -542,8 +542,7 @@ impl Transaction {
     pub(crate) fn new(entry: TransactionEntry, hash_with: &HashAlgo) -> Result<Self> {
         let serialized = ser::serialize(&entry.strip_private())?;
         let hash = match hash_with {
-            HashAlgo::Blake2b512 => Hash::new_blake2b_512(&serialized)?,
-            HashAlgo::Blake2b256 => Hash::new_blake2b_256(&serialized)?,
+            HashAlgo::Blake3 => Hash::new_blake3(&serialized)?,
         };
         let id = TransactionID::from(hash);
         Ok(Self {
@@ -610,8 +609,7 @@ impl Transaction {
         let serialized = ser::serialize(&self.entry().strip_private())?;
         // first verify the transaction's hash.
         let transaction_hash = match self.id().deref() {
-            Hash::Blake2b512(..) => Hash::new_blake2b_512(&serialized[..])?,
-            Hash::Blake2b256(..) => Hash::new_blake2b_256(&serialized[..])?,
+            Hash::Blake3(..) => Hash::new_blake3(&serialized[..])?,
         };
         if &transaction_hash != self.id().deref() {
             Err(Error::TransactionIDMismatch(self.id().clone()))?;
@@ -838,7 +836,7 @@ mod tests {
         let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::Low, None);
         test_privates(&TransactionBody::MakeStampV1 { stamp: entry.clone() });
         test_privates(&TransactionBody::RevokeStampV1 { stamp_id: StampID::random(), reason: StampRevocationReason::Unspecified });
-        let stamp_transaction = transactions.make_stamp(&HashAlgo::Blake2b512, Timestamp::now(), entry.clone()).unwrap();
+        let stamp_transaction = transactions.make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry.clone()).unwrap();
         test_privates(&TransactionBody::AcceptStampV1 { stamp_transaction: Box::new(stamp_transaction) });
         test_privates(&TransactionBody::DeleteStampV1 { stamp_id: StampID::random() });
 
@@ -869,7 +867,7 @@ mod tests {
             spec: ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Jackie Chrome".into()).unwrap()),
             name: None,
         };
-        let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::from(Hash::random_blake2b_512())], body);
+        let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::from(Hash::random_blake3())], body);
         assert!(entry.has_private());
         assert!(entry.body().has_private());
         let entry2 = entry.strip_private();
@@ -1203,11 +1201,11 @@ mod tests {
 
     #[test]
     fn trans_deser_delete_policy_v1() {
-        let policy_id1 = PolicyID::from(TransactionID::from(Hash::new_blake2b_256(&[55, 66, 42, 17, 0, 9]).unwrap()));
+        let policy_id1 = PolicyID::from(TransactionID::from(Hash::new_blake3(&[55, 66, 42, 17, 0, 9]).unwrap()));
         let trans1 = TransactionBody::DeletePolicyV1 {
             id: policy_id1,
         };
-        let ser1 = [166, 42, 48, 40, 160, 38, 48, 36, 161, 34, 4, 32, 234, 7, 225, 147, 113, 146, 63, 122, 46, 234, 139, 233, 225, 119, 117, 152, 248, 84, 207, 241, 51, 163, 11, 85, 51, 68, 7, 130, 40, 38, 4, 228];
+        let ser1 = [166, 42, 48, 40, 160, 38, 48, 36, 160, 34, 4, 32, 2, 52, 247, 192, 86, 41, 53, 236, 142, 72, 7, 209, 104, 10, 19, 55, 211, 110, 35, 148, 193, 106, 201, 79, 182, 100, 227, 110, 29, 175, 128, 162];
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
 
         match (trans1, trans_deser1) {
@@ -1221,7 +1219,7 @@ mod tests {
     #[test]
     fn trans_deser_make_claim_v1() {
         let master_key = SecretKey::new_xchacha20poly1305_from_slice(&[22; 32]).unwrap();
-        let claim1 = ClaimSpec::Identity(MaybePrivate::new_public(IdentityID::from(TransactionID::from(Hash::new_blake2b_256(&[1, 2, 3, 4, 5]).unwrap()))));
+        let claim1 = ClaimSpec::Identity(MaybePrivate::new_public(IdentityID::from(TransactionID::from(Hash::new_blake3(&[1, 2, 3, 4, 5]).unwrap()))));
         let claim2 = ClaimSpec::Extension {
             key: BinaryVec::from(vec![2, 4, 6, 8]),
             value: MaybePrivate::new_private(&master_key, BinaryVec::from(vec![9, 9, 9])).unwrap(),
@@ -1234,8 +1232,8 @@ mod tests {
             spec: claim2,
             name: None,
         };
-        let ser1 = [167, 59, 48, 57, 160, 42, 160, 40, 160, 38, 48, 36, 161, 34, 4, 32, 2, 184, 57, 74, 2, 9, 205, 216, 210, 77, 230, 58, 45, 139, 80, 30, 92, 141, 137, 51, 230, 188, 18, 199, 110, 191, 194, 202, 152, 32, 121, 202, 161, 11, 12, 9, 109, 121, 45, 111, 108, 100, 45, 105, 100];
-        let ser2 = [167, 129, 239, 48, 129, 236, 160, 129, 231, 171, 129, 228, 48, 129, 225, 160, 6, 4, 4, 2, 4, 6, 8, 161, 129, 214, 161, 129, 211, 48, 129, 208, 160, 68, 160, 66, 4, 64, 198, 163, 250, 8, 195, 61, 3, 211, 58, 101, 227, 228, 72, 66, 147, 127, 5, 158, 187, 4, 74, 29, 148, 174, 10, 130, 76, 100, 109, 225, 119, 253, 122, 99, 248, 9, 126, 13, 189, 107, 74, 119, 16, 254, 97, 113, 126, 88, 153, 246, 39, 3, 47, 209, 236, 184, 179, 77, 116, 151, 23, 68, 48, 78, 161, 129, 135, 48, 129, 132, 160, 129, 129, 160, 28, 160, 26, 4, 24, 252, 144, 13, 190, 176, 142, 40, 158, 121, 47, 116, 181, 115, 7, 248, 105, 71, 209, 8, 124, 159, 82, 33, 164, 161, 97, 4, 95, 150, 216, 17, 209, 44, 239, 223, 72, 129, 47, 196, 75, 155, 8, 73, 104, 94, 197, 112, 109, 184, 106, 37, 0, 138, 177, 76, 228, 226, 252, 241, 62, 56, 208, 230, 171, 25, 181, 57, 220, 210, 166, 185, 73, 140, 160, 137, 255, 0, 1, 35, 2, 239, 208, 73, 130, 53, 55, 174, 194, 86, 61, 2, 67, 226, 151, 224, 98, 138, 163, 64, 5, 114, 34, 197, 189, 132, 167, 195, 200, 106, 108, 91, 84, 118, 3, 159, 219, 122, 208, 242, 193, 53, 10, 34, 161, 0];
+        let ser1 = [167, 59, 48, 57, 160, 42, 160, 40, 160, 38, 48, 36, 160, 34, 4, 32, 2, 79, 103, 192, 66, 90, 61, 192, 47, 186, 245, 140, 185, 61, 229, 19, 46, 61, 117, 197, 25, 250, 160, 186, 218, 33, 73, 29, 136, 201, 112, 87, 161, 11, 12, 9, 109, 121, 45, 111, 108, 100, 45, 105, 100];
+        let ser2 = [167, 129, 172, 48, 129, 169, 160, 129, 164, 171, 129, 161, 48, 129, 158, 160, 6, 4, 4, 2, 4, 6, 8, 161, 129, 147, 161, 129, 144, 48, 129, 141, 160, 36, 160, 34, 4, 32, 97, 8, 27, 189, 234, 35, 205, 51, 186, 192, 42, 118, 79, 31, 94, 90, 177, 96, 245, 177, 164, 220, 212, 203, 142, 128, 82, 172, 134, 164, 57, 189, 161, 101, 48, 99, 160, 97, 160, 28, 160, 26, 4, 24, 106, 180, 182, 11, 29, 60, 67, 126, 215, 235, 183, 220, 68, 216, 129, 168, 15, 37, 62, 124, 76, 203, 2, 70, 161, 65, 4, 63, 41, 191, 42, 205, 53, 68, 106, 86, 29, 85, 119, 23, 229, 39, 160, 46, 139, 229, 18, 56, 120, 241, 46, 180, 165, 62, 0, 111, 217, 187, 159, 115, 11, 158, 31, 25, 118, 42, 181, 165, 227, 62, 177, 180, 231, 39, 236, 167, 116, 84, 192, 247, 121, 176, 9, 21, 220, 60, 179, 230, 16, 186, 235, 161, 0];
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
         let trans_deser2: TransactionBody = ser::deserialize(&ser2).unwrap();
 

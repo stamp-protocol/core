@@ -90,7 +90,7 @@ impl KeyID {
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn random_secret() -> Self {
-        Self::SecretKey(Hmac::new_blake2b(&HmacKey::new_blake2b().unwrap(), b"get a job").unwrap())
+        Self::SecretKey(Hmac::new(&HmacKey::new_blake3().unwrap(), b"get a job").unwrap())
     }
 }
 
@@ -118,7 +118,7 @@ pub fn derive_secret_key(passphrase: &[u8], salt_bytes: &[u8], ops: u32, mem: u3
 
 /// Given the bytes from a secret key, derive some other key of N length in a secure manner.
 pub fn stretch_key<const N: usize>(input: &[u8], output: &mut [u8; N]) -> Result<()> {
-    let hkdf = hkdf::SimpleHkdf::<blake2::Blake2b512>::new(None, input);
+    let hkdf = hkdf::SimpleHkdf::<blake3::Hasher>::new(None, input);
     hkdf.expand(b"stamp/hkdf", output)
         .map_err(|_| Error::CryptoHKDFFailed)?;
     Ok(())
@@ -130,10 +130,10 @@ pub(crate) mod tests {
 
     #[test]
     fn derives_secret_key() {
-        let id = Hash::new_blake2b_512("my key".as_bytes()).unwrap();
-        let salt = Hash::new_blake2b_512(id.as_bytes()).unwrap();
+        let id = Hash::new_blake3("my key".as_bytes()).unwrap();
+        let salt = Hash::new_blake3(id.as_bytes()).unwrap();
         let master_key = derive_secret_key("ZONING IS COMMUNISM".as_bytes(), &salt.as_bytes(), KDF_OPS_INTERACTIVE, KDF_MEM_INTERACTIVE).unwrap();
-        assert_eq!(master_key.as_ref(), &[148, 34, 57, 50, 168, 111, 176, 114, 120, 168, 159, 158, 96, 119, 14, 194, 52, 224, 58, 194, 77, 44, 168, 25, 54, 138, 172, 91, 164, 86, 190, 89]);
+        assert_eq!(master_key.as_ref(), &[176, 89, 132, 109, 145, 106, 124, 212, 160, 159, 89, 16, 49, 17, 126, 129, 183, 249, 118, 100, 31, 54, 74, 163, 164, 7, 98, 224, 17, 196, 201, 123]);
     }
 
     #[test]
@@ -142,17 +142,17 @@ pub(crate) mod tests {
 
         let mut output1 = [0u8; 42];
         stretch_key(&secret1, &mut output1).unwrap();
-        assert_eq!(output1, [73, 152, 194, 159, 246, 69, 205, 140, 129, 181, 72, 113, 154, 77, 56, 235, 159, 84, 170, 14, 145, 245, 8, 146, 18, 84, 74, 42, 125, 145, 70, 166, 75, 221, 150, 70, 97, 192, 74, 83, 224, 203]);
+        assert_eq!(output1, [181, 55, 17, 131, 160, 112, 88, 125, 252, 2, 83, 112, 231, 24, 133, 118, 101, 164, 193, 3, 35, 239, 197, 187, 108, 59, 7, 215, 178, 162, 46, 151, 221, 99, 101, 52, 202, 39, 248, 74, 6, 227]);
 
         let mut output2 = [0u8; 16];
         stretch_key(&secret1, &mut output2).unwrap();
-        assert_eq!(output2, [73, 152, 194, 159, 246, 69, 205, 140, 129, 181, 72, 113, 154, 77, 56, 235]);
+        assert_eq!(output2, [181, 55, 17, 131, 160, 112, 88, 125, 252, 2, 83, 112, 231, 24, 133, 118]);
 
         let secret2: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
         let mut output3 = [0u8; 16];
         stretch_key(&secret2, &mut output3).unwrap();
-        assert_eq!(output3, [183, 141, 195, 221, 27, 122, 204, 29, 223, 187, 184, 216, 45, 135, 255, 253]);
+        assert_eq!(output3, [236, 153, 148, 81, 215, 159, 176, 254, 171, 59, 106, 69, 28, 231, 50, 115]);
     }
 }
 

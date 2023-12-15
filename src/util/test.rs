@@ -18,14 +18,14 @@ pub(crate) fn sleep(millis: u64) {
 }
 
 pub(crate) fn create_fake_identity(now: Timestamp) -> (SecretKey, Transactions, AdminKey) {
-    create_fake_identity_deterministic(now, Hash::random_blake2b_512().as_bytes())
+    create_fake_identity_deterministic(now, Hash::random_blake3().as_bytes())
 }
 
 pub(crate) fn create_fake_identity_deterministic(now: Timestamp, seed: &[u8]) -> (SecretKey, Transactions, AdminKey) {
     let transactions = Transactions::new();
-    let seed = Hash::new_blake2b_256(seed).unwrap();
+    let seed = Hash::new_blake3(seed).unwrap();
     let master_key = SecretKey::new_xchacha20poly1305_from_slice(seed.as_bytes()).unwrap();
-    let seed = Hash::new_blake2b_256(seed.as_bytes()).unwrap();
+    let seed = Hash::new_blake3(seed.as_bytes()).unwrap();
     let sign = SignKeypair::new_ed25519_from_seed(&master_key, seed.as_bytes().try_into().unwrap()).unwrap();
     let admin = AdminKeypair::from(sign);
     let admin_key = AdminKey::new(admin, "Alpha", None);
@@ -34,7 +34,7 @@ pub(crate) fn create_fake_identity_deterministic(now: Timestamp, seed: &[u8]) ->
         MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
     );
     let trans = transactions
-        .create_identity(&HashAlgo::Blake2b256, now, vec![admin_key.clone()], vec![policy]).unwrap()
+        .create_identity(&HashAlgo::Blake3, now, vec![admin_key.clone()], vec![policy]).unwrap()
         .sign(&master_key, &admin_key).unwrap();
     let transactions2 = transactions.push_transaction(trans).unwrap();
     (master_key, transactions2, admin_key)
@@ -52,7 +52,7 @@ pub(crate) fn setup_identity_with_subkeys() -> (SecretKey, Identity) {
             ],
         }
     );
-    let policy_transaction_id = TransactionID::from(Hash::new_blake2b_256(b"policy").unwrap());
+    let policy_transaction_id = TransactionID::from(Hash::new_blake3(b"policy").unwrap());
     let policy_con = PolicyContainer::from_policy_transaction(&policy_transaction_id, 0, policy).unwrap();
     let admin_key = AdminKey::new(admin_keypair, "Alpha", None);
     let identity = Identity::create(IdentityID::random(), vec![admin_key], vec![policy_con], Timestamp::now())
@@ -90,7 +90,7 @@ macro_rules! sign_and_push {
     ($master_key:expr, $admin_key:expr, $transactions:expr, $([ $fn:ident, $($args:expr),* ])*) => {{
         let mut trans_tmp = $transactions;
         $(
-            let trans = trans_tmp.$fn(&crate::crypto::base::HashAlgo::Blake2b256, $($args),*).unwrap();
+            let trans = trans_tmp.$fn(&crate::crypto::base::HashAlgo::Blake3, $($args),*).unwrap();
             let trans_signed = trans.sign($master_key, $admin_key).unwrap();
             trans_tmp = trans_tmp.push_transaction(trans_signed).unwrap();
         )*
@@ -112,7 +112,7 @@ macro_rules! make_dag_chain {
         $(
             let dt: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_timestamp(2455191939 + $ts, 0).unwrap();
             let now = crate::util::Timestamp::from(dt);
-            let mut $names = trans.ext(&crate::crypto::base::HashAlgo::Blake2b256, now, vec![], None, None::<HashMapAsn1<BinaryVec, BinaryVec>>, Vec::from(format!("{}", stringify!($names)).as_bytes()).into()).unwrap();
+            let mut $names = trans.ext(&crate::crypto::base::HashAlgo::Blake3, now, vec![], None, None::<HashMapAsn1<BinaryVec, BinaryVec>>, Vec::from(format!("{}", stringify!($names)).as_bytes()).into()).unwrap();
             $names.entry_mut().set_previous_transactions(vec![]);
             name_to_tid.insert(stringify!($names), $names.id().clone());
             tid_to_name.insert($names.id().clone(), stringify!($names));

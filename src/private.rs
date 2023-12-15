@@ -193,8 +193,8 @@ impl<T: Encode + Decode> PrivateVerifiable<T> {
     /// obscures the data behind an encrypted key.
     pub fn seal(seal_key: &SecretKey, data: &T) -> Result<(Hmac, Self)> {
         // create a new random key and use it to HMAC our data
-        let hmac_key = HmacKey::new_blake2b()?;
-        let hmac = Hmac::new_blake2b(&hmac_key, &ser::serialize(data)?)?;
+        let hmac_key = HmacKey::new_blake3()?;
+        let hmac = Hmac::new(&hmac_key, &ser::serialize(data)?)?;
         // store our data alongside our HMAC key, allowing anybody with access
         // to this container to regenerate the HMAC.
         let inner = PrivateVerifiableInner { value: data, hmac_key };
@@ -473,7 +473,7 @@ mod tests {
         assert!(key != key2);
         let res: Result<String> = sealed.open_and_verify(&key2, &hmac);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
-        let hmac2 = Hmac::new_blake2b(&HmacKey::new_blake2b().unwrap(), b"hello there").unwrap();
+        let hmac2 = Hmac::new(&HmacKey::new_blake3().unwrap(), b"hello there").unwrap();
         assert!(hmac != hmac2);
         let res: Result<String> = sealed.open_and_verify(&key, &hmac2);
         assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
@@ -509,18 +509,18 @@ mod tests {
         let mut fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
         while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305().unwrap(); }
-        let fake_mac_key = HmacKey::new_blake2b().unwrap();
+        let fake_mac_key = HmacKey::new_blake3().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
-            Hmac::new_blake2b(&fake_mac_key, Vec::new().as_slice()).unwrap(),
+            Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             None,
         ));
         let maybe2_tampered = match maybe2.clone() {
             MaybePrivate::Private(PrivateWithHmac { data, .. }) => {
                 MaybePrivate::Private(PrivateWithHmac::new(
-                    Hmac::new_blake2b(&fake_mac_key, String::from("loool").as_bytes()).unwrap(),
+                    Hmac::new(&fake_mac_key, String::from("loool").as_bytes()).unwrap(),
                     data
                 ))
             }
@@ -549,12 +549,12 @@ mod tests {
         let mut fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
         while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305().unwrap(); }
-        let fake_mac_key = HmacKey::new_blake2b().unwrap();
+        let fake_mac_key = HmacKey::new_blake3().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
-            Hmac::new_blake2b(&fake_mac_key, Vec::new().as_slice()).unwrap(),
+            Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             None,
         ));
 
@@ -568,12 +568,12 @@ mod tests {
         let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
         let fake_key = SecretKey::new_xchacha20poly1305().unwrap();
         assert!(seal_key != fake_key);
-        let fake_mac_key = HmacKey::new_blake2b().unwrap();
+        let fake_mac_key = HmacKey::new_blake3().unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
-            Hmac::new_blake2b(&fake_mac_key, Vec::new().as_slice()).unwrap(),
+            Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             None,
         ));
 

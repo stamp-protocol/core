@@ -752,7 +752,7 @@ impl PolicyContainer {
             idx,
         };
         let serialized = ser::serialize(&ser_struct)?;
-        let hashed = Hash::new_blake2b_256(&serialized[..])?;
+        let hashed = Hash::new_blake3(&serialized[..])?;
         Ok(PolicyID(TransactionID::from(hashed)))
     }
 
@@ -1292,7 +1292,7 @@ mod tests {
         let policy = Policy::new(capabilities.clone(), multisig.clone());
 
         let transaction1 = transactions.make_claim(
-            &HashAlgo::Blake2b512, 
+            &HashAlgo::Blake3, 
             Timestamp::now(),
             ClaimSpec::Url(MaybePrivate::new_public(Url::parse("http://timmy.com").unwrap())),
             Some("primary-url"),

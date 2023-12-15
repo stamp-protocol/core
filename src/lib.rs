@@ -64,11 +64,11 @@
 //! 
 //! // Let's create a master key. This key locks/unlocks the sensitive data within the
 //! // identity, such as private keys. Generally, you'd create this using a passphrase:
-//! let salt = Hash::new_blake2b_512("2022-12-06T11:59:59-0800".as_bytes()).unwrap();
+//! let salt = Hash::new_blake3("2022-12-06T11:59:59-0800".as_bytes()).unwrap();
 //! let passphrase = "lumpy coal makes good sandwhiches";
 //! // here's how you generate your master key (commented out because it's slow)
 //! //let master_key = derive_secret_key(passphrase.as_bytes(), salt.as_bytes(), KDF_OPS_MODERATE, KDF_MEM_MODERATE).unwrap();
-//! # let master_key = SecretKey::new_xchacha20poly1305_from_slice(Hash::new_blake2b_256(passphrase.as_bytes()).unwrap().as_bytes()).unwrap();
+//! # let master_key = SecretKey::new_xchacha20poly1305_from_slice(Hash::new_blake3(passphrase.as_bytes()).unwrap().as_bytes()).unwrap();
 //!
 //! // Next, we'll create an admin key. Admin keys are how we sign changes to our identity,
 //! // including its creation. All private/secret keys in the identity (including Admin keys)
@@ -96,7 +96,7 @@
 //! let genesis = transactions
 //!     // when creating the identity, we pass in our initial set of admin keys and our
 //!     // initial policies.
-//!     .create_identity(&HashAlgo::Blake2b256, Timestamp::now(), vec![admin_key.clone()], vec![policy]).unwrap()
+//!     .create_identity(&HashAlgo::Blake3, Timestamp::now(), vec![admin_key.clone()], vec![policy]).unwrap()
 //!     // then we sign the transaction, generally with an admin key that's in the policy
 //!     // list. notice, again, we pass the master key into the sign fn along with our
 //!     // heroic admin key: the admin key cannot be used without first being unlocked by
