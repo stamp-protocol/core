@@ -37,6 +37,10 @@ pub enum Error {
     #[error("the given MAC combo does not verify")]
     CryptoHmacVerificationFailed,
 
+    /// Could not generate key from another key (HKDF)
+    #[error("key derivation from secret failed")]
+    CryptoHKDFFailed,
+
     /// Could not generate key from password
     #[error("key derivation from password failed")]
     CryptoKDFFailed,

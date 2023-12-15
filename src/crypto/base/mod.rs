@@ -116,6 +116,14 @@ pub fn derive_secret_key(passphrase: &[u8], salt_bytes: &[u8], ops: u32, mem: u3
     Ok(SecretKey::XChaCha20Poly1305(BinarySecret::new(key)))
 }
 
+/// Given the bytes from a secret key, derive some other key of N length in a secure manner.
+pub fn stretch_key<const N: usize>(input: &[u8], output: &mut [u8; N]) -> Result<()> {
+    let hkdf = hkdf::SimpleHkdf::<blake2::Blake2b512>::new(None, input);
+    hkdf.expand(b"stamp/hkdf", output)
+        .map_err(|_| Error::CryptoHKDFFailed)?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -126,6 +134,25 @@ pub(crate) mod tests {
         let salt = Hash::new_blake2b_512(id.as_bytes()).unwrap();
         let master_key = derive_secret_key("ZONING IS COMMUNISM".as_bytes(), &salt.as_bytes(), KDF_OPS_INTERACTIVE, KDF_MEM_INTERACTIVE).unwrap();
         assert_eq!(master_key.as_ref(), &[148, 34, 57, 50, 168, 111, 176, 114, 120, 168, 159, 158, 96, 119, 14, 194, 52, 224, 58, 194, 77, 44, 168, 25, 54, 138, 172, 91, 164, 86, 190, 89]);
+    }
+
+    #[test]
+    fn key_stretcher() {
+        let secret1: [u8; 32] = [182, 32, 38, 195, 3, 106, 177, 19, 174, 37, 56, 19, 163, 193, 155, 49, 112, 238, 93, 96, 149, 145, 69, 19, 187, 251, 76, 227, 111, 136, 180, 43];
+
+        let mut output1 = [0u8; 42];
+        stretch_key(&secret1, &mut output1).unwrap();
+        assert_eq!(output1, [73, 152, 194, 159, 246, 69, 205, 140, 129, 181, 72, 113, 154, 77, 56, 235, 159, 84, 170, 14, 145, 245, 8, 146, 18, 84, 74, 42, 125, 145, 70, 166, 75, 221, 150, 70, 97, 192, 74, 83, 224, 203]);
+
+        let mut output2 = [0u8; 16];
+        stretch_key(&secret1, &mut output2).unwrap();
+        assert_eq!(output2, [73, 152, 194, 159, 246, 69, 205, 140, 129, 181, 72, 113, 154, 77, 56, 235]);
+
+        let secret2: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+
+        let mut output3 = [0u8; 16];
+        stretch_key(&secret2, &mut output3).unwrap();
+        assert_eq!(output3, [183, 141, 195, 221, 27, 122, 204, 29, 223, 187, 184, 216, 45, 135, 255, 253]);
     }
 }
 
