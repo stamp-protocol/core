@@ -15,7 +15,7 @@ pub(crate) mod sign;
 #[cfg(test)]
 pub(crate) mod test;
 
-pub use ser::{base64_encode, base64_decode, HashMapAsn1, SerdeBinary, SerText, Binary, BinarySecret, BinaryVec};
+pub use ser::{base64_encode, base64_decode, DeText, HashMapAsn1, SerdeBinary, SerText, Binary, BinarySecret, BinaryVec};
 
 macro_rules! object_id {
     (
