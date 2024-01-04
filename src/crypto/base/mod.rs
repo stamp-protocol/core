@@ -117,9 +117,9 @@ pub fn derive_secret_key(passphrase: &[u8], salt_bytes: &[u8], ops: u32, mem: u3
 }
 
 /// Given the bytes from a secret key, derive some other key of N length in a secure manner.
-pub fn stretch_key<const N: usize>(input: &[u8], output: &mut [u8; N]) -> Result<()> {
-    let hkdf = hkdf::SimpleHkdf::<blake3::Hasher>::new(None, input);
-    hkdf.expand(b"stamp/hkdf", output)
+pub fn stretch_key<const N: usize>(input: &[u8], output: &mut [u8; N], info: Option<&[u8]>, salt: Option<&[u8]>) -> Result<()> {
+    let hkdf = hkdf::SimpleHkdf::<blake3::Hasher>::new(salt, input);
+    hkdf.expand(info.unwrap_or(b"stamp/hkdf"), output)
         .map_err(|_| Error::CryptoHKDFFailed)?;
     Ok(())
 }
@@ -141,18 +141,26 @@ pub(crate) mod tests {
         let secret1: [u8; 32] = [182, 32, 38, 195, 3, 106, 177, 19, 174, 37, 56, 19, 163, 193, 155, 49, 112, 238, 93, 96, 149, 145, 69, 19, 187, 251, 76, 227, 111, 136, 180, 43];
 
         let mut output1 = [0u8; 42];
-        stretch_key(&secret1, &mut output1).unwrap();
+        stretch_key(&secret1, &mut output1, None, None).unwrap();
         assert_eq!(output1, [181, 55, 17, 131, 160, 112, 88, 125, 252, 2, 83, 112, 231, 24, 133, 118, 101, 164, 193, 3, 35, 239, 197, 187, 108, 59, 7, 215, 178, 162, 46, 151, 221, 99, 101, 52, 202, 39, 248, 74, 6, 227]);
 
         let mut output2 = [0u8; 16];
-        stretch_key(&secret1, &mut output2).unwrap();
+        stretch_key(&secret1, &mut output2, None, None).unwrap();
         assert_eq!(output2, [181, 55, 17, 131, 160, 112, 88, 125, 252, 2, 83, 112, 231, 24, 133, 118]);
 
         let secret2: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
         let mut output3 = [0u8; 16];
-        stretch_key(&secret2, &mut output3).unwrap();
+        stretch_key(&secret2, &mut output3, None, None).unwrap();
         assert_eq!(output3, [236, 153, 148, 81, 215, 159, 176, 254, 171, 59, 106, 69, 28, 231, 50, 115]);
+
+        let mut output4 = [0u8; 32];
+        stretch_key(&secret2, &mut output4, Some(b"andrew_is_cool/0"), None).unwrap();
+        assert_eq!(output4, [98, 155, 219, 70, 138, 71, 67, 210, 120, 32, 75, 72, 223, 17, 249, 174, 177, 235, 77, 144, 25, 141, 88, 58, 141, 74, 86, 67, 105, 56, 226, 237]);
+
+        let mut output5 = [0u8; 32];
+        stretch_key(&secret2, &mut output5, Some(b"andrew_is_cool/1"), None).unwrap();
+        assert_eq!(output5, [194, 245, 136, 152, 243, 224, 63, 218, 52, 141, 232, 90, 229, 188, 48, 157, 238, 107, 233, 75, 109, 142, 223, 95, 149, 101, 199, 6, 151, 78, 41, 232]);
     }
 }
 
