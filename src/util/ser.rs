@@ -14,7 +14,7 @@ use crate::{
     util::Public,
 };
 use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag};
-use serde::{Serialize, Deserialize, ser::Serializer, de::Deserializer};
+use serde::{Serialize, Deserialize, ser::Serializer, de::{Deserializer, DeserializeOwned}};
 use std::collections::HashMap;
 use std::convert::From;
 use std::ops::{Deref, DerefMut};
@@ -33,6 +33,12 @@ pub(crate) fn serialize_text<T>(obj: &T) -> Result<String>
 
 pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
     rasn::der::decode(bytes).map_err(|e| Error::ASNDeserialize(e))
+}
+
+pub(crate) fn deserialize_text<T>(ser: &str) -> Result<T>
+    where T: DeserializeOwned + Public
+{
+    Ok(serde_yaml::from_str(&ser)?)
 }
 
 /// Convert bytes to base64
@@ -65,6 +71,13 @@ pub trait SerText: Serialize + Public + Sized {
     /// Serialize this object to human readable format
     fn serialize_text(&self) -> Result<String> {
         serialize_text(self)
+    }
+}
+
+pub trait DeText: DeserializeOwned + Public + Sized {
+    /// Deserialize this object from human readable format
+    fn deserialize_text(ser: &str) -> Result<Self> {
+        deserialize_text(ser)
     }
 }
 

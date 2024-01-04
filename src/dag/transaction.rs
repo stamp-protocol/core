@@ -38,7 +38,7 @@ use crate::{
     util::{
         Public,
         Timestamp,
-        ser::{self, BinaryVec, HashMapAsn1, SerdeBinary, SerText},
+        ser::{self, BinaryVec, DeText, HashMapAsn1, SerdeBinary, SerText},
     },
 };
 use getset;
@@ -707,6 +707,7 @@ impl Public for Transaction {
 
 impl SerdeBinary for Transaction {}
 impl SerText for Transaction {}
+impl DeText for Transaction {}
 
 #[cfg(test)]
 mod tests {
@@ -1279,5 +1280,238 @@ mod tests {
     #[ignore] #[test] fn trans_deser_publish_v1() { todo!(); }
     #[ignore] #[test] fn trans_deser_sign_v1() { todo!(); }
     #[ignore] #[test] fn trans_deser_ext_v1() { todo!(); }
+
+    #[test]
+    fn trans_deser_publish_yaml() {
+        let published_identity = r#"
+---
+id:
+  Blake3: N727v76Gx3Kv_hynOYvsYS_7CrBlvSiQfNutfCHDZss
+entry:
+  created: "2024-01-04T07:49:51.898Z"
+  previous_transactions: []
+  body:
+    PublishV1:
+      transactions:
+        transactions:
+          - id:
+              Blake3: Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3A
+            entry:
+              created: "2024-01-04T07:40:51.669Z"
+              previous_transactions: []
+              body:
+                CreateIdentityV1:
+                  admin_keys:
+                    - key:
+                        Ed25519:
+                          public: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                          secret: ~
+                      name: alpha
+                      description: Your main admin key
+                      revocation: ~
+                  policies:
+                    - capabilities:
+                        - Permissive
+                      multisig_policy:
+                        MOfN:
+                          must_have: 1
+                          participants:
+                            - Key:
+                                name: ~
+                                key:
+                                  Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+            signatures:
+              - Key:
+                  key:
+                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                  signature:
+                    Ed25519: KSye_UHFzy7bE0lekc5L9w6dvjnujUgJ2mqkVZNFJRtp0X46fqZvn5k-1M3KskIJGderUENr3KpKA4BcSKtWBw
+          - id:
+              Blake3: Dr4qJ88VNLMraCqXBGoNO8ILbtizognoTwOvR3o7OtY
+            entry:
+              created: "2024-01-04T07:41:11.901Z"
+              previous_transactions:
+                - Blake3: Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3A
+              body:
+                MakeClaimV1:
+                  spec:
+                    Identity:
+                      Public:
+                        Blake3: Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3A
+                  name: ~
+            signatures:
+              - Key:
+                  key:
+                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                  signature:
+                    Ed25519: SqXlNUmqx-Hr9LMTX4eAZ1ic9UFf3d_AUzvf25Gxd1ZeKNHZnUFSYnxofLdDpclA8k0SHjl83UEQ7d34FzIwBA
+          - id:
+              Blake3: yMRZQTTIsPdmCuhaJvwzCFXDsnljQk1y32VcgNn4b8o
+            entry:
+              created: "2024-01-04T07:41:11.901Z"
+              previous_transactions:
+                - Blake3: Dr4qJ88VNLMraCqXBGoNO8ILbtizognoTwOvR3o7OtY
+              body:
+                MakeClaimV1:
+                  spec:
+                    Name:
+                      Public: Zefram Cochrane
+                  name: ~
+            signatures:
+              - Key:
+                  key:
+                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                  signature:
+                    Ed25519: r8ymcgyRovieDWZodLJPULiabfmiN7QZ5ZwabJoTa9mYePLxa2obF_7jrkmJln9Ltmnb1_CxgrT6MmaoLPm5AQ
+          - id:
+              Blake3: 13_BWJcu_HrKFQV0mSogjHpm3i-4HQGDf-6vhnarH5Y
+            entry:
+              created: "2024-01-04T07:41:11.901Z"
+              previous_transactions:
+                - Blake3: yMRZQTTIsPdmCuhaJvwzCFXDsnljQk1y32VcgNn4b8o
+              body:
+                MakeClaimV1:
+                  spec:
+                    Email:
+                      Public: zef@starfleet.org
+                  name: ~
+            signatures:
+              - Key:
+                  key:
+                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                  signature:
+                    Ed25519: YrhHLHG53oMc-wzQkABDTADFu18Dh_mMBEH5n6EUi4OnV5SQy6wrAxI2H7bqoBG49lnEdqc_Uvqxh9VHplr7Aw
+          - id:
+              Blake3: eG-ezU5d-LVjmVbIHy_CPDMIipkVozIAC2ym5glnUGo
+            entry:
+              created: "2024-01-04T07:41:11.902Z"
+              previous_transactions:
+                - Blake3: 13_BWJcu_HrKFQV0mSogjHpm3i-4HQGDf-6vhnarH5Y
+              body:
+                AddSubkeyV1:
+                  key:
+                    Sign:
+                      Ed25519:
+                        public: LD9pzUz2mHpY1fr-wn03fHA-sqVo-vFcYm9nal5gSyE
+                        secret: ~
+                  name: default/sign
+                  desc: A default key for signing documents or messages.
+            signatures:
+              - Key:
+                  key:
+                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                  signature:
+                    Ed25519: XOBkXzQafXblmbkiE_roxgXH0o3EFGrMBblW9vvAE6R_-qhEELDYskTmyTHWJ2U9F89SClNRX90vvciEgkHwAg
+          - id:
+              Blake3: MBngTWWon600NOBzZI2hVNetglpVJjfT5Ls807GyfqE
+            entry:
+              created: "2024-01-04T07:41:11.903Z"
+              previous_transactions:
+                - Blake3: eG-ezU5d-LVjmVbIHy_CPDMIipkVozIAC2ym5glnUGo
+              body:
+                AddSubkeyV1:
+                  key:
+                    Crypto:
+                      Curve25519XChaCha20Poly1305:
+                        public: LtIC_cnuUprmT9C-YtHZmken25vf-_OaqiCAHFWRJ1E
+                        secret: ~
+                  name: default/crypto
+                  desc: A default key for receiving private messages.
+            signatures:
+              - Key:
+                  key:
+                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                  signature:
+                    Ed25519: 7X6qGeqA3YS_v9RoHDFOussKrHmy_dkfaDweVmoC9xv8CSNrLO4kXcdyeNX-ty65OgpQqng6UrxTGMyk6dqSCQ
+          - id:
+              Blake3: OG5wLtZuJ72SKujlp8YbOw3aQUyVTexYlKjv6L2KqVk
+            entry:
+              created: "2024-01-04T07:41:11.904Z"
+              previous_transactions:
+                - Blake3: MBngTWWon600NOBzZI2hVNetglpVJjfT5Ls807GyfqE
+              body:
+                AddSubkeyV1:
+                  key:
+                    Secret:
+                      hmac:
+                        Blake3: fTbD8ptHwCa-9_iXAIHyroTM8mBLq1w91Fm5LLmf2Yg
+                      data: ~
+                  name: default/secret
+                  desc: A default key allowing encryption/decryption of personal data.
+            signatures:
+              - Key:
+                  key:
+                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                  signature:
+                    Ed25519: 83Sak68ltmxqzfdt3mpwAkbxDeUThzMQ6QtNyUi_l8d95FkgeAlvZO5clCJ91hEsV8uoeXLrSRYXXU5-LYzmBg
+          - id:
+              Blake3: j98fNieA0pRXwKS6xBMkJYOWOuvOCBKzkOVyzG-2vXA
+            entry:
+              created: "2024-01-04T07:43:14.192Z"
+              previous_transactions:
+                - Blake3: OG5wLtZuJ72SKujlp8YbOw3aQUyVTexYlKjv6L2KqVk
+              body:
+                MakeClaimV1:
+                  spec:
+                    Photo:
+                      Public: _9j_4AAQSkZJRgABAQEASABIAAD_2wBDABQODxIPDRQSEBIXFRQYHjIhHhwcHj0sLiQySUBMS0dARkVQWnNiUFVtVkVGZIhlbXd7gYKBTmCNl4x9lnN-gXz_2wBDARUXFx4aHjshITt8U0ZTfHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHz_wgARCACZAJkDAREAAhEBAxEB_8QAGQAAAgMBAAAAAAAAAAAAAAAAAgMAAQQF_8QAFwEBAQEBAAAAAAAAAAAAAAAAAAECA__aAAwDAQACEAMQAAABz8qy6kCKsFKQiFAlllC9BqqhRB_Kto1Wg1aFLdXJKkoooql6BVkIQ0c7ZCqlhlhSyIXYVXGSkaQhCEHYtw2w6qqBi4gwOjoIztZdZohCENmUiWssIXTIRDShupsOdNKms1zVkIQhsxYQZqDYNIlqNMtDlfWRAlz0u5shCG3mtZZWlEWSsmnqQ0ZQGdOcym5lQhDbzsSUJbWlqgJSDCM9aIZbzdYzMVUIQ140UhkoGnqIgFdMq0uzeoHLuUXEqEIbMaKSy7q2mSIFVQ-XfQDlSnJ1hVzCEIa8bJkoixsrCQCpSXbaBcVXNvNGoCRLWG3G7mZVwy6FSFxQ-0yKmNIjWMaIspKqzbnbEKRqsM6iqoolMa2IAwBLQKFMlzmOhnQoCvIARVqci7WroWg7nnw-R1pIVlJnjGhrqIudGW3NAUFK-1qKucDMl3roFkTKykYrhRms0rc1agMlfRIihuMSas72DgTnM2LHiDNqOV0tKUWNURlxlFJsmiXQEc2ZlsSCLFgmuqmhlOV1p3I3GaKHS75oBVZ5m1uxYqwQKGtEuuAVo-zKmaCFHSmnLDCzUUq7EWWVQVS7syx1azAZoaIOlNaFSf_EACYQAAIBBAEEAgMBAQAAAAAAAAABAgMQERIhIDAxMhNBIzNCBEP_2gAIAQEAAQUCVsmw-b4NTXpz1oyZM9evaybWwY62sk447Goo9KMGuoqcmlTkPKJ9fCMn2yMHIjzKcVinhikTqZdGpKBFtE6jk5D7O-pKo5OKYpSGJpGNnFSRiriSw5D7P9SaclsaYEkKKFeSFTiift2MZEkhDtsbHyRN2RbyVPbsJWRJjkblLEiUNZ_HmSisS8y9u19MaMEPZx3SWojzL77UbOyRH1nJCdpL8j7OrFwO2RelN4KkN1TbtOnlyg10owYFgb48t9H2Y5tJ20jIqUtbKPDmIVpGdkOyyao9TIqgnlReSQuT44EvWZC3lzZT_WOyEnaZOOpF8wawNYMsfmSI8L6fmb5pv8ZgwIR9VfEuacfK4IPk0RIflH8ytSlrKS1FIyhCJsr_AK8kuCKUjDg88Wxylxnh-LQqZWjsjOFTjsT5_wA78y9KUhPhxNrP2fgm8ivGZsS0z8URRXyT5g_L9Fw4O2R3dkO8fEPaA_Nb1P8AmQv_AP_EABoRAAIDAQEAAAAAAAAAAAAAAAERADBAIGD_2gAIAQMBAT8B9corlFFF0ahUchpGQVGH3QsHBxOPb__EABQRAQAAAAAAAAAAAAAAAAAAAID_2gAIAQIBAT8BSH__xAApEAABAwIFBAICAwAAAAAAAAABABEhAhAgMDFRYRIiQHEyQQOBUtHx_9oACAEBAAY_AvPjxZ8GQycCFomOYdhqmVRoEBFyy4W6MIN8ul-lfFesrlkenRa9xTOW2t2kokvK7QU0ts6-6Su4TvlUnqH9ItuiHg65DmRsjnBAqVCmxz-kri0Wq9-AMB8AKb1eBK5TGxqBU5XOTomtonGmJ04waLZTOAv_AIuVxbTEcht1xYb4Xw-sf46sX3b2E1jtadCuMIp3Q4KKBtuLzYxh6al2rm0pzqi_8rftNaFrlTSCodTU6cFgqjb95wsVSqvdxg__xAAmEAEAAgIBBAEEAwEAAAAAAAABABEhMUEQUWFxgSAwobGRwfDx_9oACAEBAAE_IasWnEHzFX0joJntFcTUvotRi5cuX01qJ3FVGMIM4geelvM3xG-f4TI5ixfquFY2mWecIYOJh6kA4Szhx9gTANyokuLFcbaGKpYqvMQ3Bnca12wr0Lv6gh4QyL6L9XcQGfRy-J7yP-5dI0LLjmS3wLgXZw5gA1DNs0g8Rs8MsWOeOY7Kze1zb6q6VG0ouy7lEURSLuKwV_FAD5y24bVCULed4rMbzSrwTbH3AGD0kexOBeo32b-w10OOI6YUgu2e8tDpEDa5eqAdRcEGoMBEQRitiOoFAGvquX0fmjHSalzLL1EUPpiB-kHa_aKoJZVd8T5_MfqOirslUzSYOnZaIMjuMlnjAA8dpSUqCqEz-0KOITvLdwrMYK17IipqK-ZajMtu7jv7N04i4iHRUrivxQECmIblQQ0_Z1WMNt9FxpFQ7svdk0-moTFAxBzh2mSH8RM_SLShuMupiPnUU0kYEqJLzDAzBlG3QS21jmpU4ONxM5B-IirGLyeirLcIoPxFcTP0io70KLM3BRL7KFuaEFBTFWxqJC3REXbXaVzLkeYr0bQVmKCkK6HKFn9QsCpeHiYLf9hoPe44juXWpZhoZMxlWhWJmMZ7Stf9QzbW-IvwnqgteZfYlQm1_cVIHcRpxLn3cuvXQ5TGPMULMK8RmcTGvxFb3ARfEoAPE8EWqzZPJ_VMw0Bi3bgiLy8I5th-kMZ-f4lHki0TFLDkdfE3uzU2EGHCqeYnL7YHocjwjodmYBdlBrvdw1IYjA2kbOZ2l7HEbyrMElkWCWXuVmHwJqgrt2jekoVz8T_VQwl_mYYajsdpdTD8TIidON-GZHzLKcIHszNak4uUzNId4eyqMxk4wqWYJ81Pc6HicvSzn0cw1Pwpun7Cf4-5-InPxGOfof_aAAwDAQACAAMAAAAQ9-Q77rbigk_TnwZTrEAA20gMSA_AAAGJgTr0IAAAPgSSbvkgAAACZ0SQtFAA6IYE0Yk_AAXe6SfUMrAAnT_FC9FWAALzCQiJBNAAgZ1pEgpZtAivFG8sfvXggadhxhptmKJp_cYIhjDGbxyMkwZfDzvxvXgQ4NSyrFdANef3Vi4IOZTQd6yQ6sL0yGqQvKPUNYrQWgvI_8QAHBEAAwEBAQEBAQAAAAAAAAAAAAERECAwQCEx_9oACAEDAQE_EEJlL8VKX7p8aJ8LELH7Qm8EPylEEFlNaJh-KEIJlJlF50hfh_dRdXgmoNU_m0XDGPl6xeILILRopdeITxatsKMY0QmvYIXK4eNEGiDZcuXlYxsuseUuvE-FrKJ9TXiFtG8Y16ITLlJl_fc2IQ49Qu2LYXSj1C7fouP_xAAaEQACAwEBAAAAAAAAAAAAAAABEQAQIDBA_9oACAECAQE_EMriIPCIKG3ByG1FFBFFRtRdALIiioUeQMFmGOgY8DYgMcceHTggh7OOnBBD1WR3eR5BQ8Qp8HhcHYjp-U2MvChFDAhsaWhsWaMejT0KGhBZ4CO1agEVCjzOxRv_xAAmEAEAAgMAAgICAgMBAQAAAAABABEhMUFRYXGBIKEQkbHB8NHx_9oACAEBAAE_EEQILEo1qWaGJcXn3Cpf1AlxLLqDWB9y7sj6IfKH4wy1UiPuFsQrstRm5g2xxlpaW-YKrTcpiW_EMWq8xG7uFVb9QXRuUYeZ5MPEQ40zwCpYabnueQPlj-o2AInE_mn8UepYvxNUIHKh6Q8trGHJVc5EHz4hFkvEuzjCq8wZUyzZ332PuFryRfyMuDc4VETFZgKwQAuYzJNSvjxFVqHwSmMKDo5AaBt0FXqDghbF9PP7leS_XIsUj9zd-WQrMW0CpiF2JGwsuqi40C0ao39_UZqs4S06YhPVRswsB0MLR1EhrRitAAbUKq_u5fgWVZVZGjLA2xbAL_7Nf3KMaaZ3Z1EJ6QBSPSCvyPllgJyWsTLcFx0FF2uMHkLlIHCAUxnzUUwymEAe2ISy4KmXfMtWBetss5kJ1DP3GUMvHlmOGraIbW7Xydg7D1AYq8bJrJqXGy9ltnz2Ds3-NT9JQIy4ZlQMU0rFKFvct4OSvAICthz1MLY_EGEYcRcZJjObjFhWaQmou_PYCAlX5hNmqmVp5lyj8-IaUCqnNR_EwjYjdzGpAddSsH9wAYKNQMrihs2Zg2NjKu-JrE3i77l0ys6yTL0LwNKlmQ11wxuLcNDhBHUJt-Jlhzcor3EQBRbbFAlAtQIYJRxAKAx5gIOncAcbLHHzHyyxZYkmzmhuABP9IY3VZE23ImP4jCpdmYVkfqKDolfcYldhUKvrPLXyolaMESC4rSQoxxY8YAtV0hLg9RRs1-5aFsin3-UFMDTCrqOyCBDdVVRW1p-5Qt36gOEya3EC17l-HKplbgP-IRVZ6gpp5uAXgu58ozc1_IWymBWY5-4Dgh1WyCghXVRYs5EuoQvsRmEs51Bc2lMOxhbbyeGIKhGgeSixllLZhb1EVdVvIiDA-nEqV8_xYUaxEyDEFNxfEqQS82-ooBFyyjpARzkye55FXd0TIXzMHoomK5CpajsDUpyaCCbN-JSAcYsr5wsG9ZhctKY733M5LGitiVoFVGKr4l5Zsb4TEsLAjbyFZNFV_kxnd3XfENZeUorkulWUdcsAMCLtK-oYjvfqVh38QLPUzRY-oEXyXljEVfMKFc-XqIbkLa5Eos7oNMJVle5Rqn_UK0oNvfUtZtOmmOlDKtZ_1IEgyqFnP_ImIUGEdhhXughUUx7iFKIpb57jUXoaG9vMHpJPyMBkVXmWQ0RqrAhcAUM7jltU6pupgAtqVBIBuvEfJRw9GPYLEPqpyFNZ0NjfGBAs1o6-oCbbfxLANNBBwkrhREAfENHlT6ioCrTB0xS9K2hqtkcJwbBhjDLUOjApFFt4iaxj3G-BG4mouBqL3oC4kCgR-WEvywxfmHO64RFLwe9iK7RRfTVTGFp1P_oxWYnG7zNqsMFm3iDI-Q4S4tezGE8fMG9hNd01LpGxXPYL4M_PcxvKqVD0F-zUIvT7ljDdQ80ZqAQ8A51BWCUh4Kg711RyGOhpIJG3RORUr8BNfMZZboMkx5IrQKtIdjVwUANRBsGr_wA_MuIA401j-4hKBZgXO5tZzyCllFcChfEG9rI5SxpNUlRJYHGKloq81M5CnQDo9PuJ2xUPaxXzE4dOKZl3AlBh0tiBba_cV2ivmfH8AFdYtRRhWh3yV5btzEyN8hJhnCuSmHkqfUtHGH1GKeq9NRBVSacv3BVDM6fqNpiCPB9NQ4KVaxTKVGXoGmqV1Xmo6KyAEtTxaOVqwqI1eRByJBKz5-Zv8iP7Zo_M6-X-DSMbPmftp-hNf-WZ-7_BLr8Ju-SH7p_rHT8fx__Z
+                  name: ~
+            signatures:
+              - Key:
+                  key:
+                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                  signature:
+                    Ed25519: meUIklJ4H58cyYmZOaWvH5Kb3weDNiTbj9sD8Z7UaLGHB3zabrPUr5onDfVz9TgTnHA_cNbkDg4_Gsj5uQ0zCQ
+          - id:
+              Blake3: HflWay2xmCYnbqTKYP3utSo0s3v4Ne3vWOBzwHziD-o
+            entry:
+              created: "2024-01-04T07:45:01.291Z"
+              previous_transactions:
+                - Blake3: j98fNieA0pRXwKS6xBMkJYOWOuvOCBKzkOVyzG-2vXA
+              body:
+                MakeClaimV1:
+                  spec:
+                    Url:
+                      Public: "https://news.ycombinator.com/user?id=xX_zefram420_Xx"
+                  name: ~
+            signatures:
+              - Key:
+                  key:
+                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                  signature:
+                    Ed25519: "-1XBmxQAdO1CMXf_ccA4Dr4P8xigaIhNCqCo6MTuBq_61CCBjNAOppP5fSuBHpfpCxovfyh8Z7-XIUwF0i17Bg"
+signatures:
+  - Key:
+      key:
+        Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+      signature:
+        Ed25519: A7tyA0accrK9uwvA6crQ9o623c5GabBrqlsW1rjKDpfULRYGVH6IbEkpkgLhsqPrTaB7nAQ1vz4-wWFdmTWzDw
+        "#;
+        let transaction = Transaction::deserialize_text(published_identity).unwrap();
+        match transaction.entry().body() {
+            TransactionBody::PublishV1 { transactions } => {
+                let identity = transactions.build_identity().unwrap();
+                assert_eq!(
+                    format!("{}", identity.id()),
+                    "Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3AA"
+                );
+                let ids = transactions.transactions().iter()
+                    .map(|x| format!("{}", x.id()))
+                    .collect::<Vec<_>>();
+                assert_eq!(ids, vec![
+                    "Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3AA",
+                    "Dr4qJ88VNLMraCqXBGoNO8ILbtizognoTwOvR3o7OtYA",
+                    "yMRZQTTIsPdmCuhaJvwzCFXDsnljQk1y32VcgNn4b8oA",
+                    "13_BWJcu_HrKFQV0mSogjHpm3i-4HQGDf-6vhnarH5YA",
+                    "eG-ezU5d-LVjmVbIHy_CPDMIipkVozIAC2ym5glnUGoA",
+                    "MBngTWWon600NOBzZI2hVNetglpVJjfT5Ls807GyfqEA",
+                    "OG5wLtZuJ72SKujlp8YbOw3aQUyVTexYlKjv6L2KqVkA",
+                    "j98fNieA0pRXwKS6xBMkJYOWOuvOCBKzkOVyzG-2vXAA",
+                    "HflWay2xmCYnbqTKYP3utSo0s3v4Ne3vWOBzwHziD-oA",
+                ]);
+            }
+            _ => panic!("bad dates"),
+        }
+    }
 }
 

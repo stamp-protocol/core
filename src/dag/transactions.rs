@@ -328,6 +328,8 @@ impl Transactions {
             Ok(())
         })?;
 
+        // note here we grab the identity at branch 0...this is the root identity that all the
+        // transactions have been applied to in-order.
         Ok(branch_identities.get(&0).ok_or(Error::DagMissingIdentity)?.clone())
     }
 
