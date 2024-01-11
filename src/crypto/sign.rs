@@ -1,5 +1,13 @@
 //! The sign system allows creating cryptographic signatures which allow data
 //! to be transmitted to others without fear of tampering.
+//!
+//! Signatures created with this system do not imply control of the identity, rather
+//! control of a key in the identity's keychain. In other words, these signatures
+//! are not beholden to the [policy][crate::policy] system and are not truly
+//! identity-issued signatures.
+//!
+//! For a way to create more official signatures that are blessed by the policy
+//! system, issue a [`SignV1`][crate::dag::TransactionBody::SignV1] transaction.
 
 use crate::{
     crypto::{

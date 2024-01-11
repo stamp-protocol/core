@@ -67,7 +67,7 @@ pub struct Dag<'a> {
     /// transaction's `previous_transactions` list.
     tail: Vec<TransactionID>,
     /// Holds an index of transaction IDs to internal DAG nodes. This is useful because instead of
-    /// DAG nodes referencing each other directly and having to have Box<Blah> everywhere, we just
+    /// DAG nodes referencing each other directly and having to have `Box<Blah>` everywhere, we just
     /// store the IDs and put the nodes in one single lookup table.
     index: HashMap<TransactionID, DagNode<'a>>,
     /// Transactions that we processed while walking the DAG, in the order they were processed.

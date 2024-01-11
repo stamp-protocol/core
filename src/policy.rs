@@ -1,13 +1,15 @@
-//! The policy system provides a method for validating transactions using a
-//! pre-determined combination of cryptographic signatures (effectively
-//! multisig).
-//!
-//! Policies are general constructions that do not force M-of-N or any other
-//! rigid arrangement, but rather allow expressions of completely arbitrary
-//! combinations of keys.
+//! The policy system provides a method for assigning [capabilities][Capability] (permissions) to
+//! combinations of [admin keys][AdminKey] ([multisig][MultisigPolicy]). This extends beyond simple M-of-N and allows
+//! arbitrary combinations of signatures to satisfy the requirements for a particular transaction.
 //!
 //! In combination with capabilties, this allows an identity to be managed
 //! not just by keys it owns, but by trusted third parties as well.
+//!
+//! Capabilities assigned to keys via a policy can be restricted using ["contexts"][Context] which are pieces
+//! of information from the given transaction, such as a particular ID, string name, etc. For
+//! instance, it's possible to allow the ability to edit *a particular key by id*, or to manage
+//! *any resource with a certain name*. This allows additively creating fine-grained permissions
+//! and assigning them to groups of admin keys.
 
 use crate::{
     crypto::base::{KeyID, Hash},
@@ -509,7 +511,7 @@ pub enum Capability {
     /// externalizing them to the caller, which also means just speaking Stamp doesn't
     /// mean you can validate capability extensions) and transaction extensions allow
     /// a very quick and easy way to leverage Stamp's transactional system that might
-    /// be somewhat crude but allow built-in transaction creation and verification.
+    /// be somewhat crude but allows built-in transaction creation and verification.
     #[rasn(tag(explicit(2)))]
     Extension {
         #[rasn(tag(explicit(0)))]
@@ -1058,14 +1060,14 @@ mod tests {
         let conditions = MultisigPolicy::Any(vec![
             MultisigPolicy::All(vec![
                 MultisigPolicy::MOfN {
-                    must_have: 1, 
+                    must_have: 1,
                     participants: vec![
                         dirk.clone().into(),
                         jackie.clone().into(),
                     ],
                 },
                 MultisigPolicy::MOfN {
-                    must_have: 1, 
+                    must_have: 1,
                     participants: vec![
                         syd.clone().into(),
                         twinkee.clone().into(),
@@ -1073,7 +1075,7 @@ mod tests {
                 },
             ]),
             MultisigPolicy::MOfN {
-                must_have: 3, 
+                must_have: 3,
                 participants: vec![
                     gus.clone().into(),
                     marty.clone().into(),
@@ -1292,7 +1294,7 @@ mod tests {
         let policy = Policy::new(capabilities.clone(), multisig.clone());
 
         let transaction1 = transactions.make_claim(
-            &HashAlgo::Blake3, 
+            &HashAlgo::Blake3,
             Timestamp::now(),
             ClaimSpec::Url(MaybePrivate::new_public(Url::parse("http://timmy.com").unwrap())),
             Some("primary-url"),

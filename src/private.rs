@@ -1,4 +1,4 @@
-//! The private module locks data away via a [SecretKey](crate::crypto::base::SecretKey)
+//! The private module locks data away via a [`SecretKey`]
 //! while never storing or serializing or displaying the locked (private) data.
 //! It can only be retrieved via the [open](crate::private::Private::open)
 //! method, given the correct unlocking key.
@@ -6,7 +6,7 @@
 //! This allows for secure storage of things like private keys, or even claims
 //! we wish to be verifiable but not publicly available.
 //!
-//! In this module is also the [MaybePrivate](crate::private::MaybePrivate)
+//! In this module is also the [`MaybePrivate`]
 //! container which gives us a choice to either make something public or to keep
 //! it private and sealed away.
 
