@@ -101,18 +101,133 @@ impl<T: Encode + Decode> Private<T> {
     }
 }
 
-/// Holds the inner data for a `PrivateVerifiable` container.
+/// Holds the inner data for a `SealedTyped` container.
 ///
 /// This is a somewhat ephemeral container, mainly used for encryption and
 /// decryption and then thrown away.
 #[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize)]
-struct PrivateVerifiableInner<T> {
+struct SealedTypedInner<T> {
     /// The value we're storing.
     #[rasn(tag(explicit(0)))]
     value: T,
     /// The HMAC key we use to hash the data.
     #[rasn(tag(explicit(1)))]
     hmac_key: HmacKey,
+}
+
+/// A way to attach a type to a [`Sealed`] container, and also adds some utilities around storing
+/// a secret value alongside the HMAC key used to create the HMAC for that value which can be
+/// verified by others.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SealedTyped<T> {
+    /// Allows us to cast this container to T without this container ever
+    /// actually storing any T value (because it's encrypted).
+    #[serde(skip)]
+    _phantom: PhantomData<T>,
+    /// The encrypted data stored in this container, created using a
+    /// `SealedTypedInner` struct (the actual data alongside an HMAC key).
+    sealed: Sealed,
+}
+
+impl<T> AsnType for SealedTyped<T> {
+    const TAG: rasn::Tag = rasn::Tag::SEQUENCE;
+}
+
+impl<T> Constructed for SealedTyped<T> {
+    const FIELDS: Fields = Fields::from_static(&[
+        Field::new_required(Sealed::TAG, Sealed::TAG_TREE),
+    ]);
+}
+
+impl<T: AsnType> Encode for SealedTyped<T> {
+    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+        encoder.encode_sequence::<Self, _>(tag, |encoder| {
+            self.sealed.encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+}
+
+impl<T: AsnType> Decode for SealedTyped<T> {
+    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+        decoder.decode_sequence(tag, |decoder| {
+            let sealed = Sealed::decode_with_tag_and_constraints(decoder, Tag::new(Class::Context, 0), constraints)?;
+            Ok(Self { _phantom: PhantomData, sealed })
+        })
+    }
+}
+
+impl<T: Encode + Decode> SealedTyped<T> {
+    /// Create a new verifiable private container from a given serializable data
+    /// object and an encrypting key.
+    ///
+    /// We generate a random HMAC key and do two things:
+    ///
+    /// 1. HMAC the data being stored with the HMAC key, then store the data and
+    ///    the HMAC key together in a `SealedTypedInner` container before
+    ///    encrypting the container.
+    /// 2. Sign the generated HMAC with our private key, then throw away the
+    ///    HMAC and *only store the signature*.
+    ///
+    /// Using this scheme, anybody who knows the stored secret can recreate the
+    /// HMAC and thus verify the public signature on the secret. However, the
+    /// signature itself reveals nothing about the secret data because the HMAC
+    /// obscures the data behind an encrypted key.
+    pub fn seal(seal_key: &SecretKey, data: &T) -> Result<(Hmac, Self)> {
+        // create a new random key and use it to HMAC our data
+        let hmac_key = HmacKey::new_blake3()?;
+        let hmac = Hmac::new(&hmac_key, &ser::serialize(data)?)?;
+        // store our data alongside our HMAC key, allowing anybody with access
+        // to this container to regenerate the HMAC.
+        let inner = SealedTypedInner { value: data, hmac_key };
+        let serialized_inner = ser::serialize(&inner)?;
+        // encrypt the data+hmac_key combo
+        let sealed = seal_key.seal(&serialized_inner)?;
+        Ok((hmac, Self {
+            _phantom: PhantomData,
+            sealed,
+        }))
+    }
+
+    /// Open and return the secret stored in this container, provided that the
+    /// HMAC stored with this secret is the same as the one we generate when we
+    /// HMAC the decrypted data with the decrypted HMAC key.
+    ///
+    /// If the data has been tampered with and the HMACs don't verify, then we
+    /// return an error.
+    pub fn open_and_verify(&self, seal_key: &SecretKey, hmac: &Hmac) -> Result<T> {
+        // decrypt the secret value
+        let open_bytes = seal_key.open(&self.sealed)
+            .map_err(|_| Error::CryptoOpenFailed)?;
+        // deserialize our secret to give us the stored data and the HMAC key.
+        let obj: SealedTypedInner<T> = ser::deserialize(&open_bytes[..])?;
+        let SealedTypedInner { value, hmac_key } = obj;
+        // verify our hmac against our decrypted data/hmac key
+        hmac.verify(&hmac_key, &ser::serialize(&value)?)?;
+        // success!
+        Ok(value)
+    }
+
+    /// Re-encrypt the contained secret value with a new key.
+    pub fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
+        let serialized = previous_seal_key.open(&self.sealed)
+            .map_err(|_| Error::CryptoOpenFailed)?;
+        let sealed = new_seal_key.seal(&serialized)?;
+        Ok(Self {
+            _phantom: PhantomData,
+            sealed,
+        })
+    }
+}
+
+impl<T> Clone for SealedTyped<T> {
+    fn clone(&self) -> Self {
+        Self {
+            _phantom: Default::default(),
+            sealed: self.sealed.clone(),
+        }
+    }
 }
 
 /// Holds private data along with an HMAC of the data being stored, allowing
@@ -135,128 +250,6 @@ struct PrivateVerifiableInner<T> {
 ///
 /// This also allows the key that protects the private data to be rotated
 /// without the HMAC (and therefor the stamps) on that data being deprecated.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct PrivateVerifiable<T> {
-    /// Allows us to cast this container to T without this container ever
-    /// actually storing any T value (because it's encrypted).
-    #[serde(skip)]
-    _phantom: PhantomData<T>,
-    /// The encrypted data stored in this container, created using a
-    /// `PrivateVerifiableInner` struct (the actual data alongside an HMAC key).
-    sealed: Sealed,
-}
-
-impl<T> AsnType for PrivateVerifiable<T> {
-    const TAG: rasn::Tag = rasn::Tag::SEQUENCE;
-}
-
-impl<T> Constructed for PrivateVerifiable<T> {
-    const FIELDS: Fields = Fields::from_static(&[
-        Field::new_required(Sealed::TAG, Sealed::TAG_TREE),
-    ]);
-}
-
-impl<T: AsnType> Encode for PrivateVerifiable<T> {
-    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
-        encoder.encode_sequence::<Self, _>(tag, |encoder| {
-            self.sealed.encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints)?;
-            Ok(())
-        })?;
-        Ok(())
-    }
-}
-
-impl<T: AsnType> Decode for PrivateVerifiable<T> {
-    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
-        decoder.decode_sequence(tag, |decoder| {
-            let sealed = Sealed::decode_with_tag_and_constraints(decoder, Tag::new(Class::Context, 0), constraints)?;
-            Ok(Self { _phantom: PhantomData, sealed })
-        })
-    }
-}
-
-impl<T: Encode + Decode> PrivateVerifiable<T> {
-    /// Create a new verifiable private container from a given serializable data
-    /// object and an encrypting key.
-    ///
-    /// We generate a random HMAC key and do two things:
-    ///
-    /// 1. HMAC the data being stored with the HMAC key, then store the data and
-    ///    the HMAC key together in a `PrivateVerifiableInner` container before
-    ///    encrypting the container.
-    /// 2. Sign the generated HMAC with our private key, then throw away the
-    ///    HMAC and *only store the signature*.
-    ///
-    /// Using this scheme, anybody who knows the stored secret can recreate the
-    /// HMAC and thus verify the public signature on the secret. However, the
-    /// signature itself reveals nothing about the secret data because the HMAC
-    /// obscures the data behind an encrypted key.
-    pub fn seal(seal_key: &SecretKey, data: &T) -> Result<(Hmac, Self)> {
-        // create a new random key and use it to HMAC our data
-        let hmac_key = HmacKey::new_blake3()?;
-        let hmac = Hmac::new(&hmac_key, &ser::serialize(data)?)?;
-        // store our data alongside our HMAC key, allowing anybody with access
-        // to this container to regenerate the HMAC.
-        let inner = PrivateVerifiableInner { value: data, hmac_key };
-        let serialized_inner = ser::serialize(&inner)?;
-        // encrypt the data+hmac_key combo
-        let sealed = seal_key.seal(&serialized_inner)?;
-        Ok((hmac, Self {
-            _phantom: PhantomData,
-            sealed,
-        }))
-    }
-
-    /// Open and return the secret stored in this container, provided that the
-    /// HMAC stored with this secret is the same as the one we generate when we
-    /// HMAC the decrypted data with the decrypted HMAC key.
-    ///
-    /// If the data has been tampered with and the HMACs don't verify, then we
-    /// return an error.
-    pub fn open_and_verify(&self, seal_key: &SecretKey, hmac: &Hmac) -> Result<T> {
-        // decrypt the secret value
-        let open_bytes = seal_key.open(&self.sealed)
-            .map_err(|_| Error::CryptoOpenFailed)?;
-        // deserialize our secret to give us the stored data and the HMAC key.
-        let obj: PrivateVerifiableInner<T> = ser::deserialize(&open_bytes[..])?;
-        let PrivateVerifiableInner { value, hmac_key } = obj;
-        // verify our hmac against our decrypted data/hmac key
-        hmac.verify(&hmac_key, &ser::serialize(&value)?)?;
-        // success!
-        Ok(value)
-    }
-
-    /// Re-encrypt the contained secret value with a new key.
-    pub fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
-        let serialized = previous_seal_key.open(&self.sealed)
-            .map_err(|_| Error::CryptoOpenFailed)?;
-        let sealed = new_seal_key.seal(&serialized)?;
-        Ok(Self {
-            _phantom: PhantomData,
-            sealed,
-        })
-    }
-}
-
-impl<T> Clone for PrivateVerifiable<T> {
-    fn clone(&self) -> Self {
-        Self {
-            _phantom: Default::default(),
-            sealed: self.sealed.clone(),
-        }
-    }
-}
-
-/// A container that holds an (encrypted) HMAC key, a set of (encrypted) data
-/// of type `T`, and an [Hmac] of the unencrypted data.
-///
-/// The idea here is to allow verification of private data such that:
-///
-/// 1. When the data is unlocked, it can be verified against the HMAC to ensure
-/// is has not been tampered with.
-/// 1. If multiple people can access the private data of the identity, one
-/// cannot maliciously replace the private contents of a transaction without
-/// breaking the signature of the HMAC on that content.
 #[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct PrivateWithHmac<T> {
@@ -266,12 +259,12 @@ pub struct PrivateWithHmac<T> {
     pub(crate) hmac: Hmac,
     /// The (encrypted) data AND HMAC key.
     #[rasn(tag(explicit(1)))]
-    pub(crate) data: Option<PrivateVerifiable<T>>,
+    pub(crate) data: Option<SealedTyped<T>>,
 }
 
 impl<T> PrivateWithHmac<T> {
     /// Create a new private hmac container
-    pub fn new(hmac: Hmac, data: Option<PrivateVerifiable<T>>) -> Self {
+    pub fn new(hmac: Hmac, data: Option<SealedTyped<T>>) -> Self {
         Self { hmac, data }
     }
 }
@@ -279,8 +272,8 @@ impl<T> PrivateWithHmac<T> {
 impl<T: Encode + Decode> PrivateWithHmac<T> {
     /// Create a new `PrivateWithHmac` container around our data.
     pub fn seal(seal_key: &SecretKey, val: T) -> Result<Self> {
-        let (hmac, private_verifiable) = PrivateVerifiable::seal(seal_key, &val)?;
-        Ok(Self { hmac, data: Some(private_verifiable) })
+        let (hmac, sealed_typed) = SealedTyped::seal(seal_key, &val)?;
+        Ok(Self { hmac, data: Some(sealed_typed) })
     }
 
     /// Unlock the data held within, and verify it against our heroic HMAC.
@@ -343,7 +336,8 @@ pub enum MaybePrivate<T> {
     #[rasn(tag(explicit(0)))]
     Public(T),
     /// Secret data, which can only be opened with the corresponding decryption
-    /// key, stored alongside a public signature of an HMAC of the secret data.
+    /// key, stored alongside an HMAC of the secret data which allows verification
+    /// without data leakage.
     ///
     /// Make sure to check if this object has data via <MaybePrivate::has_data()>
     /// before trying to use it.
@@ -464,9 +458,9 @@ mod tests {
     }
 
     #[test]
-    fn private_verifiable_seal_open() {
+    fn sealed_typed_seal_open() {
         let key = SecretKey::new_xchacha20poly1305().unwrap();
-        let (hmac, sealed) = PrivateVerifiable::<String>::seal(&key, &String::from("get a job")).unwrap();
+        let (hmac, sealed) = SealedTyped::<String>::seal(&key, &String::from("get a job")).unwrap();
         let opened: String = sealed.open_and_verify(&key, &hmac).unwrap();
         assert_eq!(&opened, "get a job");
         let key2 = SecretKey::new_xchacha20poly1305().unwrap();
@@ -480,10 +474,10 @@ mod tests {
     }
 
     #[test]
-    fn private_verifiable_reencrypt() {
+    fn sealed_typed_reencrypt() {
         let key1 = SecretKey::new_xchacha20poly1305().unwrap();
         let key2 = SecretKey::new_xchacha20poly1305().unwrap();
-        let (hmac, sealed) = PrivateVerifiable::<String>::seal(&key1, &String::from("get a job")).unwrap();
+        let (hmac, sealed) = SealedTyped::<String>::seal(&key1, &String::from("get a job")).unwrap();
         let sealed2 = sealed.reencrypt(&key1, &key2).unwrap();
         let opened: String = sealed2.open_and_verify(&key2, &hmac).unwrap();
         assert_eq!(&opened, "get a job");
