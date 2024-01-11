@@ -1513,5 +1513,22 @@ signatures:
             _ => panic!("bad dates"),
         }
     }
+
+    #[test]
+    fn trans_deser_stamp_base64() {
+        let stamp_base = r#"
+            MIIBYqAmMCSgIgQgilik2Qll91ayj_YAeMs8yXanIVWJ9OOdOjMuD1Lm2
+            bqhgcMwgcCgCAIGAYzTp4-joSgwJjAkoCIEILSu2LuV0C-YEOhrYA5Be_
+            e7ZEccnNwMOv_6MC56MDytooGJqoGGMIGDoIGAMH6gJjAkoCIEILNH__0
+            7TcYlKzSfMoteL1ULXnnD-8UGEM3KIYT6jnbfoSYwJKAiBCBl5_5mmZ1b
+            UKwD7PGpTMdM_awpnBSqd9XehDsOLaAvcKImMCSgIgQgDr4qJ88VNLMra
+            CqXBGoNO8ILbtizognoTwOvR3o7OtajBKECBQCicjBwoG4wbKAkoCIEIK
+            DmNHCSnibCj7sBu0xHMW2r39lMo20o-SFpHsFUJgK5oUSgQgRAXeuErZt
+            9bu65JmIK51-HfTi9p6Q38Wf1QTMI3Bx8GO1vWVuZGsk9QHormGe5cPkj
+            50LNI8wm8yBCAdp6zkBvCw
+        "#;
+        let trans = Transaction::deserialize_binary(&ser::base64_decode(stamp_base).unwrap()).unwrap();
+        assert_eq!(format!("{}", trans.id()), "ilik2Qll91ayj_YAeMs8yXanIVWJ9OOdOjMuD1Lm2boA");
+    }
 }
 
