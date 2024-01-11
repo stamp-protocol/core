@@ -47,7 +47,11 @@ pub fn base64_encode<T: AsRef<[u8]>>(bytes: T) -> String {
 }
 
 pub fn base64_decode<T: AsRef<[u8]>>(bytes: T) -> Result<Vec<u8>> {
-    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(bytes.as_ref())?)
+    // annoying alloc, but seems necessary as the base64 crate doesn't ignore whitespace
+    let mut filter_whitespace = Vec::from(bytes.as_ref());
+    filter_whitespace
+        .retain(|b| !b" \n\t\r\x0b\x0c".contains(b));
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&filter_whitespace[..])?)
 }
 
 /// A default implementation for (de)serializing an object to or from binary
