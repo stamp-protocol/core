@@ -378,10 +378,10 @@ impl Claim {
                 let identity_id_str = String::try_from(identity_id)?;
                 let claim_id_str = String::try_from(self.id())?;
                 Ok(vec![
-                    format!("stamp:{}", claim_id_str),
-                    format!("stamp:{}", ClaimID::short(&claim_id_str)),
                     format!("stamp://{}/claim/{}", identity_id_str, claim_id_str),
                     format!("stamp://{}/claim/{}", IdentityID::short(&identity_id_str), ClaimID::short(&claim_id_str)),
+                    format!("stamp:{}:{}", identity_id_str, claim_id_str),
+                    format!("stamp:{}:{}", IdentityID::short(&identity_id_str), ClaimID::short(&claim_id_str)),
                 ])
             }
             _ => Err(Error::IdentityClaimVerificationNotAllowed),
@@ -630,10 +630,10 @@ pub(crate) mod tests {
             "stamp://{{identity_id_short}}/claim/{{claim_id_short}}".into(),
         ] }
         assert_instant!{ Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap(), vec![
-            "stamp:{{claim_id}}".into(),
-            "stamp:{{claim_id_short}}".into(),
             "stamp://{{identity_id}}/claim/{{claim_id}}".into(),
             "stamp://{{identity_id_short}}/claim/{{claim_id_short}}".into(),
+            "stamp:{{identity_id}}:{{claim_id}}".into(),
+            "stamp:{{identity_id_short}}:{{claim_id_short}}".into(),
         ] }
         assert_instant!{ Address, String::from("445 Elite Football Sports Street, Football, KY 44666"), vec![] }
         assert_instant!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), vec![] }
