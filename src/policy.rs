@@ -193,7 +193,7 @@ pub enum Context {
     #[rasn(tag(explicit(5)))]
     KeyID(KeyID),
     /// Allows an action in the context of items with an exact name match. This
-    /// can be an admin key, subkey, or capability policy generally.
+    /// can be an admin key, subkey, claim, or capability policy generally.
     #[rasn(tag(explicit(6)))]
     Name(String),
     /// Allows an action in the context of items with name matching a glob pattern.
