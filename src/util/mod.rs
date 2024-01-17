@@ -15,7 +15,20 @@ pub(crate) mod sign;
 #[cfg(test)]
 pub(crate) mod test;
 
-pub use ser::{base64_encode, base64_decode, DeText, HashMapAsn1, SerdeBinary, SerText, Binary, BinarySecret, BinaryVec};
+pub use ser::{
+    base64_encode,
+    base64_decode,
+    DeText,
+    HashMapAsn1,
+    SerdeBinary,
+    SerText,
+    Binary,
+    BinarySecret,
+    BinaryVec,
+};
+
+#[cfg(feature = "yaml-export")]
+pub use ser::{text_export, text_import};
 
 macro_rules! object_id {
     (
