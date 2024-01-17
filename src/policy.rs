@@ -400,11 +400,11 @@ impl Context {
                 for context2 in $contexts2 {
                     let mut to_match = context2;
                     // cannot recurse on the `against` context
-                    if matches!(context2, Context::Any(..) | Context::All(..)) {
+                    if matches!(context2, Context::Any(..) | Context::All(..) | Context::Not(..)) {
                         break;
                     }
                     // allows recursion
-                    if matches!($context1, Context::Any(..) | Context::All(..)) {
+                    if matches!($context1, Context::Any(..) | Context::All(..) | Context::Not(..)) {
                         to_match = $against;
                     }
                     if $context1.test(to_match).is_ok() {
@@ -438,6 +438,11 @@ impl Context {
                     }
                 }
                 retval
+            }
+            (Self::Not(context1), Self::Any(contexts2)) => {
+                let mut matches = false;
+                search_context! { matches, context1.as_ref(), contexts2, against }
+                !matches
             }
             (Self::Permissive, _) => true,
             (_, Self::Any(contexts)) => {
@@ -993,6 +998,51 @@ mod tests {
             Context::Name("Frodo".into()),
             Context::Name("Aragorn".into()),
         ])).unwrap();
+
+        let con7 = Context::Not(Box::new(Context::Name("Gandalf".into())));    // sry gandalf
+        con7.test(&Context::Any(vec![
+            Context::Name("larry".into()),
+            Context::Name("barry".into()),
+            Context::Name("jerry".into()),
+            Context::Name("darry".into()),
+        ])).unwrap();
+        assert_eq!(con7.test(&Context::Any(vec![
+            Context::Name("larry".into()),
+            Context::Name("barry".into()),
+            Context::Name("jerry".into()),
+            Context::Name("darry".into()),
+            Context::Name("Gandalf".into()),
+        ])), Err(Error::PolicyContextMismatch));
+
+        let con8 = Context::All(vec![
+            Context::ObjectID(tid1.clone()),
+            Context::Not(Box::new(Context::ObjectID(tid2.clone()))),
+        ]);
+        con8.test(&Context::Any(vec![
+            Context::ObjectID(tid1.clone()),
+            Context::ObjectID(TransactionID::random()),
+        ])).unwrap();
+        con8.test(&Context::Any(vec![
+            Context::ObjectID(tid1.clone()),
+        ])).unwrap();
+        assert_eq!(con8.test(&Context::Any(vec![
+            Context::ObjectID(tid1.clone()),
+            Context::ObjectID(tid2.clone()),
+        ])), Err(Error::PolicyContextMismatch));
+
+        let con9 = Context::All(vec![
+            Context::Not(Box::new(Context::Permissive)),
+        ]);
+        assert_eq!(con9.test(&Context::Any(vec![
+            Context::ObjectID(tid1.clone()),
+        ])), Err(Error::PolicyContextMismatch));
+        assert_eq!(con9.test(&Context::Any(vec![
+            Context::Name("Frodo".into()),
+        ])), Err(Error::PolicyContextMismatch));
+        assert_eq!(con9.test(&Context::Any(vec![
+            Context::Name("Gandalf".into()),
+            Context::ObjectID(tid2.clone()),
+        ])), Err(Error::PolicyContextMismatch));
     }
 
     #[test]
