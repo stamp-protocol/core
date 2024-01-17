@@ -26,3 +26,6 @@ thiserror = "1.0"
 url = { version = "2.4", features = ["serde"] }
 zeroize = { version = "1.7", features = ["zeroize_derive" ] }
 
+[features]
+yaml-export = []
+

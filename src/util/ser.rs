@@ -31,12 +31,26 @@ pub(crate) fn serialize_text<T>(obj: &T) -> Result<String>
     Ok(serde_yaml::to_string(&stripped)?)
 }
 
+#[cfg(feature = "yaml-export")]
+pub fn text_export<T>(obj: &T) -> Result<String>
+    where T: Serialize
+{
+    Ok(serde_yaml::to_string(&obj)?)
+}
+
 pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
     rasn::der::decode(bytes).map_err(|e| Error::ASNDeserialize(e))
 }
 
 pub(crate) fn deserialize_text<T>(ser: &str) -> Result<T>
     where T: DeserializeOwned + Public
+{
+    Ok(serde_yaml::from_str(&ser)?)
+}
+
+#[cfg(feature = "yaml-export")]
+pub fn text_import<T>(ser: &str) -> Result<T>
+    where T: DeserializeOwned
 {
     Ok(serde_yaml::from_str(&ser)?)
 }
