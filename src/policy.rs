@@ -176,35 +176,38 @@ pub enum Context {
     /// match (an OR gate).
     #[rasn(tag(explicit(1)))]
     Any(Vec<Context>),
-    /// Allows an action in any context (ie, context is irrelevant).
+    /// Represents a context in which the sub-contexts *must not match* (a NOT gate).
     #[rasn(tag(explicit(2)))]
+    Not(Box<Context>),
+    /// Allows an action in any context (ie, context is irrelevant).
+    #[rasn(tag(explicit(3)))]
     Permissive,
     /// Allows an action in the context of an identity that has this exact ID.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(explicit(4)))]
     IdentityID(IdentityID),
     /// Allows an action in the context of items with an exact ID match (for
     /// instance, a claim that was created by transaction 0x03fd913)
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(explicit(5)))]
     ObjectID(TransactionID),
     /// Allows an action on an admin key with the given ID.
     AdminKeyID(AdminKeyID),
     /// Allows an action on a key with the given ID. This can match Admin keys, although
     /// using the `AdminKeyID` variant might be more useful.
-    #[rasn(tag(explicit(5)))]
+    #[rasn(tag(explicit(6)))]
     KeyID(KeyID),
     /// Allows an action in the context of items with an exact name match. This
     /// can be an admin key, subkey, claim, or capability policy generally.
-    #[rasn(tag(explicit(6)))]
+    #[rasn(tag(explicit(7)))]
     Name(String),
     /// Allows an action in the context of items with name matching a glob pattern.
     /// For instance `email-keys/*`
-    #[rasn(tag(explicit(7)))]
+    #[rasn(tag(explicit(8)))]
     NameGlob(String),
     /// Allows actions on claims where the claim is of a particular type
-    #[rasn(tag(explicit(8)))]
+    #[rasn(tag(explicit(9)))]
     ClaimType(ContextClaimType),
     /// Allows actions on external transactions of a certain type
-    #[rasn(tag(explicit(9)))]
+    #[rasn(tag(explicit(10)))]
     ExtType(BinaryVec),
     /// Allows actions on external transactions of a certain type by prefix.
     ///
@@ -221,10 +224,10 @@ pub enum Context {
     /// // This will not stand, man.
     /// context.test(&Context::ExtType(b"/turtl/op/v1".to_vec().into())).unwrap_err();
     /// ```
-    #[rasn(tag(explicit(10)))]
+    #[rasn(tag(explicit(11)))]
     ExtTypePrefix(BinaryVec),
     /// Allows actions on external transactions containing a key/value pair
-    #[rasn(tag(explicit(11)))]
+    #[rasn(tag(explicit(12)))]
     ExtContext {
         #[rasn(tag(explicit(0)))]
         key: BinaryVec,
@@ -274,7 +277,7 @@ pub enum Context {
     ///
     /// As you can see, the *value* is matched via prefix, but the key must be an
     /// exact match. Or else.
-    #[rasn(tag(explicit(12)))]
+    #[rasn(tag(explicit(13)))]
     ExtContextPrefix {
         #[rasn(tag(explicit(0)))]
         key: BinaryVec,
