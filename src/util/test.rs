@@ -19,7 +19,7 @@ pub(crate) fn sleep(millis: u64) {
 }
 
 pub(crate) fn rng() -> rand_chacha::ChaCha20Rng { 
-    crate::crypto::base::rng()
+    crate::crypto::base::rng::chacha20()
 }
 
 pub(crate) fn rng_seeded(seed: &[u8]) -> rand_chacha::ChaCha20Rng {

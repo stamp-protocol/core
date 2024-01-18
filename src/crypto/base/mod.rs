@@ -14,7 +14,6 @@ use crate::{
     error::{Error, Result},
     util::ser::{self, BinarySecret},
 };
-use rand::{RngCore, SeedableRng, rngs::OsRng};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
@@ -46,17 +45,33 @@ pub const KDF_OPS_SENSITIVE: u32 = 4;
 /// A constant that provides a default for mem difficulty for sensitive key derivation
 pub const KDF_MEM_SENSITIVE: u32 = 1048576;
 
-/// A convenience function that returns a ChaCha20 CSRNG seeded with OS random bytes. Use this if
-/// you want a nice, strong random number generator, you don't want to wire one up yourself, and
-/// your platform provides good entropy.
+/// A helpful module to house some quick CSRNG utilities. Basically, if you don't want to deal with
+/// creating your own RNG, Stamp can provide one for you here. When in doubt, use
+/// [`chacha20()`][rng::chacha20]. If you have a need for blistering performance,
+/// [`chacha8()`][rng::chacha8] can be used.
 ///
-/// This can be used as an input to any Stamp function that accepts `&mut rng`. Otherwise, you can
+/// These can be used as an input to any Stamp function that accepts `&mut rng`. Otherwise, you can
 /// bring your own RNG that implements [`RngCore`].
-pub fn rng_chacha20() -> rand_chacha::ChaCha20Rng { 
-    let mut seed_bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut seed_bytes);
-    rand_chacha::ChaCha20Rng::from_seed(seed_bytes)
+pub mod rng {
+    use rand::{RngCore, SeedableRng, rngs::OsRng};
+
+    /// Use this if you want a nice, strong random number generator, you don't want to wire one up
+    /// yourself, and your platform provides good entropy.
+    pub fn chacha20() -> rand_chacha::ChaCha20Rng {
+        let mut seed_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut seed_bytes);
+        rand_chacha::ChaCha20Rng::from_seed(seed_bytes)
+    }
+
+    /// Use this if you need a CSRNG with fast performance. This is not as secure as [`chacha20`]
+    /// but is still very secure.
+    pub fn chacha8() -> rand_chacha::ChaCha8Rng {
+        let mut seed_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut seed_bytes);
+        rand_chacha::ChaCha8Rng::from_seed(seed_bytes)
+    }
 }
+
 
 /// A value that lets us reference keys by a unique identifier (pubkey for asymc keypairs
 /// and HMAC for secret keys).
