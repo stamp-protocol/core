@@ -3,7 +3,7 @@ use crate::{
     error::{Error, Result},
     util::ser::{Binary, BinarySecret, BinaryVec, SerdeBinary},
 };
-use rand::{RngCore, rngs::OsRng};
+use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
@@ -49,35 +49,33 @@ impl SerdeBinary for Sealed {}
 
 impl SecretKey {
     /// Create a new xchacha20poly1305 key
-    pub fn new_xchacha20poly1305() -> Result<Self> {
+    pub fn new_xchacha20poly1305<R: RngCore + CryptoRng>(rng: &mut R) -> Result<Self> {
         let mut randbuf = [0u8; 32];
-        OsRng.fill_bytes(&mut randbuf);
+        rng.fill_bytes(&mut randbuf);
         Ok(Self::XChaCha20Poly1305(BinarySecret::new(randbuf)))
     }
 
     /// Try to create a SecretKey from a byte slice
-    pub fn new_xchacha20poly1305_from_slice(bytes: &[u8]) -> Result<Self> {
-        let arr: [u8; 32] = bytes.try_into()
-            .map_err(|_| Error::BadLength)?;
-        Ok(Self::XChaCha20Poly1305(BinarySecret::new(arr)))
+    pub fn new_xchacha20poly1305_from_bytes(secret_bytes: [u8; 32]) -> Result<Self> {
+        Ok(Self::XChaCha20Poly1305(BinarySecret::new(secret_bytes)))
     }
 
     /// Create a nonce for use with this secret key
-    pub fn gen_nonce(&self) -> Result<SecretKeyNonce> {
+    pub fn gen_nonce<R: RngCore + CryptoRng>(&self, rng: &mut R) -> Result<SecretKeyNonce> {
         match self {
             SecretKey::XChaCha20Poly1305(_) => {
                 let mut randbuf = [0u8; 24];
-                OsRng.fill_bytes(&mut randbuf);
+                rng.fill_bytes(&mut randbuf);
                 Ok(SecretKeyNonce::XChaCha20Poly1305(Binary::new(randbuf)))
             }
         }
     }
 
     /// Encrypt a value with a secret key/nonce
-    pub fn seal<'a>(&'a self, data: &[u8]) -> Result<Sealed> {
+    pub fn seal<'a, R: RngCore + CryptoRng>(&'a self, rng: &mut R, data: &[u8]) -> Result<Sealed> {
         match self {
             SecretKey::XChaCha20Poly1305(ref key) => {
-                let nonce = self.gen_nonce()?;
+                let nonce = self.gen_nonce(rng)?;
                 let nonce_bin = match nonce {
                     SecretKeyNonce::XChaCha20Poly1305(ref bin) => bin.deref(),
                 };
@@ -126,9 +124,10 @@ pub(crate) mod tests {
 
     #[test]
     fn secretkey_xchacha20poly1305_enc_dec() {
-        let key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let val = String::from("get a job");
-        let enc = key.seal(val.as_bytes()).unwrap();
+        let enc = key.seal(&mut rng, val.as_bytes()).unwrap();
         let dec_bytes = key.open(&enc).unwrap();
         let dec = String::from_utf8(dec_bytes).unwrap();
         assert_eq!(dec, String::from("get a job"));
@@ -140,7 +139,7 @@ pub(crate) mod tests {
             SecretKeyNonce::XChaCha20Poly1305(Binary::new([33, 86, 38, 93, 180, 121, 32, 51, 21, 36, 74, 137, 32, 165, 2, 99, 111, 179, 32, 242, 56, 9, 254, 1])),
             vec![8, 175, 83, 132, 142, 229, 0, 29, 187, 23, 223, 152, 164, 120, 206, 13, 240, 105, 184, 47, 228, 239, 34, 85, 79, 242, 230, 150, 186, 203, 156, 26],
         );
-        let key = SecretKey::new_xchacha20poly1305_from_slice(vec![120, 111, 109, 233, 7, 27, 205, 94, 55, 95, 248, 113, 138, 246, 244, 109, 147, 168, 117, 163, 48, 193, 100, 103, 43, 205, 212, 197, 110, 111, 105, 1].as_slice()).unwrap();
+        let key = SecretKey::new_xchacha20poly1305_from_bytes([120, 111, 109, 233, 7, 27, 205, 94, 55, 95, 248, 113, 138, 246, 244, 109, 147, 168, 117, 163, 48, 193, 100, 103, 43, 205, 212, 197, 110, 111, 105, 1]).unwrap();
         let dec = key.open(&sealed).unwrap();
         assert_eq!(dec.as_slice(), b"HI HUNGRY IM DAD");
     }

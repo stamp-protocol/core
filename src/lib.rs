@@ -191,5 +191,6 @@ pub mod policy;
 pub mod identity;
 pub mod dag;
 
+pub use rand;
 pub use rasn;
 

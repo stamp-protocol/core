@@ -17,6 +17,7 @@ use crate::{
     util::{Public, Date, Url, BinaryVec, SerText},
 };
 use getset;
+use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
@@ -242,20 +243,20 @@ pub enum ClaimSpec {
 
 impl ClaimSpec {
     /// Re-encrypt this claim spec's private data, if it has any
-    pub(crate) fn reencrypt(self, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
+    pub(crate) fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
         let spec = match self {
-            Self::Identity(maybe) => Self::Identity(maybe.reencrypt(current_key, new_key)?),
-            Self::Name(maybe) => Self::Name(maybe.reencrypt(current_key, new_key)?),
-            Self::Birthday(maybe) => Self::Birthday(maybe.reencrypt(current_key, new_key)?),
-            Self::Email(maybe) => Self::Email(maybe.reencrypt(current_key, new_key)?),
-            Self::Photo(maybe) => Self::Photo(maybe.reencrypt(current_key, new_key)?),
-            Self::Pgp(maybe) => Self::Pgp(maybe.reencrypt(current_key, new_key)?),
-            Self::Domain(maybe) => Self::Domain(maybe.reencrypt(current_key, new_key)?),
-            Self::Url(maybe) => Self::Url(maybe.reencrypt(current_key, new_key)?),
-            Self::Address(maybe) => Self::Address(maybe.reencrypt(current_key, new_key)?),
-            Self::Relation(maybe) => Self::Relation(maybe.reencrypt(current_key, new_key)?),
-            Self::RelationExtension(maybe) => Self::RelationExtension(maybe.reencrypt(current_key, new_key)?),
-            Self::Extension { key, value } => Self::Extension { key, value: value.reencrypt(current_key, new_key)? },
+            Self::Identity(maybe) => Self::Identity(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::Name(maybe) => Self::Name(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::Birthday(maybe) => Self::Birthday(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::Email(maybe) => Self::Email(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::Photo(maybe) => Self::Photo(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::Pgp(maybe) => Self::Pgp(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::Domain(maybe) => Self::Domain(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::Url(maybe) => Self::Url(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::Address(maybe) => Self::Address(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::Relation(maybe) => Self::Relation(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::RelationExtension(maybe) => Self::RelationExtension(maybe.reencrypt(rng, current_key, new_key)?),
+            Self::Extension { key, value } => Self::Extension { key, value: value.reencrypt(rng, current_key, new_key)? },
         };
         Ok(spec)
     }
@@ -423,10 +424,10 @@ pub(crate) mod tests {
     use std::str::FromStr;
 
     macro_rules! make_specs {
-        ($claimmaker:expr, $val:expr) => {{
-            let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        ($rng:expr, $claimmaker:expr, $val:expr) => {{
+            let master_key = SecretKey::new_xchacha20poly1305($rng).unwrap();
             let val = $val;
-            let maybe_private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
+            let maybe_private = MaybePrivate::new_private($rng, &master_key, val.clone()).unwrap();
             let maybe_public = MaybePrivate::new_public(val.clone());
             let spec_private = $claimmaker(maybe_private, val.clone());
             let spec_public = $claimmaker(maybe_public, val.clone());
@@ -438,17 +439,18 @@ pub(crate) mod tests {
     fn claimspec_reencrypt() {
         macro_rules! claim_reenc {
             (raw, $claimmaker:expr, $val:expr, $get_maybe:expr) => {
+                let mut rng = crate::util::test::rng();
                 let val = $val;
-                let (master_key, spec_private, spec_public) = make_specs!($claimmaker, val.clone());
+                let (master_key, spec_private, spec_public) = make_specs!(&mut rng, $claimmaker, val.clone());
                 assert_eq!($get_maybe(spec_private.clone()).open(&master_key).unwrap(), val);
-                let master_key2 = SecretKey::new_xchacha20poly1305().unwrap();
+                let master_key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
                 assert!(master_key != master_key2);
-                let spec_private2 = spec_private.reencrypt(&master_key, &master_key2).unwrap();
+                let spec_private2 = spec_private.reencrypt(&mut rng, &master_key, &master_key2).unwrap();
                 let maybe_private2 = $get_maybe(spec_private2);
                 assert_eq!(maybe_private2.open(&master_key), Err(Error::CryptoOpenFailed));
                 assert_eq!(maybe_private2.open(&master_key2).unwrap(), val);
 
-                let spec_public2 = spec_public.clone().reencrypt(&master_key, &master_key2).unwrap();
+                let spec_public2 = spec_public.clone().reencrypt(&mut rng, &master_key, &master_key2).unwrap();
                 match ($get_maybe(spec_public), $get_maybe(spec_public2)) {
                     (MaybePrivate::Public(val), MaybePrivate::Public(val2)) => {
                         assert_eq!(val, val2);
@@ -490,7 +492,8 @@ pub(crate) mod tests {
     fn claimcontainer_claimspec_has_private() {
         macro_rules! claim_pub_priv {
             (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
-                let (_master_key, spec, spec2) = make_specs!($claimmaker, $val);
+                let mut rng = crate::util::test::rng();
+                let (_master_key, spec, spec2) = make_specs!(&mut rng, $claimmaker, $val);
                 assert_eq!(spec.has_private(), true);
                 match $getmaybe(spec.clone()) {
                     MaybePrivate::Private(PrivateWithHmac { data: Some(_), .. }) => {},
@@ -542,8 +545,9 @@ pub(crate) mod tests {
         macro_rules! thtrip {
             (next, $val:expr, $createfn:expr) => {
                 let val = $val;
-                let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-                let private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
+                let mut rng = crate::util::test::rng();
+                let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+                let private = MaybePrivate::new_private(&mut rng, &master_key, val.clone()).unwrap();
                 let claimspec = $createfn(private);
                 let claimspec2 = claimspec.clone().strip_private();
                 assert_eq!(claimspec.has_private(), true);
@@ -608,7 +612,8 @@ pub(crate) mod tests {
         }
         macro_rules! assert_instant {
             (raw, $claimmaker:expr, $val:expr, $expected:expr) => {
-                let (_master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let mut rng = crate::util::test::rng();
+                let (_master_key, spec_private, spec_public) = make_specs!(&mut rng, $claimmaker, $val);
                 let container_private = Claim::new(ClaimID::random(), spec_private, None);
                 let container_public = Claim::new(ClaimID::random(), spec_public, None);
 
@@ -650,8 +655,9 @@ pub(crate) mod tests {
     fn claim_as_public() {
         macro_rules! as_pub {
             (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
-                let (master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
-                let fake_master_key = SecretKey::new_xchacha20poly1305().unwrap();
+                let mut rng = crate::util::test::rng();
+                let (master_key, spec_private, spec_public) = make_specs!(&mut rng, $claimmaker, $val);
+                let fake_master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
                 let container_private = Claim::new(ClaimID::random(), spec_private, None);
                 let container_public = Claim::new(ClaimID::random(), spec_public, None);
                 let opened_claim = container_private.as_public(&master_key).unwrap();
@@ -694,7 +700,8 @@ pub(crate) mod tests {
     fn claimcontainer_has_private_strip() {
         macro_rules! has_priv {
             (raw, $claimmaker:expr, $val:expr, $haspriv:expr) => {
-                let (_master_key, spec_private, spec_public) = make_specs!($claimmaker, $val);
+                let mut rng = crate::util::test::rng();
+                let (_master_key, spec_private, spec_public) = make_specs!(&mut rng, $claimmaker, $val);
                 let container_private = Claim::new(ClaimID::random(), spec_private, None);
                 let container_public = Claim::new(ClaimID::random(), spec_public, None);
                 assert_eq!(container_private.has_private(), $haspriv);

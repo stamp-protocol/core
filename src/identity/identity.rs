@@ -22,7 +22,6 @@ use crate::{
     },
 };
 use getset;
-use rand::{RngCore, rngs::OsRng};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
@@ -287,9 +286,7 @@ impl Identity {
 
     /// Test if a master key is correct.
     pub fn test_master_key(&self, master_key: &SecretKey) -> Result<()> {
-        let mut randbuf = [0u8; 32];
-        OsRng.fill_bytes(&mut randbuf);
-        let test_bytes = Vec::from(&randbuf[..]);
+        let test_bytes = [1, 2, 3, 4, 5, 6, 7, 8];
         if self.keychain().admin_keys().is_empty() {
             Err(Error::IdentityNotOwned)?;
         }
@@ -327,16 +324,13 @@ mod tests {
         },
         policy::{Capability, MultisigPolicy, Policy},
     };
+    use rand::{CryptoRng, RngCore};
     use std::str::FromStr;
 
-    fn gen_master_key() -> SecretKey {
-        SecretKey::new_xchacha20poly1305().unwrap()
-    }
-
-    fn create_identity() -> (SecretKey, Identity) {
-        let master_key = gen_master_key();
+    fn create_identity<R: RngCore + CryptoRng>(rng: &mut R) -> (SecretKey, Identity) {
+        let master_key = SecretKey::new_xchacha20poly1305(rng).unwrap();
         let id = IdentityID::random();
-        let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let admin_keypair = AdminKeypair::new_ed25519(rng, &master_key).unwrap();
         let admin_key = AdminKey::new(admin_keypair.clone(), "Default", None);
         let capability = Policy::new(
             vec![Capability::Permissive],
@@ -353,9 +347,10 @@ mod tests {
 
     #[test]
     fn identity_create() {
-        let master_key = gen_master_key();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let id = IdentityID::random();
-        let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let admin_keypair = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let admin_key = AdminKey::new(admin_keypair, "Default", None);
         let capability = Policy::new(
             vec![Capability::Permissive],
@@ -373,7 +368,8 @@ mod tests {
 
     #[test]
     fn identity_claim_make_delete() {
-        let (_master_key, identity) = create_identity();
+        let mut rng = crate::util::test::rng();
+        let (_master_key, identity) = create_identity(&mut rng);
 
         let claim_id = ClaimID::random();
         let spec = ClaimSpec::Identity(MaybePrivate::new_public(IdentityID::random()));
@@ -404,8 +400,9 @@ mod tests {
 
     #[test]
     fn identity_stamp_make_revoke() {
-        let (_master_key1, identity1) = create_identity();
-        let (_master_key2, identity2) = create_identity();
+        let mut rng = crate::util::test::rng();
+        let (_master_key1, identity1) = create_identity(&mut rng);
+        let (_master_key2, identity2) = create_identity(&mut rng);
 
         let identity1 = identity1.make_claim(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_public("Toad".into())), None).unwrap();
         let claim = identity1.claims()[0].clone();
@@ -440,8 +437,9 @@ mod tests {
 
     #[test]
     fn identity_stamp_accept_delete() {
-        let (_master_key1, identity1) = create_identity();
-        let (_master_key2, identity2) = create_identity();
+        let mut rng = crate::util::test::rng();
+        let (_master_key1, identity1) = create_identity(&mut rng);
+        let (_master_key2, identity2) = create_identity(&mut rng);
 
         let identity1 = identity1.make_claim(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_public("Toad".into())), None).unwrap();
         let claim = identity1.claims()[0].clone();
@@ -480,9 +478,10 @@ mod tests {
 
     #[test]
     fn identity_add_remove_admin_keys_brah_whoaaa_shaka_gnargnar_so_pitted_whapow() {
-        let (master_key, identity) = create_identity();
+        let mut rng = crate::util::test::rng();
+        let (master_key, identity) = create_identity(&mut rng);
         assert_eq!(identity.keychain().subkeys().len(), 0);
-        let admin_key = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "alpha", None::<&str>);
+        let admin_key = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "alpha", None::<&str>);
         let key_id = admin_key.key_id();
         let identity2 = identity.add_admin_key(admin_key.clone()).unwrap();
         assert_eq!(identity2.keychain().admin_keys().len(), 2);
@@ -522,10 +521,11 @@ mod tests {
 
     #[test]
     fn identity_subkey_add_revoke_edit_delete() {
-        let (master_key, identity) = create_identity();
+        let mut rng = crate::util::test::rng();
+        let (master_key, identity) = create_identity(&mut rng);
 
         assert_eq!(identity.keychain().subkeys().len(), 0);
-        let signkey = SignKeypair::new_ed25519(&master_key).unwrap();
+        let signkey = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let key = Key::Sign(signkey.clone());
         let identity = identity.add_subkey(key.clone(), "default:sign", Some("get a job")).unwrap();
         assert_eq!(identity.keychain().subkeys().len(), 1);
@@ -569,7 +569,8 @@ mod tests {
 
     #[test]
     fn identity_find_claim_by_name() {
-        let (_, identity) = create_identity();
+        let mut rng = crate::util::test::rng();
+        let (_, identity) = create_identity(&mut rng);
         let spec1 = ClaimSpec::Name(MaybePrivate::new_public(String::from("Dirk Delta")));
         let spec2 = ClaimSpec::Name(MaybePrivate::new_public(String::from("Marty Malt")));
         let identity2 = identity
@@ -583,20 +584,22 @@ mod tests {
 
     #[test]
     fn identity_emails_maybe() {
-        let (master_key, identity) = create_identity();
+        let mut rng = crate::util::test::rng();
+        let (master_key, identity) = create_identity(&mut rng);
         assert_eq!(identity.emails().len(), 0);
 
         let spec = ClaimSpec::Email(MaybePrivate::new_public(String::from("poopy@butt.com")));
         let identity = identity
             .make_claim(ClaimID::random(), spec.clone(), Some("Zing".into())).unwrap()
-            .make_claim(ClaimID::random(), ClaimSpec::Email(MaybePrivate::new_private(&master_key, "ace@fairweather.com".into()).unwrap()), Some("email2".into())).unwrap()
+            .make_claim(ClaimID::random(), ClaimSpec::Email(MaybePrivate::new_private(&mut rng, &master_key, "ace@fairweather.com".into()).unwrap()), Some("email2".into())).unwrap()
             .make_claim(ClaimID::random(), ClaimSpec::Email(MaybePrivate::new_public("zing@radiofree.com".into())), Some("email3".into())).unwrap();
         assert_eq!(identity.emails(), vec!["poopy@butt.com".to_string(), "zing@radiofree.com".to_string()]);
     }
 
     #[test]
     fn identity_names_maybe() {
-        let (_master_key, identity) = create_identity();
+        let mut rng = crate::util::test::rng();
+        let (_master_key, identity) = create_identity(&mut rng);
         assert_eq!(identity.names().len(), 0);
 
         let claim_id = ClaimID::random();
@@ -617,7 +620,8 @@ mod tests {
 
     #[test]
     fn identity_is_owned() {
-        let (_master_key, identity) = create_identity();
+        let mut rng = crate::util::test::rng();
+        let (_master_key, identity) = create_identity(&mut rng);
         assert!(identity.is_owned());
 
         let mut identity2 = identity.clone();
@@ -627,8 +631,9 @@ mod tests {
 
     #[test]
     fn identity_test_master_key() {
-        let (master_key, identity) = create_identity();
-        let master_key_fake = gen_master_key();
+        let mut rng = crate::util::test::rng();
+        let (master_key, identity) = create_identity(&mut rng);
+        let master_key_fake = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         assert!(master_key.as_ref() != master_key_fake.as_ref());
 
         identity.test_master_key(&master_key).unwrap();
@@ -638,12 +643,11 @@ mod tests {
 
     #[test]
     fn identity_serialize() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let now = Timestamp::from_str("1977-06-07T04:32:06Z").unwrap();
-        let seeds = [
-            &[33, 90, 159, 88, 22, 24, 84, 4, 237, 121, 198, 195, 71, 238, 107, 91, 235, 93, 9, 129, 252, 221, 2, 149, 250, 142, 49, 36, 161, 184, 44, 156],
-        ];
-        let admin = AdminKeypair::new_ed25519_from_seed(&master_key, seeds[0]).unwrap();
+        let seed = [33, 90, 159, 88, 22, 24, 84, 4, 237, 121, 198, 195, 71, 238, 107, 91, 235, 93, 9, 129, 252, 221, 2, 149, 250, 142, 49, 36, 161, 184, 44, 156];
+        let admin = AdminKeypair::new_ed25519_from_bytes(&mut rng, &master_key, seed).unwrap();
         let admin_key = AdminKey::new(admin.clone(), "alpha", None);
 
         let id = IdentityID::from(TransactionID::from(Hash::new_blake3(b"get a job").unwrap()));
@@ -671,12 +675,12 @@ policies:
             - Key:
                 name: ~
                 key:
-                  Ed25519: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
+                  Ed25519: rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
 keychain:
   admin_keys:
     - key:
         Ed25519:
-          public: dHNopBN3YZrNa52xiVxB1IoY9NsrCz1c9cL8lLTu69U
+          public: rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
           secret: ~
       name: alpha
       description: ~
@@ -688,8 +692,9 @@ stamps: []"#);
 
     #[test]
     fn identity_strip_has_private() {
-        let (master_key, identity) = create_identity();
-        let identity = identity.make_claim(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Bozotron".to_string()).unwrap()), None).unwrap();
+        let mut rng = crate::util::test::rng();
+        let (master_key, identity) = create_identity(&mut rng);
+        let identity = identity.make_claim(ClaimID::random(), ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, "Bozotron".to_string()).unwrap()), None).unwrap();
         assert!(identity.has_private());
         assert!(identity.keychain().has_private());
         assert!(identity.claims().iter().find(|c| c.has_private()).is_some());

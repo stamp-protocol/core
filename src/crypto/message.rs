@@ -13,6 +13,7 @@ use crate::{
     },
     util::ser::{self, BinaryVec},
 };
+use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 
@@ -55,12 +56,12 @@ impl ser::SerdeBinary for Message {}
 /// We use the sender's/recipient's subkeys for messaging, which is the most
 /// general container we can use (passing just an identity object won't do here
 /// because an identity could have many CryptoKeypairs).
-pub fn send(sender_master_key: &SecretKey, sender_identity_id: &IdentityID, sender_key: &Subkey, recipient_key: &Subkey, message: &[u8]) -> Result<Message> {
+pub fn send<R: RngCore + CryptoRng>(rng: &mut R, sender_master_key: &SecretKey, sender_identity_id: &IdentityID, sender_key: &Subkey, recipient_key: &Subkey, message: &[u8]) -> Result<Message> {
     let sender_crypto = sender_key.key().as_cryptokey()
         .ok_or(Error::KeychainSubkeyWrongType)?;
     let recipient_crypto = recipient_key.key().as_cryptokey()
         .ok_or(Error::KeychainSubkeyWrongType)?;
-    let sealed = recipient_crypto.seal(sender_master_key, sender_crypto, message)?;
+    let sealed = recipient_crypto.seal(rng, sender_master_key, sender_crypto, message)?;
     let sender_key_id = sender_key.key_id();
     let signed_msg = SignedObject::new(sender_identity_id.clone(), sender_key_id, sealed);
     Ok(Message::Signed(signed_msg))
@@ -86,10 +87,10 @@ pub fn open(recipient_master_key: &SecretKey, recipient_key: &Subkey, sender_key
 ///
 /// Anonymous messages are not signed by the sender, so their source cannot be
 /// cryptographically verified.
-pub fn send_anonymous(recipient_key: &Subkey, message: &[u8]) -> Result<Message> {
+pub fn send_anonymous<R: RngCore + CryptoRng>(rng: &mut R, recipient_key: &Subkey, message: &[u8]) -> Result<Message> {
     let recipient_crypto = recipient_key.key().as_cryptokey()
         .ok_or(Error::KeychainSubkeyWrongType)?;
-    let sealed = recipient_crypto.seal_anonymous(message)?;
+    let sealed = recipient_crypto.seal_anonymous(rng, message)?;
     Ok(Message::Anonymous(sealed.into()))
 }
 
@@ -117,11 +118,12 @@ mod tests {
 
     #[test]
     fn message_anonymous_signed_maybe() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let sender_key = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let recipient_key = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let sender_key = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let recipient_key = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
 
-        let sealed = recipient_key.seal(&master_key, &sender_key, b"'I KNOW!' SAID THE BOY, AS HE LEAPT TO HIS FEET").unwrap();
+        let sealed = recipient_key.seal(&mut rng, &master_key, &sender_key, b"'I KNOW!' SAID THE BOY, AS HE LEAPT TO HIS FEET").unwrap();
         let msg1 = Message::Signed(SignedObject::new(IdentityID::blank(), KeyID::random_crypto(), sealed));
         let msg2 = Message::Anonymous(BinaryVec::from(vec![1, 2, 3, 42]));
 
@@ -138,14 +140,15 @@ mod tests {
 
     #[test]
     fn msg_send_open() {
-        let (sender_master_key, sender_identity) = test::setup_identity_with_subkeys();
-        let (recipient_master_key, recipient_identity) = test::setup_identity_with_subkeys();
+        let mut rng = crate::util::test::rng();
+        let (sender_master_key, sender_identity) = test::setup_identity_with_subkeys(&mut rng);
+        let (recipient_master_key, recipient_identity) = test::setup_identity_with_subkeys(&mut rng);
 
         let sender_subkey = sender_identity.keychain().subkey_by_name("cryptololol").unwrap();
         let recipient_subkey = recipient_identity.keychain().subkey_by_name("cryptololol").unwrap();
 
         let msg = b"And if you ever put your goddamn hands on my wife again, I will...";
-        let sealed = send(&sender_master_key, sender_identity.id(), &sender_subkey, recipient_subkey, msg).unwrap();
+        let sealed = send(&mut rng, &sender_master_key, sender_identity.id(), &sender_subkey, recipient_subkey, msg).unwrap();
         match sealed {
             Message::Signed(_) => {},
             _ => panic!("Bad message format returned"),
@@ -172,7 +175,7 @@ mod tests {
 
         // now generate a NEW crypto key and try to open the message with it.
         let sender_identity2 = sender_identity
-            .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&sender_master_key).unwrap()), "fake-ass-key", None).unwrap();
+            .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &sender_master_key).unwrap()), "fake-ass-key", None).unwrap();
         let sender_fake_subkey = sender_identity2.keychain().subkey_by_name("fake-ass-key").unwrap();
         let res = open(&recipient_master_key, &recipient_subkey, &sender_fake_subkey, &sealed);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
@@ -183,12 +186,13 @@ mod tests {
 
     #[test]
     fn msg_send_open_anonymous() {
-        let (recipient_master_key, recipient_identity) = test::setup_identity_with_subkeys();
+        let mut rng = crate::util::test::rng();
+        let (recipient_master_key, recipient_identity) = test::setup_identity_with_subkeys(&mut rng);
 
         let recipient_subkey = recipient_identity.keychain().subkey_by_name("cryptololol").unwrap();
 
         let msg = b"The government protecting their profits from the poor. The rich and the fortunate chaining up the door";
-        let sealed = send_anonymous(&recipient_subkey, msg).unwrap();
+        let sealed = send_anonymous(&mut rng, &recipient_subkey, msg).unwrap();
         match sealed {
             Message::Anonymous(_) => {},
             _ => panic!("Bad message format returned"),

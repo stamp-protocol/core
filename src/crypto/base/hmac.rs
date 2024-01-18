@@ -5,7 +5,7 @@ use crate::{
     },
 };
 use hmac::{SimpleHmac, Mac};
-use rand::{RngCore, rngs::OsRng};
+use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
@@ -21,9 +21,9 @@ pub enum HmacKey {
 
 impl HmacKey {
     /// Create a new blake3 HMAC key
-    pub fn new_blake3() -> Result<Self> {
+    pub fn new_blake3<R: RngCore + CryptoRng>(rng: &mut R) -> Result<Self> {
         let mut randbuf = [0u8; 32];
-        OsRng.fill_bytes(&mut randbuf);
+        rng.fill_bytes(&mut randbuf);
         Ok(Self::Blake3(BinarySecret::new(randbuf)))
     }
 
@@ -102,10 +102,11 @@ pub(crate) mod tests {
 
     #[test]
     fn hmac_verify() {
+        let mut rng = crate::util::test::rng();
         let data1 = String::from("hai plz verify me. oh and could you verify my cousin too? he's just over there, with his wife and four children...if it's not too much trouble, maybe you could verify them as we...");
         let data2 = String::from("hai plz verify me. oh and could you verify my cousin too? he's just over there, with his wife and seven children...if it's not too much trouble, maybe you could verify them as we...");
-        let hmac_key1 = HmacKey::new_blake3().unwrap();
-        let hmac_key2 = HmacKey::new_blake3().unwrap();
+        let hmac_key1 = HmacKey::new_blake3(&mut rng).unwrap();
+        let hmac_key2 = HmacKey::new_blake3(&mut rng).unwrap();
         let hmac = Hmac::new(&hmac_key1, data1.as_bytes()).unwrap();
         hmac.verify(&hmac_key1, data1.as_bytes()).unwrap();
         let res = hmac.verify(&hmac_key2, data1.as_bytes());

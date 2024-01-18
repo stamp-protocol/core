@@ -15,6 +15,7 @@ use crate::{
     crypto::base::{SecretKey, Hmac, HmacKey, Sealed},
     util::{Public, ser},
 };
+use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag, types::{Constructed, Class, fields::{Field, Fields}}};
 use serde_derive::{Serialize, Deserialize};
 use std::marker::PhantomData;
@@ -72,9 +73,9 @@ impl<T> Clone for Private<T> {
 impl<T: Encode + Decode> Private<T> {
     /// Create a new Private container from a given serializable data object and
     /// an encrypting key.
-    pub fn seal(seal_key: &SecretKey, data: &T) -> Result<Self> {
+    pub fn seal<R: RngCore + CryptoRng>(rng: &mut R, seal_key: &SecretKey, data: &T) -> Result<Self> {
         let serialized = ser::serialize(data)?;
-        let sealed = seal_key.seal(&serialized)?;
+        let sealed = seal_key.seal(rng, &serialized)?;
         Ok(Self {
             _phantom: PhantomData,
             sealed,
@@ -90,10 +91,10 @@ impl<T: Encode + Decode> Private<T> {
     }
 
     /// Re-encrypt the contained secret value with a new key.
-    pub fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let serialized = previous_seal_key.open(&self.sealed)
             .map_err(|_| Error::CryptoOpenFailed)?;
-        let sealed = new_seal_key.seal(&serialized)?;
+        let sealed = new_seal_key.seal(rng, &serialized)?;
         Ok(Self {
             _phantom: PhantomData,
             sealed,
@@ -174,16 +175,16 @@ impl<T: Encode + Decode> SealedTyped<T> {
     /// HMAC and thus verify the public signature on the secret. However, the
     /// signature itself reveals nothing about the secret data because the HMAC
     /// obscures the data behind an encrypted key.
-    pub fn seal(seal_key: &SecretKey, data: &T) -> Result<(Hmac, Self)> {
+    pub fn seal<R: RngCore + CryptoRng>(rng: &mut R, seal_key: &SecretKey, data: &T) -> Result<(Hmac, Self)> {
         // create a new random key and use it to HMAC our data
-        let hmac_key = HmacKey::new_blake3()?;
+        let hmac_key = HmacKey::new_blake3(rng)?;
         let hmac = Hmac::new(&hmac_key, &ser::serialize(data)?)?;
         // store our data alongside our HMAC key, allowing anybody with access
         // to this container to regenerate the HMAC.
         let inner = SealedTypedInner { value: data, hmac_key };
         let serialized_inner = ser::serialize(&inner)?;
         // encrypt the data+hmac_key combo
-        let sealed = seal_key.seal(&serialized_inner)?;
+        let sealed = seal_key.seal(rng, &serialized_inner)?;
         Ok((hmac, Self {
             _phantom: PhantomData,
             sealed,
@@ -210,10 +211,10 @@ impl<T: Encode + Decode> SealedTyped<T> {
     }
 
     /// Re-encrypt the contained secret value with a new key.
-    pub fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let serialized = previous_seal_key.open(&self.sealed)
             .map_err(|_| Error::CryptoOpenFailed)?;
-        let sealed = new_seal_key.seal(&serialized)?;
+        let sealed = new_seal_key.seal(rng, &serialized)?;
         Ok(Self {
             _phantom: PhantomData,
             sealed,
@@ -271,8 +272,8 @@ impl<T> PrivateWithHmac<T> {
 
 impl<T: Encode + Decode> PrivateWithHmac<T> {
     /// Create a new `PrivateWithHmac` container around our data.
-    pub fn seal(seal_key: &SecretKey, val: T) -> Result<Self> {
-        let (hmac, sealed_typed) = SealedTyped::seal(seal_key, &val)?;
+    pub fn seal<R: RngCore + CryptoRng>(rng: &mut R, seal_key: &SecretKey, val: T) -> Result<Self> {
+        let (hmac, sealed_typed) = SealedTyped::seal(rng, seal_key, &val)?;
         Ok(Self { hmac, data: Some(sealed_typed) })
     }
 
@@ -285,12 +286,12 @@ impl<T: Encode + Decode> PrivateWithHmac<T> {
     }
 
     /// Reencrypt this PrivateWithHmac container with a new key.
-    pub(crate) fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
+    pub(crate) fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let res = match self {
             Self {hmac, data: Some(prv)} => {
                 Self {
                     hmac,
-                    data: Some(prv.reencrypt(previous_seal_key, new_seal_key)?),
+                    data: Some(prv.reencrypt(rng, previous_seal_key, new_seal_key)?),
                 }
             }
             Self {hmac, data: None} => Self {hmac, data: None},
@@ -352,8 +353,8 @@ impl<T: Encode + Decode + Clone> MaybePrivate<T> {
     }
 
     /// Create a new private MaybePrivate value.
-    pub fn new_private(seal_key: &SecretKey, val: T) -> Result<Self> {
-        let container = PrivateWithHmac::seal(seal_key, val)?;
+    pub fn new_private<R: RngCore + CryptoRng>(rng: &mut R, seal_key: &SecretKey, val: T) -> Result<Self> {
+        let container = PrivateWithHmac::seal(rng, seal_key, val)?;
         Ok(Self::Private(container))
     }
 
@@ -407,10 +408,10 @@ impl<T: Encode + Decode + Clone> MaybePrivate<T> {
     }
 
     /// Reencrypt this MaybePrivate container with a new key.
-    pub(crate) fn reencrypt(self, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
+    pub(crate) fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let maybe = match self {
             Self::Public(x) => Self::Public(x),
-            Self::Private(container) => Self::Private(container.reencrypt(previous_seal_key, new_seal_key)?),
+            Self::Private(container) => Self::Private(container.reencrypt(rng, previous_seal_key, new_seal_key)?),
         };
         Ok(maybe)
     }
@@ -435,11 +436,12 @@ mod tests {
 
     #[test]
     fn private_seal_open() {
-        let key = SecretKey::new_xchacha20poly1305().unwrap();
-        let sealed: Private<String> = Private::seal(&key, &String::from("get a job")).unwrap();
+        let mut rng = crate::util::test::rng();
+        let key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let sealed: Private<String> = Private::seal(&mut rng, &key, &String::from("get a job")).unwrap();
         let opened: String = sealed.open(&key).unwrap();
         assert_eq!(&opened, "get a job");
-        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
+        let key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         assert!(key != key2);
         let res: Result<String> = sealed.open(&key2);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
@@ -447,10 +449,11 @@ mod tests {
 
     #[test]
     fn private_reencrypt() {
-        let key1 = SecretKey::new_xchacha20poly1305().unwrap();
-        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
-        let sealed: Private<String> = Private::seal(&key1, &String::from("get a job")).unwrap();
-        let sealed2 = sealed.reencrypt(&key1, &key2).unwrap();
+        let mut rng = crate::util::test::rng();
+        let key1 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let sealed: Private<String> = Private::seal(&mut rng, &key1, &String::from("get a job")).unwrap();
+        let sealed2 = sealed.reencrypt(&mut rng, &key1, &key2).unwrap();
         let opened: String = sealed2.open(&key2).unwrap();
         assert_eq!(&opened, "get a job");
         let res: Result<String> = sealed2.open(&key1);
@@ -459,15 +462,16 @@ mod tests {
 
     #[test]
     fn sealed_typed_seal_open() {
-        let key = SecretKey::new_xchacha20poly1305().unwrap();
-        let (hmac, sealed) = SealedTyped::<String>::seal(&key, &String::from("get a job")).unwrap();
+        let mut rng = crate::util::test::rng();
+        let key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let (hmac, sealed) = SealedTyped::<String>::seal(&mut rng, &key, &String::from("get a job")).unwrap();
         let opened: String = sealed.open_and_verify(&key, &hmac).unwrap();
         assert_eq!(&opened, "get a job");
-        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
+        let key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         assert!(key != key2);
         let res: Result<String> = sealed.open_and_verify(&key2, &hmac);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
-        let hmac2 = Hmac::new(&HmacKey::new_blake3().unwrap(), b"hello there").unwrap();
+        let hmac2 = Hmac::new(&HmacKey::new_blake3(&mut rng).unwrap(), b"hello there").unwrap();
         assert!(hmac != hmac2);
         let res: Result<String> = sealed.open_and_verify(&key, &hmac2);
         assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
@@ -475,10 +479,11 @@ mod tests {
 
     #[test]
     fn sealed_typed_reencrypt() {
-        let key1 = SecretKey::new_xchacha20poly1305().unwrap();
-        let key2 = SecretKey::new_xchacha20poly1305().unwrap();
-        let (hmac, sealed) = SealedTyped::<String>::seal(&key1, &String::from("get a job")).unwrap();
-        let sealed2 = sealed.reencrypt(&key1, &key2).unwrap();
+        let mut rng = crate::util::test::rng();
+        let key1 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let (hmac, sealed) = SealedTyped::<String>::seal(&mut rng, &key1, &String::from("get a job")).unwrap();
+        let sealed2 = sealed.reencrypt(&mut rng, &key1, &key2).unwrap();
         let opened: String = sealed2.open_and_verify(&key2, &hmac).unwrap();
         assert_eq!(&opened, "get a job");
         let res: Result<String> = sealed2.open_and_verify(&key1, &hmac);
@@ -487,9 +492,10 @@ mod tests {
 
     #[test]
     fn maybe_private_has_private() {
-        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
+        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = maybe2.strip_private();
 
         assert_eq!(maybe1.has_private(), false);
@@ -499,14 +505,15 @@ mod tests {
 
     #[test]
     fn maybe_private_seal_open_verify_has_data() {
-        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let mut fake_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let mut fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
-        while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305().unwrap(); }
-        let fake_mac_key = HmacKey::new_blake3().unwrap();
+        while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap(); }
+        let fake_mac_key = HmacKey::new_blake3(&mut rng).unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
+        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
             Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             None,
@@ -539,14 +546,15 @@ mod tests {
 
     #[test]
     fn maybe_private_open_public() {
-        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let mut fake_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let mut fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
-        while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305().unwrap(); }
-        let fake_mac_key = HmacKey::new_blake3().unwrap();
+        while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap(); }
+        let fake_mac_key = HmacKey::new_blake3(&mut rng).unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
+        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
             Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             None,
@@ -559,13 +567,14 @@ mod tests {
 
     #[test]
     fn maybe_private_into_public() {
-        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let fake_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         assert!(seal_key != fake_key);
-        let fake_mac_key = HmacKey::new_blake3().unwrap();
+        let fake_mac_key = HmacKey::new_blake3(&mut rng).unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
+        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
             Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             None,
@@ -583,16 +592,17 @@ mod tests {
 
     #[test]
     fn maybe_private_reencrypt_mac() {
-        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let seal_key2 = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let seal_key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
+        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = maybe2.strip_private();
 
-        let maybe1_2 = maybe1.clone().reencrypt(&seal_key, &seal_key2).unwrap();
-        let maybe2_2 = maybe2.clone().reencrypt(&seal_key, &seal_key2).unwrap();
-        let maybe3_2 = maybe3.clone().reencrypt(&seal_key, &seal_key2).unwrap();
+        let maybe1_2 = maybe1.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
+        let maybe2_2 = maybe2.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
+        let maybe3_2 = maybe3.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
 
         // should fail, kinda
         assert_eq!(maybe1_2.open(&seal_key), Ok(String::from("hello")));
@@ -613,8 +623,9 @@ mod tests {
 
     #[test]
     fn maybe_private_strip() {
-        let seal_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let maybe: MaybePrivate<String> = MaybePrivate::new_private(&seal_key, String::from("omg")).unwrap();
+        let mut rng = crate::util::test::rng();
+        let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let maybe: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
         assert!(maybe.has_data());
         let maybe2 = maybe.strip_private();
         let hmac = match &maybe {

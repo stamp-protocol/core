@@ -14,6 +14,7 @@ use crate::{
     error::{Error, Result},
     util::ser::{self, BinarySecret},
 };
+use rand::{RngCore, SeedableRng, rngs::OsRng};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
@@ -44,6 +45,18 @@ pub const KDF_MEM_MODERATE: u32 = 262144;
 pub const KDF_OPS_SENSITIVE: u32 = 4;
 /// A constant that provides a default for mem difficulty for sensitive key derivation
 pub const KDF_MEM_SENSITIVE: u32 = 1048576;
+
+/// A convenience function that returns a ChaCha20 CSRNG seeded with OS random bytes. Use this if
+/// you want a nice, strong random number generator, you don't want to wire one up yourself, and
+/// your platform provides good entropy.
+///
+/// This can be used as an input to any Stamp function that accepts `&mut rng`. Otherwise, you can
+/// bring your own RNG that implements [`RngCore`].
+pub fn rng_chacha20() -> rand_chacha::ChaCha20Rng { 
+    let mut seed_bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut seed_bytes);
+    rand_chacha::ChaCha20Rng::from_seed(seed_bytes)
+}
 
 /// A value that lets us reference keys by a unique identifier (pubkey for asymc keypairs
 /// and HMAC for secret keys).
@@ -76,21 +89,24 @@ impl KeyID {
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn random_sign() -> Self {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        Self::SignKeypair(SignKeypair::new_ed25519(&master_key).unwrap().into())
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        Self::SignKeypair(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap().into())
     }
 
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn random_crypto() -> Self {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        Self::CryptoKeypair(CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap().into())
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        Self::CryptoKeypair(CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap().into())
     }
 
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn random_secret() -> Self {
-        Self::SecretKey(Hmac::new(&HmacKey::new_blake3().unwrap(), b"get a job").unwrap())
+        let mut rng = crate::util::test::rng();
+        Self::SecretKey(Hmac::new(&HmacKey::new_blake3(&mut rng).unwrap(), b"get a job").unwrap())
     }
 }
 

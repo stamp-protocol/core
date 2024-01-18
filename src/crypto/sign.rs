@@ -119,7 +119,8 @@ mod tests {
 
     #[test]
     fn sign_verify_detached() {
-        let (master_key, identity) = test::setup_identity_with_subkeys();
+        let mut rng = crate::util::test::rng();
+        let (master_key, identity) = test::setup_identity_with_subkeys(&mut rng);
         let message = b"Plaque is a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
         let signkey = identity.keychain().subkey_by_name("sign").unwrap();
         let signature = sign(&master_key, identity.id(), &signkey, message).unwrap();
@@ -132,7 +133,7 @@ mod tests {
 
         // use the wrong key and it fails
         let mut signkey2 = signkey.clone();
-        let shitkey = SignKeypair::new_ed25519(&master_key).unwrap();
+        let shitkey = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         signkey2.set_key(Key::Sign(shitkey));
         let res = verify(&signkey2, &signature, message);
         assert_eq!(res, Err(Error::CryptoSignatureVerificationFailed));
@@ -145,7 +146,8 @@ mod tests {
 
     #[test]
     fn sign_verify_attached() {
-        let (master_key, identity) = test::setup_identity_with_subkeys();
+        let mut rng = crate::util::test::rng();
+        let (master_key, identity) = test::setup_identity_with_subkeys(&mut rng);
         let message = b"Plaque is a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
         let signkey = identity.keychain().subkey_by_name("sign").unwrap();
         let signature = sign_attached(&master_key, identity.id(), &signkey, message).unwrap();
@@ -159,7 +161,7 @@ mod tests {
 
         // use the wrong key and it fails
         let mut signkey2 = signkey.clone();
-        let shitkey = SignKeypair::new_ed25519(&master_key).unwrap();
+        let shitkey = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         signkey2.set_key(Key::Sign(shitkey));
         let res = verify_attached(&signkey2, &signature);
         assert_eq!(res, Err(Error::CryptoSignatureVerificationFailed));

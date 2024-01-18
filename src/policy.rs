@@ -1098,17 +1098,18 @@ mod tests {
 
     #[test]
     fn multisig_policy_test() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
 
-        let gus = AdminKeypair::new_ed25519(&master_key).unwrap();
-        let marty = AdminKeypair::new_ed25519(&master_key).unwrap();
-        let jackie = AdminKeypair::new_ed25519(&master_key).unwrap();
-        let rosarita = AdminKeypair::new_ed25519(&master_key).unwrap();
-        let dirk = AdminKeypair::new_ed25519(&master_key).unwrap();
-        let twinkee = AdminKeypair::new_ed25519(&master_key).unwrap();
-        let syd = AdminKeypair::new_ed25519(&master_key).unwrap();
-        let scurvy = AdminKeypair::new_ed25519(&master_key).unwrap();
-        let kitty = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let gus = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let marty = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let jackie = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let rosarita = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let dirk = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let twinkee = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let syd = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let scurvy = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let kitty = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
 
         let conditions = MultisigPolicy::Any(vec![
             MultisigPolicy::All(vec![
@@ -1224,8 +1225,9 @@ mod tests {
 
     #[test]
     fn policy_can() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let admin_keypair = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let tid = TransactionID::random();
         let testcap = Capability::Transaction {
             body_type: TransactionBodyType::MakeStampV1,
@@ -1325,8 +1327,9 @@ mod tests {
 
     #[test]
     fn policy_validate_transaction() {
-        let (master_key, transactions, admin_key) = util::test::create_fake_identity(Timestamp::now());
-        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Jack's", None);
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = util::test::create_fake_identity(&mut rng, Timestamp::now());
+        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Jack's", None);
         let identity = transactions.build_identity().unwrap();
 
         let capabilities = vec![
@@ -1388,7 +1391,8 @@ mod tests {
 
     #[test]
     fn contexts_from_transaction_body_create_identity_v1() {
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(Timestamp::now());
+        let mut rng = crate::util::test::rng();
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
         let identity = transactions.build_identity().unwrap();
         assert_eq!(
             Context::contexts_from_transaction_body(
@@ -1401,7 +1405,8 @@ mod tests {
 
     #[test]
     fn contexts_from_transaction_body_reset_identity_v1() {
-        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(Timestamp::now());
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
         let policies = match transactions.transactions()[0].entry().body() {
             TransactionBody::CreateIdentityV1 { policies, .. } => policies.clone(),
             _ => panic!("how strange"),
@@ -1421,8 +1426,9 @@ mod tests {
 
     #[test]
     fn contexts_from_transaction_body_add_admin_key_v1() {
-        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(Timestamp::now());
-        let admin_keypair2 = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
+        let admin_keypair2 = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let admin_key2 = AdminKey::new(admin_keypair2, "Alpha", None);
         let transactions = sign_and_push! { &master_key, &admin_key, transactions.clone(),
             [ add_admin_key, Timestamp::now(), admin_key2.clone() ]
@@ -1443,8 +1449,9 @@ mod tests {
 
     #[test]
     fn contexts_from_transaction_body_edit_admin_key_v1() {
-        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(Timestamp::now());
-        let admin_keypair2 = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
+        let admin_keypair2 = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let admin_key2 = AdminKey::new(admin_keypair2, "turtl/manager", None);
         let transactions = sign_and_push! { &master_key, &admin_key, transactions.clone(),
             [ add_admin_key, Timestamp::now(), admin_key2.clone() ]

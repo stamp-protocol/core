@@ -414,7 +414,8 @@ mod tests {
 
     #[test]
     fn dag_from_transactions_walk_simple() {
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(Timestamp::now());
+        let mut rng = crate::util::test::rng();
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
         #[allow(non_snake_case, unused_mut)]
         let (transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
            transactions,
@@ -504,7 +505,8 @@ mod tests {
     #[test]
     fn dag_from_transactions_walk_deterministic() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity_deterministic(now, b"hi i'm butch");
+        let mut rng = crate::util::test::rng_seeded(b"hi i'm butch");
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
            transactions,
@@ -592,8 +594,9 @@ mod tests {
 
     #[test]
     fn dag_from_transactions_walk_missing() {
+        let mut rng = crate::util::test::rng();
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(now);
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
            transactions,
@@ -682,7 +685,8 @@ mod tests {
     #[test]
     fn dag_from_transactions_walk_transaction_order() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity_deterministic(now, b"Hi I'm Butch.");
+        let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch.");
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
            transactions,
@@ -723,7 +727,8 @@ mod tests {
     #[test]
     fn dag_from_transactions_walk_complex_branch() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity_deterministic(now, b"Hi I'm Butch");
+        let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
            transactions,

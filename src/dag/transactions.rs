@@ -35,6 +35,7 @@ use crate::{
     },
 };
 use getset;
+use rand::{CryptoRng, RngCore};
 use rasn::{Encode, Decode, AsnType};
 use serde_derive::{Serialize, Deserialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -432,9 +433,9 @@ impl Transactions {
     }
 
     /// Reencrypt this transaction set with a new master key.
-    pub fn reencrypt(mut self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt<R: RngCore + CryptoRng>(mut self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         for trans in self.transactions_mut() {
-            *trans = trans.clone().reencrypt(old_master_key, new_master_key)?;
+            *trans = trans.clone().reencrypt(rng, old_master_key, new_master_key)?;
         }
         Ok(self)
     }
@@ -736,26 +737,20 @@ mod tests {
     };
     use std::str::FromStr;
 
-    fn genesis_time(now: Timestamp) -> (SecretKey, Transactions, AdminKey) {
-        test::create_fake_identity(now)
-    }
-
-    fn genesis() -> (SecretKey, Transactions, AdminKey) {
-        genesis_time(Timestamp::now())
-    }
-
     #[test]
     fn transactions_identity_id_is_genesis_transaction() {
-        let (_master_key, transactions, _admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (_master_key, transactions, _admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity = transactions.build_identity().unwrap();
         assert_eq!(IdentityID::from(transactions.transactions()[0].id().clone()), identity.id().clone());
     }
 
     #[test]
     fn transactions_push() {
+        let mut rng = crate::util::test::rng();
         let now = Timestamp::from_str("2021-04-20T00:00:10Z").unwrap();
-        let (master_key_1, transactions_1, admin_key_1) = genesis_time(now.clone());
-        let (_master_key_2, mut transactions_2, _admin_key_2) = genesis_time(now.clone());
+        let (master_key_1, transactions_1, admin_key_1) = test::create_fake_identity(&mut rng, now.clone());
+        let (_master_key_2, mut transactions_2, _admin_key_2) = test::create_fake_identity(&mut rng, now.clone());
         let trans_claim_signed = transactions_1
             .make_claim(&HashAlgo::Blake3, now.clone(), ClaimSpec::Name(MaybePrivate::new_public("Hooty McOwl".to_string())), None::<String>).unwrap()
             .sign(&master_key_1, &admin_key_1).unwrap();
@@ -769,10 +764,11 @@ mod tests {
 
     #[test]
     fn transactions_merge_reset() {
-        let (master_key, transactions, admin_key) = genesis_time(Timestamp::from_str("2021-04-20T00:00:00Z").unwrap());
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::from_str("2021-04-20T00:00:00Z").unwrap());
         // make some claims on my smart refrigerator
-        let admin_key_2 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&master_key).unwrap()), "Alpha", None);
-        let admin_key_3 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&master_key).unwrap()), "Alpha", None);
+        let admin_key_2 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()), "Alpha", None);
+        let admin_key_3 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()), "Alpha", None);
         let branch1 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
             [ make_claim, Timestamp::from_str("2021-04-20T00:00:10Z").unwrap(), ClaimSpec::Name(MaybePrivate::new_public("Hooty McOwl".to_string())), None::<String> ]
             [ add_admin_key, Timestamp::from_str("2021-04-20T00:01:00Z").unwrap(), admin_key_2.clone() ]
@@ -827,7 +823,8 @@ mod tests {
 
     #[test]
     fn transactions_genesis() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity = transactions.build_identity().unwrap();
         let policies = identity.policies().iter().map(|x| x.policy().clone()).collect::<Vec<_>>();
         let res = transactions.clone().push_transaction(
@@ -848,7 +845,8 @@ mod tests {
 
     #[test]
     fn transactions_create_identity() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity = transactions.build_identity().unwrap();
         assert_eq!(identity.id(), &IdentityID::from(transactions.transactions()[0].id().clone()));
         assert_eq!(identity.keychain().admin_keys().len(), 1);
@@ -864,9 +862,10 @@ mod tests {
 
     #[test]
     fn transactions_reset_identity() {
-        let (master_key, transactions, admin_key) = genesis();
-        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Alpha", None);
-        let admin_key3 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Zing", None);
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Alpha", None);
+        let admin_key3 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Zing", None);
         let capability2 = Capability::Transaction { body_type: TransactionBodyType::ResetIdentityV1, context: Context::Permissive };
         let capability3 = Capability::Transaction { body_type: TransactionBodyType::AcceptStampV1, context: Context::IdentityID(IdentityID::random()) };
         let policy2 = Policy::new(
@@ -896,12 +895,13 @@ mod tests {
 
     #[test]
     fn transactions_add_admin_key() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity1 = transactions.build_identity().unwrap();
         assert_eq!(identity1.keychain().admin_keys().len(), 1);
         assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).map(|x| x.key()), Some(admin_key.key()));
 
-        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "publish key lol", None);
+        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "publish key lol", None);
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
             [ add_admin_key, Timestamp::now(), admin_key2.clone() ]
         };
@@ -921,7 +921,8 @@ mod tests {
 
     #[test]
     fn transactions_edit_admin_key() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity1 = transactions.build_identity().unwrap();
         assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Alpha");
         assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(), &None);
@@ -950,7 +951,8 @@ mod tests {
 
     #[test]
     fn transactions_revoke_admin_key() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity1 = transactions.build_identity().unwrap();
         assert_eq!(identity1.keychain().admin_keys().len(), 1);
         assert_eq!(identity1.keychain().subkeys().len(), 0);
@@ -989,7 +991,8 @@ mod tests {
 
     #[test]
     fn transactions_add_policy() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let capability2 = Capability::Transaction { body_type: TransactionBodyType::ResetIdentityV1, context: Context::Permissive };
         let policy2 = Policy::new(
             vec![capability2],
@@ -1020,7 +1023,8 @@ mod tests {
 
     #[test]
     fn transactions_delete_policy() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity = transactions.build_identity().unwrap();
         let policy_id = identity.policies()[0].id().clone();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
@@ -1039,12 +1043,13 @@ mod tests {
 
     #[test]
     fn transactions_make_claim() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
         macro_rules! make_specs {
-            ($master:expr, $claimmaker:expr, $val:expr) => {{
+            ($rng:expr, $master:expr, $claimmaker:expr, $val:expr) => {{
                 let val = $val.clone();
-                let maybe_private = MaybePrivate::new_private(&$master, val.clone()).unwrap();
+                let maybe_private = MaybePrivate::new_private($rng, &$master, val.clone()).unwrap();
                 let maybe_public = MaybePrivate::new_public(val.clone());
                 let spec_private = $claimmaker(maybe_private, val.clone());
                 let spec_public = $claimmaker(maybe_public, val.clone());
@@ -1054,8 +1059,9 @@ mod tests {
 
         macro_rules! assert_claim {
             (raw, $claimmaker:expr, $val:expr, $get_maybe:expr) => {
+                let mut rng = crate::util::test::rng();
                 let val = $val;
-                let (spec_private, spec_public) = make_specs!(master_key, $claimmaker, val);
+                let (spec_private, spec_public) = make_specs!(&mut rng, master_key, $claimmaker, val);
 
                 let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
                     [ make_claim, Timestamp::now(), spec_private, None::<String> ]
@@ -1111,7 +1117,8 @@ mod tests {
 
     #[test]
     fn transactions_edit_claim() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
             [ make_claim, Timestamp::now(), ClaimSpec::Url(MaybePrivate::new_public(Url::parse("https://www.cactus-petes.com/yeeeehawwww").unwrap())), Some("OpenID") ]
         };
@@ -1129,7 +1136,8 @@ mod tests {
 
     #[test]
     fn transactions_delete_claim() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity = transactions.build_identity().unwrap();
         assert_eq!(identity.claims().len(), 0);
         assert_eq!(transactions.transactions().len(), 1);
@@ -1163,7 +1171,8 @@ mod tests {
 
     #[test]
     fn transactions_make_stamp() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity_id = IdentityID::from(transactions.transactions()[0].id().clone());
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ make_claim, Timestamp::now(), ClaimSpec::Identity(MaybePrivate::new_public(identity_id)), None::<String> ]
@@ -1171,7 +1180,7 @@ mod tests {
         let identity = transactions2.build_identity().unwrap();
         let claim = identity.claims()[0].clone();
 
-        let (master_key_stamper, transactions_stamper, admin_key_stamper) = genesis();
+        let (master_key_stamper, transactions_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
 
         let identity_stamper1 = transactions_stamper.build_identity().unwrap();
         assert_eq!(identity_stamper1.stamps().len(), 0);
@@ -1197,13 +1206,14 @@ mod tests {
 
     #[test]
     fn transactions_revoke_stamp() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity_id = IdentityID::from(transactions.transactions()[0].id().clone());
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ make_claim, Timestamp::now(), ClaimSpec::Identity(MaybePrivate::new_public(identity_id)), None::<String> ]
         };
 
-        let (master_key_stamper, transactions_stamper, admin_key_stamper) = genesis();
+        let (master_key_stamper, transactions_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity_stamper1 = transactions_stamper.build_identity().unwrap();
         assert_eq!(identity_stamper1.stamps().len(), 0);
 
@@ -1248,7 +1258,8 @@ mod tests {
 
     #[test]
     fn transactions_accept_stamp() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity_id = IdentityID::from(transactions.transactions()[0].id().clone());
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ make_claim, Timestamp::now(), ClaimSpec::Identity(MaybePrivate::new_public(identity_id)), None::<String> ]
@@ -1257,7 +1268,7 @@ mod tests {
         assert_eq!(identity.claims()[0].stamps().len(), 0);
         let claim = identity.claims()[0].clone();
 
-        let (master_key_stamper, transactions_stamper, admin_key_stamper) = genesis();
+        let (master_key_stamper, transactions_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
         let entry = StampEntry::new(
             IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
             identity.id().clone(),
@@ -1311,7 +1322,8 @@ mod tests {
 
     #[test]
     fn transactions_delete_stamp() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity_id = IdentityID::from(transactions.transactions()[0].id().clone());
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ make_claim, Timestamp::now(), ClaimSpec::Identity(MaybePrivate::new_public(identity_id)), None::<String> ]
@@ -1320,7 +1332,7 @@ mod tests {
         assert_eq!(identity.claims()[0].stamps().len(), 0);
         let claim = identity.claims()[0].clone();
 
-        let (master_key_stamper, transactions_stamper, admin_key_stamper) = genesis();
+        let (master_key_stamper, transactions_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
         let entry = StampEntry::new(
             IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
             identity.id().clone(),
@@ -1355,13 +1367,15 @@ mod tests {
 
     #[test]
     fn transactions_add_subkey() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity = transactions.build_identity().unwrap();
         assert_eq!(identity.keychain().subkeys().len(), 0);
 
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair.clone()), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair.clone()), "default:crypto", Some("Use this to send me emails") ]
@@ -1386,11 +1400,13 @@ mod tests {
 
     #[test]
     fn transactions_edit_subkey() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
@@ -1423,11 +1439,13 @@ mod tests {
 
     #[test]
     fn transactions_revoke_subkey() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
@@ -1455,11 +1473,13 @@ mod tests {
 
     #[test]
     fn transactions_delete_subkey() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
@@ -1487,7 +1507,8 @@ mod tests {
 
     #[test]
     fn transactions_publish() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Miner 49er".into())), None::<String> ]
             [ make_claim, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public("miner@49ers.net".into())), Some(String::from("primary")) ]
@@ -1522,7 +1543,8 @@ mod tests {
 
     #[test]
     fn transactions_sign() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let sig = transactions.sign(&HashAlgo::Blake3, Timestamp::now(), BinaryVec::from(Vec::from("get a job".as_bytes()))).unwrap()
             .sign(&master_key, &admin_key).unwrap();
         let identity = transactions.build_identity().unwrap();
@@ -1544,7 +1566,8 @@ mod tests {
 
     #[test]
     fn transactions_ext() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let ext = transactions.ext(&HashAlgo::Blake3, Timestamp::now(), vec![], None, Some([("type", "payment")]), BinaryVec::from(Vec::from("SEND $5 TO SALLY".as_bytes()))).unwrap()
             .sign(&master_key, &admin_key).unwrap();
         let identity = transactions.build_identity().unwrap();
@@ -1567,7 +1590,8 @@ mod tests {
 
     #[test]
     fn transactions_push_invalid_sig() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let mut claim_trans = transactions.make_claim(&HashAlgo::Blake3, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Mr. Larry Johnson".into())), None::<String>).unwrap();
         let sig = admin_key.key().sign(&master_key, b"haha lol").unwrap();
         let policy_sig = MultisigPolicySignature::Key { key: admin_key.key().clone().into(), signature: sig };
@@ -1578,11 +1602,12 @@ mod tests {
 
     #[test]
     fn transactions_policy_multisig_verify() {
-        let (master_key, transactions, admin_key) = genesis();
-        let admin_key1 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Frank", None);
-        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Gina", None);
-        let admin_key3 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Ralph", None);
-        let admin_key4 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Simon", None);
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let admin_key1 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Frank", None);
+        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Gina", None);
+        let admin_key3 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Ralph", None);
+        let admin_key4 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Simon", None);
 
         let cap1 = vec![
             Capability::Transaction {
@@ -1667,7 +1692,7 @@ mod tests {
                 .sign(&master_key, &admin_key3).unwrap()
         ).unwrap();
 
-        let subkey = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
+        let subkey = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
         let trans2 = transactions2.add_subkey(&HashAlgo::Blake3, Timestamp::now(), subkey.clone(), "logins/websites/booots.com", None).unwrap();
         assert_eq!(
             transactions2.clone().push_transaction(
@@ -1786,7 +1811,8 @@ mod tests {
 
     #[test]
     fn transactions_prohibit_duplicates() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let now = Timestamp::now();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
             [ make_claim, now.clone(), ClaimSpec::Name(MaybePrivate::new_public("Dirk Delta from........Hollywood".into())), None::<String> ]
@@ -1798,10 +1824,11 @@ mod tests {
 
     #[test]
     fn transactions_reencrypt() {
-        let (master_key, transactions, admin_key) = genesis();
-        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Second", None);
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Second", None);
         let transactions = sign_and_push! { &master_key, &admin_key, transactions,
-            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Hooty McOwl".to_string()).unwrap()), None::<String> ]
+            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, "Hooty McOwl".to_string()).unwrap()), None::<String> ]
             [ add_admin_key, Timestamp::now(), admin_key2 ]
             [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("dirk-delta".to_string())), Some(String::from("name")) ]
         };
@@ -1816,8 +1843,8 @@ mod tests {
         }
         let sig = identity.keychain().admin_keys()[0].key().sign(&master_key, b"KILL...ME....").unwrap();
 
-        let master_key_new = SecretKey::new_xchacha20poly1305().unwrap();
-        let transactions2 = transactions.reencrypt(&master_key, &master_key_new).unwrap();
+        let master_key_new = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let transactions2 = transactions.reencrypt(&mut rng, &master_key, &master_key_new).unwrap();
         transactions2.test_master_key(&master_key_new).unwrap();
         let res = transactions2.test_master_key(&master_key);
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
@@ -1837,7 +1864,8 @@ mod tests {
 
     #[test]
     fn transactions_is_owned() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity = transactions.build_identity().unwrap();
         assert!(transactions.is_owned());
         assert!(identity.is_owned());
@@ -1848,10 +1876,11 @@ mod tests {
         assert!(!transactions2.is_owned());
         assert!(!identity2.is_owned());
 
-        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Second", None);
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Second", None);
+        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
         let transactions3 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
@@ -1879,9 +1908,10 @@ mod tests {
 
     #[test]
     fn transactions_test_master_key() {
-        let (master_key, transactions, _admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, _admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         transactions.test_master_key(&master_key).unwrap();
-        let master_key_fake = SecretKey::new_xchacha20poly1305().unwrap();
+        let master_key_fake = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         assert!(master_key_fake != master_key);
         let res = transactions.test_master_key(&master_key_fake);
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
@@ -1889,16 +1919,18 @@ mod tests {
 
     #[test]
     fn transactions_strip_has_private() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
             [ add_subkey, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key") ]
-            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Danny Dinkel".to_string()).unwrap()), None::<String> ]
+            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, "Danny Dinkel".to_string()).unwrap()), None::<String> ]
             [ make_claim, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public("twinkie.doodle@amateur-spotlight.net".to_string())), None::<String> ]
         };
 
@@ -1921,7 +1953,8 @@ mod tests {
 
     #[test]
     fn transactions_serde_binary() {
-        let (master_key, transactions, admin_key) = genesis();
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let transactions = sign_and_push! { &master_key, &admin_key, transactions,
             [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Andrew".into())), Some("given-name".to_string()) ]
         };

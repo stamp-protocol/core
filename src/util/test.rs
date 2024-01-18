@@ -8,6 +8,7 @@ use crate::{
     policy::{Capability, MultisigPolicy, Participant, Policy, PolicyContainer},
     util::Timestamp,
 };
+use rand::{CryptoRng, RngCore, SeedableRng};
 use std::thread;
 use std::time::Duration;
 
@@ -17,17 +18,20 @@ pub(crate) fn sleep(millis: u64) {
     thread::sleep(Duration::from_millis(millis));
 }
 
-pub(crate) fn create_fake_identity(now: Timestamp) -> (SecretKey, Transactions, AdminKey) {
-    create_fake_identity_deterministic(now, Hash::random_blake3().as_bytes())
+pub(crate) fn rng() -> rand_chacha::ChaCha20Rng { 
+    crate::crypto::base::rng()
 }
 
-pub(crate) fn create_fake_identity_deterministic(now: Timestamp, seed: &[u8]) -> (SecretKey, Transactions, AdminKey) {
+pub(crate) fn rng_seeded(seed: &[u8]) -> rand_chacha::ChaCha20Rng {
+    let seed_hash = Hash::new_blake3(seed).unwrap();
+    let seed_bytes: [u8; 32] = seed_hash.as_bytes().try_into().unwrap();
+    rand_chacha::ChaCha20Rng::from_seed(seed_bytes)
+}
+
+pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Timestamp) -> (SecretKey, Transactions, AdminKey) {
     let transactions = Transactions::new();
-    let seed = Hash::new_blake3(seed).unwrap();
-    let master_key = SecretKey::new_xchacha20poly1305_from_slice(seed.as_bytes()).unwrap();
-    let seed = Hash::new_blake3(seed.as_bytes()).unwrap();
-    let sign = SignKeypair::new_ed25519_from_seed(&master_key, seed.as_bytes().try_into().unwrap()).unwrap();
-    let admin = AdminKeypair::from(sign);
+    let master_key = SecretKey::new_xchacha20poly1305(rng).unwrap();
+    let admin = AdminKeypair::new_ed25519(rng, &master_key).unwrap();
     let admin_key = AdminKey::new(admin, "Alpha", None);
     let policy = Policy::new(
         vec![Capability::Permissive],
@@ -40,9 +44,9 @@ pub(crate) fn create_fake_identity_deterministic(now: Timestamp, seed: &[u8]) ->
     (master_key, transactions2, admin_key)
 }
 
-pub(crate) fn setup_identity_with_subkeys() -> (SecretKey, Identity) {
-    let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-    let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
+pub(crate) fn setup_identity_with_subkeys<R: RngCore + CryptoRng>(rng: &mut R) -> (SecretKey, Identity) {
+    let master_key = SecretKey::new_xchacha20poly1305(rng).unwrap();
+    let admin_keypair = AdminKeypair::new_ed25519(rng, &master_key).unwrap();
     let policy = Policy::new(
         vec![Capability::Permissive],
         MultisigPolicy::MOfN {
@@ -56,8 +60,8 @@ pub(crate) fn setup_identity_with_subkeys() -> (SecretKey, Identity) {
     let policy_con = PolicyContainer::from_policy_transaction(&policy_transaction_id, 0, policy).unwrap();
     let admin_key = AdminKey::new(admin_keypair, "Alpha", None);
     let identity = Identity::create(IdentityID::random(), vec![admin_key], vec![policy_con], Timestamp::now())
-        .add_subkey(Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap()), "sign", None).unwrap()
-        .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap()), "cryptololol", None).unwrap();
+        .add_subkey(Key::new_sign(SignKeypair::new_ed25519(rng, &master_key).unwrap()), "sign", None).unwrap()
+        .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(rng, &master_key).unwrap()), "cryptololol", None).unwrap();
     (master_key, identity)
 }
 

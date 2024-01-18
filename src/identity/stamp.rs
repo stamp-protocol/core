@@ -22,6 +22,7 @@ use crate::{
     },
 };
 use getset;
+use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
@@ -184,8 +185,8 @@ impl StampRequest {
     ///
     /// This re-encryptes the claim with a new key, then creates a signed
     /// message to the recipient (stamper) using one of their keys.
-    pub fn new_message(sender_master_key: &SecretKey, sender_identity_id: &IdentityID, sender_key: &Subkey, recipient_key: &Subkey, claim: &Claim, one_time_key: SecretKey) -> Result<Message> {
-        let claim_reencrypted_spec = claim.spec().clone().reencrypt(sender_master_key, &one_time_key)?;
+    pub fn new_message<R: RngCore + CryptoRng>(rng: &mut R, sender_master_key: &SecretKey, sender_identity_id: &IdentityID, sender_key: &Subkey, recipient_key: &Subkey, claim: &Claim, one_time_key: SecretKey) -> Result<Message> {
+        let claim_reencrypted_spec = claim.spec().clone().reencrypt(rng, sender_master_key, &one_time_key)?;
         let mut claim_reencrypted = claim.clone();
         claim_reencrypted.set_spec(claim_reencrypted_spec);
         let req = Self {
@@ -193,7 +194,7 @@ impl StampRequest {
             decrypt_key: one_time_key,
         };
         let serialized = ser::serialize(&req)?;
-        message::send(sender_master_key, sender_identity_id, sender_key, recipient_key, serialized.as_slice())
+        message::send(rng, sender_master_key, sender_identity_id, sender_key, recipient_key, serialized.as_slice())
     }
 
     /// Opens a message with a StampRequest in it, and if all goes well, returns
@@ -244,11 +245,11 @@ mod tests {
         // stolen/copied from claim tests. oh well. not going to dedicate a bunch
         // of infrastructure to not duplicating a 7 line macro.
         macro_rules! make_specs {
-            ($claimmaker:expr, $val:expr) => {{
+            ($rng:expr, $claimmaker:expr, $val:expr) => {{
                 let val = $val;
-                let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-                let root_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-                let maybe_private = MaybePrivate::new_private(&master_key, val.clone()).unwrap();
+                let master_key = SecretKey::new_xchacha20poly1305($rng).unwrap();
+                let root_keypair = SignKeypair::new_ed25519($rng, &master_key).unwrap();
+                let maybe_private = MaybePrivate::new_private($rng, &master_key, val.clone()).unwrap();
                 let maybe_public = MaybePrivate::new_public(val.clone());
                 let spec_private = $claimmaker(maybe_private, val.clone());
                 let spec_public = $claimmaker(maybe_public, val.clone());
@@ -258,11 +259,12 @@ mod tests {
 
         macro_rules! req_open {
             (raw, $claimmaker:expr, $val:expr) =>  {{
+                let mut rng = crate::util::test::rng();
                 let val = $val;
-                let (sender_master_key, _root_keypair, spec_private, spec_public) = make_specs!($claimmaker, val.clone());
+                let (sender_master_key, _root_keypair, spec_private, spec_public) = make_specs!(&mut rng, $claimmaker, val.clone());
                 let sender_identity_id = IdentityID::random();
-                let subkey_key = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&sender_master_key).unwrap());
-                let admin = AdminKeypair::new_ed25519(&sender_master_key).unwrap();
+                let subkey_key = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &sender_master_key).unwrap());
+                let admin = AdminKeypair::new_ed25519(&mut rng, &sender_master_key).unwrap();
                 let admin_key = AdminKey::new(admin, "MAIN LOL", None);
                 let sender_keychain = Keychain::new(vec![admin_key])
                     .add_subkey(subkey_key, "default:crypto", None).unwrap();
@@ -270,16 +272,18 @@ mod tests {
                 let container_public = Claim::new(ClaimID::random(), spec_public, None);
                 let sender_subkey = sender_keychain.subkey_by_name("default:crypto").unwrap();
 
-                let recipient_master_key = SecretKey::new_xchacha20poly1305().unwrap();
-                let subkey_key = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&recipient_master_key).unwrap());
-                let admin = AdminKeypair::new_ed25519(&sender_master_key).unwrap();
+                let recipient_master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+                let subkey_key = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &recipient_master_key).unwrap());
+                let admin = AdminKeypair::new_ed25519(&mut rng, &sender_master_key).unwrap();
                 let admin_key = AdminKey::new(admin, "ALPHA MALE BIG HANDS", None);
                 let recipient_keychain = Keychain::new(vec![admin_key])
                     .add_subkey(subkey_key, "default:crypto", None).unwrap();
                 let recipient_subkey = recipient_keychain.subkey_by_name("default:crypto").unwrap();
 
-                let req_msg_priv = StampRequest::new_message(&sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, &container_private, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
-                let req_msg_pub = StampRequest::new_message(&sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, &container_public, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+                let sk_tmp1 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+                let sk_tmp2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+                let req_msg_priv = StampRequest::new_message(&mut rng, &sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, &container_private, sk_tmp1).unwrap();
+                let req_msg_pub = StampRequest::new_message(&mut rng, &sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, &container_public, sk_tmp2).unwrap();
 
                 let res1 = StampRequest::open(&sender_master_key, recipient_subkey, sender_subkey, &req_msg_priv);
                 let res2 = StampRequest::open(&sender_master_key, recipient_subkey, sender_subkey, &req_msg_pub);

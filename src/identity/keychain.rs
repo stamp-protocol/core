@@ -19,6 +19,7 @@ use crate::{
     util::{Public, sign::Signable, ser},
 };
 use getset;
+use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Encode, Decode};
 use serde_derive::{Serialize, Deserialize};
 use std::ops::Deref;
@@ -33,14 +34,14 @@ pub trait ExtendKeypair: From<SignKeypair> + Clone + PartialEq + Deref<Target = 
     type Signature: ExtendKeypairSignature;
 
     /// Create a new ed25519 keypair
-    fn new_ed25519(master_key: &SecretKey) -> Result<Self> {
-        let sign = SignKeypair::new_ed25519(master_key)?;
+    fn new_ed25519<R: RngCore + CryptoRng>(rng: &mut R, master_key: &SecretKey) -> Result<Self> {
+        let sign = SignKeypair::new_ed25519(rng, master_key)?;
         Ok(Self::from(sign))
     }
 
     /// Create a new ed25519 keypair
-    fn new_ed25519_from_seed(master_key: &SecretKey, seed_bytes: &[u8; 32]) -> Result<Self> {
-        let sign = SignKeypair::new_ed25519_from_seed(master_key, seed_bytes)?;
+    fn new_ed25519_from_bytes<R: RngCore + CryptoRng>(rng: &mut R, master_key: &SecretKey, secret_bytes: [u8; 32]) -> Result<Self> {
+        let sign = SignKeypair::new_ed25519_from_bytes(rng, master_key, secret_bytes)?;
         Ok(Self::from(sign))
     }
 
@@ -59,8 +60,8 @@ pub trait ExtendKeypair: From<SignKeypair> + Clone + PartialEq + Deref<Target = 
     }
 
     /// REEEEEEEE-encrypt this signing keypair with a new master key.
-    fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
-        Ok(Self::from(self.deref().clone().reencrypt(previous_master_key, new_master_key)?))
+    fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        Ok(Self::from(self.deref().clone().reencrypt(rng, previous_master_key, new_master_key)?))
     }
 
     /// Create a KeyID from this keypair.
@@ -285,11 +286,11 @@ impl Key {
     }
 
     /// Consumes the key, and re-encryptes it with a new master key.
-    pub fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let key = match self {
-            Self::Sign(keypair) => Self::Sign(keypair.reencrypt(previous_master_key, new_master_key)?),
-            Self::Crypto(keypair) => Self::Crypto(keypair.reencrypt(previous_master_key, new_master_key)?),
-            Self::Secret(secret) => Self::Secret(secret.reencrypt(previous_master_key, new_master_key)?),
+            Self::Sign(keypair) => Self::Sign(keypair.reencrypt(rng, previous_master_key, new_master_key)?),
+            Self::Crypto(keypair) => Self::Crypto(keypair.reencrypt(rng, previous_master_key, new_master_key)?),
+            Self::Secret(secret) => Self::Secret(secret.reencrypt(rng, previous_master_key, new_master_key)?),
         };
         Ok(key)
     }
@@ -422,9 +423,9 @@ impl AdminKey {
     }
 
     /// Re-encrypt this signing keypair with a new master key.
-    pub fn reencrypt(self, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let Self { key, name, description, revocation } = self;
-        Ok(Self::new_with_revocation(key.reencrypt(previous_master_key, new_master_key)?, name, description, revocation))
+        Ok(Self::new_with_revocation(key.reencrypt(rng, previous_master_key, new_master_key)?, name, description, revocation))
     }
 
     /// Grab this key's [AdminKeyID].
@@ -672,16 +673,17 @@ mod tests {
 
     fn get_master_key() -> SecretKey {
         let hash = Hash::new_blake3(b"my goat hurts".as_slice()).unwrap();
-        let seed: [u8; 32] = hash.as_bytes()[0..32].try_into().unwrap();
-        SecretKey::new_xchacha20poly1305_from_slice(&seed).unwrap()
+        let key: [u8; 32] = hash.as_bytes()[0..32].try_into().unwrap();
+        SecretKey::new_xchacha20poly1305_from_bytes(key).unwrap()
     }
 
     #[test]
     fn admin_ser() {
+        let mut rng = crate::util::test::rng();
         let master_key = get_master_key();
         let hash = Hash::new_blake3(b"i will, bye").unwrap();
         let seed: [u8; 32] = hash.as_bytes()[0..32].try_into().unwrap();
-        let kp = SignKeypair::new_ed25519_from_seed(&master_key, &seed).unwrap();
+        let kp = SignKeypair::new_ed25519_from_bytes(&mut rng, &master_key, seed).unwrap();
         let admin = AdminKeypair::from(kp);
         let sig = admin.sign(&master_key, b"who's this, steve??").unwrap();
         let sig_inner: &SignKeypairSignature = sig.deref();
@@ -689,20 +691,21 @@ mod tests {
         let ser_inner = util::ser::serialize(sig_inner).unwrap();
         assert_eq!(ser, ser_inner);
         assert_eq!(
-            "oEIEQM9CNF1X6aP7OMtn7pnGAf82bpGc64kHhP31mxiyoC3H2PBZl0rulmtrup9-2qqE279JeJa7OjJ1KFJFlV-xgQM",
-            util::ser::base64_encode(&ser).as_str()
+            util::ser::base64_encode(&ser).as_str(),
+            "oEIEQCDu64tSmp1LeZ--iVQFpYQMbbY0uVCNKxMTPqwMoO-4Ie0yky9PkWYsSBu1sCORbJCzKAgnfbQsqCsd6uxlCgI",
         );
     }
 
     #[test]
     fn key_as_type() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let secret_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
-        let key6 = Key::Secret(PrivateWithHmac::seal(&master_key, secret_key).unwrap());
+        let key6 = Key::Secret(PrivateWithHmac::seal(&mut rng, &master_key, secret_key).unwrap());
 
         let keys = vec![key4, key5, key6];
         macro_rules! keytype {
@@ -717,9 +720,10 @@ mod tests {
 
     #[test]
     fn key_serde() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let key = Key::Secret(PrivateWithHmac::seal(&master_key, secret_key).unwrap());
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let secret_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let key = Key::Secret(PrivateWithHmac::seal(&mut rng, &master_key, secret_key).unwrap());
         let ser = key.serialize().unwrap();
         let key2 = Key::deserialize(ser.as_slice()).unwrap();
         assert!(key.as_secretkey().is_some());
@@ -730,24 +734,25 @@ mod tests {
 
     #[test]
     fn key_reencrypt() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let secret_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
-        let key6 = Key::Secret(PrivateWithHmac::seal(&master_key, secret_key).unwrap());
+        let key6 = Key::Secret(PrivateWithHmac::seal(&mut rng, &master_key, secret_key).unwrap());
 
         let val4 = key4.as_signkey().unwrap().sign(&master_key, b"hi i'm butch").unwrap();
-        let val5 = key5.as_cryptokey().unwrap().seal_anonymous(b"sufferin succotash").unwrap();
+        let val5 = key5.as_cryptokey().unwrap().seal_anonymous(&mut rng, b"sufferin succotash").unwrap();
         let val6_key = key6.as_secretkey().unwrap().open_and_verify(&master_key).unwrap();
-        let val6 = val6_key.seal(b"and your nose like a delicious slope of cream").unwrap();
+        let val6 = val6_key.seal(&mut rng, b"and your nose like a delicious slope of cream").unwrap();
 
-        let master_key2 = SecretKey::new_xchacha20poly1305().unwrap();
+        let master_key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         assert!(master_key != master_key2);
-        let key4_2 = key4.reencrypt(&master_key, &master_key2).unwrap();
-        let key5_2 = key5.reencrypt(&master_key, &master_key2).unwrap();
-        let key6_2 = key6.reencrypt(&master_key, &master_key2).unwrap();
+        let key4_2 = key4.reencrypt(&mut rng, &master_key, &master_key2).unwrap();
+        let key5_2 = key5.reencrypt(&mut rng, &master_key, &master_key2).unwrap();
+        let key6_2 = key6.reencrypt(&mut rng, &master_key, &master_key2).unwrap();
 
         let val4_2 = key4_2.as_signkey().unwrap().sign(&master_key2, b"hi i'm butch").unwrap();
         let val5_2 = key5_2.as_cryptokey().unwrap().open_anonymous(&master_key2, &val5).unwrap();
@@ -769,13 +774,14 @@ mod tests {
 
     #[test]
     fn key_strip_private_has_private() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let secret_key = SecretKey::new_xchacha20poly1305(&mut rng ).unwrap();
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
-        let key6 = Key::Secret(PrivateWithHmac::seal(&master_key, secret_key).unwrap());
+        let key6 = Key::Secret(PrivateWithHmac::seal(&mut rng, &master_key, secret_key).unwrap());
 
         assert!(key4.has_private());
         assert!(key5.has_private());
@@ -791,8 +797,9 @@ mod tests {
     }
 
     fn keychain_new() -> (SecretKey, Keychain) {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let admin_keypair = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let admin_key = AdminKey::new(admin_keypair, "Default", None);
 
         let keychain = Keychain::new(vec![admin_key]);
@@ -801,17 +808,18 @@ mod tests {
 
     #[test]
     fn keychain_admin_key_finders() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let mut keychain = Keychain::new(vec![]);
         assert_eq!(keychain.admin_key_by_keyid(&KeyID::random_sign().into()).as_ref().map(|x| x.key()), None);
         assert_eq!(keychain.admin_key_by_keyid_str("abcdefg").as_ref().map(|x| x.key()), None);
         assert_eq!(keychain.admin_key_by_keyid_mut(&KeyID::random_sign().into()).as_ref().map(|x| x.key()), None);
         assert_eq!(keychain.admin_key_by_name("Alpha").as_ref().map(|x| x.key()), None);
 
-        let adminkey1 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Alpha", None);
-        let adminkey2 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Publish", None);
-        let adminkey3 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Alpha", None);
-        let adminkey4 = AdminKey::new(AdminKeypair::new_ed25519(&master_key).unwrap(), "Alpha", None);
+        let adminkey1 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Alpha", None);
+        let adminkey2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Publish", None);
+        let adminkey3 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Alpha", None);
+        let adminkey4 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Alpha", None);
 
         let mut keychain2 = keychain
             .add_admin_key(adminkey1.clone()).unwrap()
@@ -827,17 +835,18 @@ mod tests {
 
     #[test]
     fn keychain_subkey_finders() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let mut keychain = Keychain::new(vec![]);
         assert_eq!(keychain.subkey_by_keyid(&KeyID::random_sign().into()).as_ref().map(|x| x.key_id()), None);
         assert_eq!(keychain.subkey_by_keyid_str("abcdefg").as_ref().map(|x| x.key_id()), None);
         assert_eq!(keychain.subkey_by_keyid_mut(&KeyID::random_sign().into()).as_ref().map(|x| x.key_id()), None);
         assert_eq!(keychain.subkey_by_name("Alpha").as_ref().map(|x| x.key_id()), None);
 
-        let subkey1 = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
-        let subkey2 = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
-        let subkey3 = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
-        let subkey4 = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
+        let subkey1 = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
+        let subkey2 = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
+        let subkey3 = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
+        let subkey4 = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
 
         let mut keychain2 = keychain
             .add_subkey(subkey1.clone(), "Alpha", None).unwrap()
@@ -853,8 +862,9 @@ mod tests {
 
     #[test]
     fn keychain_add_edit_revoke_admin_key() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
-        let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let admin_keypair = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let admin_key = AdminKey::new(admin_keypair, "Default", None);
         let key_id = admin_key.key_id();
 
@@ -891,10 +901,12 @@ mod tests {
 
     #[test]
     fn keychain_subkeys_sign_verify_position() {
+        let mut rng = crate::util::test::rng();
         let (master_key, keychain) = keychain_new();
-        let sign_keypair = SignKeypair::new_ed25519(&master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap();
-        let secret_key = PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap();
+        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
+        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
         let sign = Key::new_sign(sign_keypair);
         let crypto = Key::new_crypto(crypto_keypair);
         let secret = Key::new_secret(secret_key);
@@ -933,8 +945,9 @@ mod tests {
 
     #[test]
     fn keychain_revoke() {
+        let mut rng = crate::util::test::rng();
         let (master_key, keychain) = keychain_new();
-        let sign = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
+        let sign = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
         let keychain = keychain.add_subkey(sign, "sign", None).unwrap();
         // revoke a key, and verify the revocation
         let signkey = keychain.subkey_by_name("sign").unwrap().clone();
@@ -951,8 +964,9 @@ mod tests {
 
     #[test]
     fn keychain_delete() {
+        let mut rng = crate::util::test::rng();
         let (master_key, keychain) = keychain_new();
-        let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap());
+        let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap());
         let keychain = keychain.add_subkey(crypto, "crypto", None).unwrap();
         // delete a key LOL
         let cryptokey = keychain.subkey_by_name("crypto").unwrap().clone();
@@ -964,10 +978,12 @@ mod tests {
 
     #[test]
     fn keychain_strip_private() {
+        let mut rng = crate::util::test::rng();
         let (master_key, keychain) = keychain_new();
-        let sign = Key::new_sign(SignKeypair::new_ed25519(&master_key).unwrap());
-        let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&master_key).unwrap());
-        let secret = Key::new_secret(PrivateWithHmac::seal(&master_key, SecretKey::new_xchacha20poly1305().unwrap()).unwrap());
+        let sign = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
+        let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap());
+        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let secret = Key::new_secret(PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap());
         let keychain = keychain
             .add_subkey(sign, "sign", None).unwrap()
             .add_subkey(crypto, "crypto", None).unwrap()

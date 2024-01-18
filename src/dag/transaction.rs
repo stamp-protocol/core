@@ -42,6 +42,7 @@ use crate::{
     },
 };
 use getset;
+use rand::{CryptoRng, RngCore};
 use rasn::{Encode, Decode, AsnType};
 use serde_derive::{Serialize, Deserialize};
 use std::hash::{Hash as StdHash, Hasher};
@@ -267,11 +268,11 @@ pub enum TransactionBody {
 
 impl TransactionBody {
     /// Reencrypt this transaction body
-    fn reencrypt(self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let new_self = match self {
             Self::CreateIdentityV1 { admin_keys, policies } => {
                 let admin_reenc = admin_keys.into_iter()
-                    .map(|x| x.reencrypt(old_master_key, new_master_key))
+                    .map(|x| x.reencrypt(rng, old_master_key, new_master_key))
                     .collect::<Result<Vec<_>>>()?;
                 Self::CreateIdentityV1 {
                     admin_keys: admin_reenc,
@@ -282,7 +283,7 @@ impl TransactionBody {
                 let admin_keys_reenc = admin_keys
                     .map(|keyvec| {
                         keyvec.into_iter()
-                            .map(|k| k.reencrypt(old_master_key, new_master_key))
+                            .map(|k| k.reencrypt(rng, old_master_key, new_master_key))
                             .collect::<Result<Vec<_>>>()
                     })
                     .transpose()?;
@@ -292,14 +293,14 @@ impl TransactionBody {
                 }
             }
             Self::AddAdminKeyV1 { admin_key } => Self::AddAdminKeyV1 {
-                admin_key: admin_key.reencrypt(old_master_key, new_master_key)?,
+                admin_key: admin_key.reencrypt(rng, old_master_key, new_master_key)?,
             },
             Self::EditAdminKeyV1 { id, name, description } => Self::EditAdminKeyV1 { id, name, description },
             Self::RevokeAdminKeyV1 { id, reason, new_name } => Self::RevokeAdminKeyV1 { id, reason, new_name },
             Self::AddPolicyV1 { policy } => Self::AddPolicyV1 { policy },
             Self::DeletePolicyV1 { id } => Self::DeletePolicyV1 { id },
             Self::MakeClaimV1 { spec, name } => Self::MakeClaimV1 {
-                spec: spec.reencrypt(old_master_key, new_master_key)?,
+                spec: spec.reencrypt(rng, old_master_key, new_master_key)?,
                 name,
             },
             Self::EditClaimV1 { claim_id, name} => Self::EditClaimV1 { claim_id, name },
@@ -309,14 +310,14 @@ impl TransactionBody {
             Self::AcceptStampV1 { stamp_transaction } => Self::AcceptStampV1 { stamp_transaction },
             Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
             Self::AddSubkeyV1 { key, name, desc } => {
-                let new_subkey = key.reencrypt(old_master_key, new_master_key)?;
+                let new_subkey = key.reencrypt(rng, old_master_key, new_master_key)?;
                 Self::AddSubkeyV1 { key: new_subkey, name, desc }
             }
             Self::EditSubkeyV1 { id, new_name, new_desc } => Self::EditSubkeyV1 { id, new_name, new_desc },
             Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
             Self::PublishV1 { transactions } => Self::PublishV1 {
-                transactions: Box::new(transactions.reencrypt(old_master_key, new_master_key)?),
+                transactions: Box::new(transactions.reencrypt(rng, old_master_key, new_master_key)?),
             },
             Self::SignV1 { creator, body } => Self::SignV1 { creator, body },
             Self::ExtV1 { creator, ty, previous_transactions, context, payload } => Self::ExtV1 { creator, ty, previous_transactions, context, payload },
@@ -686,8 +687,8 @@ impl Transaction {
     }
 
     /// Reencrypt this transaction.
-    pub(crate) fn reencrypt(mut self, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
-        let new_body = self.entry().body().clone().reencrypt(old_master_key, new_master_key)?;
+    pub(crate) fn reencrypt<R: RngCore + CryptoRng>(mut self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        let new_body = self.entry().body().clone().reencrypt(rng, old_master_key, new_master_key)?;
         self.entry_mut().set_body(new_body);
         Ok(self)
     }
@@ -819,7 +820,8 @@ mod tests {
             }
         }
 
-        let (master_key, transactions, admin_key) = test::create_fake_identity(Timestamp::now());
+        let mut rng = crate::util::test::rng();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
         test_privates(&TransactionBody::CreateIdentityV1 { admin_keys: vec![admin_key.clone()], policies: Vec::new() });
         test_privates(&TransactionBody::ResetIdentityV1 { admin_keys: Some(vec![admin_key.clone()]), policies: None });
@@ -831,7 +833,7 @@ mod tests {
         test_privates(&TransactionBody::AddPolicyV1 { policy });
         test_privates(&TransactionBody::DeletePolicyV1 { id: PolicyID::random() });
         test_privates(&TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_public(String::from("Negative Nancy"))), name: None });
-        test_privates(&TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_private(&master_key, String::from("Positive Pyotr")).unwrap()), name: Some("Grover".into()) });
+        test_privates(&TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, String::from("Positive Pyotr")).unwrap()), name: Some("Grover".into()) });
         test_privates(&TransactionBody::DeleteClaimV1 { claim_id: ClaimID::random() });
 
         let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::Low, None);
@@ -863,9 +865,10 @@ mod tests {
 
     #[test]
     fn trans_entry_strip_has_private() {
-        let master_key = SecretKey::new_xchacha20poly1305().unwrap();
+        let mut rng = crate::util::test::rng();
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let body = TransactionBody::MakeClaimV1 {
-            spec: ClaimSpec::Name(MaybePrivate::new_private(&master_key, "Jackie Chrome".into()).unwrap()),
+            spec: ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, "Jackie Chrome".into()).unwrap()),
             name: None,
         };
         let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::from(Hash::random_blake3())], body);
@@ -878,9 +881,10 @@ mod tests {
 
     #[test]
     fn trans_verify_hash_and_signatures() {
+        let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
-        let (_master_key1, transactions1, _admin_key1) = test::create_fake_identity(now.clone());
-        let (_master_key2, mut transactions2, _admin_key2) = test::create_fake_identity(now.clone());
+        let (_master_key1, transactions1, _admin_key1) = test::create_fake_identity(&mut rng, now.clone());
+        let (_master_key2, mut transactions2, _admin_key2) = test::create_fake_identity(&mut rng, now.clone());
         transactions1.transactions()[0].verify_hash_and_signatures().unwrap();
         *transactions2.transactions_mut()[0].signatures_mut() = transactions1.transactions()[0].signatures().clone();
         assert!(matches!(transactions2.transactions()[0].verify_hash_and_signatures(), Err(Error::TransactionSignatureInvalid(_))));
@@ -888,11 +892,12 @@ mod tests {
 
     #[test]
     fn trans_new_verify() {
+        let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
-        let (_master_key, transactions, admin_key) = test::create_fake_identity(now.clone());
+        let (_master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, now.clone());
         transactions.transactions()[0].verify(None).unwrap();
 
-        let (_, transactions_new, _) = test::create_fake_identity(now.clone());
+        let (_, transactions_new, _) = test::create_fake_identity(&mut rng, now.clone());
 
         let create2 = transactions_new.transactions()[0].clone();
 
@@ -922,17 +927,19 @@ mod tests {
 
     #[test]
     fn trans_is_signed_by() {
+        let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(now.clone());
-        let admin_key2 = AdminKeypair::new_ed25519(&master_key).unwrap();
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, now.clone());
+        let admin_key2 = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         assert!(transactions.transactions()[0].is_signed_by(&admin_key.key().clone().into()));
         assert!(!transactions.transactions()[0].is_signed_by(&admin_key2.clone().into()));
     }
 
     #[test]
     fn trans_strip_has_private() {
+        let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
-        let (_master_key, transactions, _admin_key) = test::create_fake_identity(now.clone());
+        let (_master_key, transactions, _admin_key) = test::create_fake_identity(&mut rng, now.clone());
         let trans = transactions.transactions()[0].clone();
 
         assert!(trans.has_private());
@@ -946,8 +953,9 @@ mod tests {
 
     #[test]
     fn trans_serde_binary() {
+        let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
-        let (_master_key, transactions, _admin_key) = test::create_fake_identity(now.clone());
+        let (_master_key, transactions, _admin_key) = test::create_fake_identity(&mut rng, now.clone());
         let trans = transactions.transactions()[0].clone();
 
         let ser = trans.serialize_binary().unwrap();
@@ -976,14 +984,15 @@ mod tests {
 
     #[test]
     fn trans_serde_create_identity_v1() {
-        let master_key = SecretKey::new_xchacha20poly1305_from_slice(&[0; 32]).unwrap();
+        let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519_from_seed(&master_key, &[1; 32]).unwrap()),
+            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "alpha",
             Some("hello there")
         );
         let admin_key2 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519_from_seed(&master_key, &[2; 32]).unwrap()),
+            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "name-claim",
             None
         );
@@ -1004,7 +1013,9 @@ mod tests {
             admin_keys: vec![admin_key1.clone(), admin_key2.clone()],
             policies: vec![policy1, policy2],
         };
-        let ser = [160, 130, 1, 230, 48, 130, 1, 226, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 77, 75, 24, 6, 47, 133, 2, 89, 141, 224, 69, 202, 123, 105, 240, 103, 245, 159, 147, 177, 110, 58, 248, 115, 58, 152, 138, 220, 35, 65, 245, 200, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 108, 210, 151, 57, 104, 216, 131, 180, 146, 238, 10, 130, 231, 247, 185, 134, 220, 210, 220, 117, 191, 105, 236, 66, 161, 52, 4, 50, 163, 50, 72, 185, 17, 64, 3, 153, 174, 116, 237, 10, 149, 92, 136, 148, 197, 17, 42, 158, 141, 78, 95, 139, 172, 206, 105, 140, 162, 26, 198, 196, 254, 56, 99, 34, 112, 200, 15, 49, 13, 107, 167, 21, 215, 43, 66, 216, 148, 106, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108, 108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 125, 23, 127, 30, 113, 180, 144, 173, 12, 227, 128, 249, 87, 138, 177, 43, 176, 252, 0, 169, 141, 232, 246, 165, 85, 200, 29, 72, 194, 3, 146, 73, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 42, 229, 28, 164, 124, 122, 198, 40, 37, 150, 138, 233, 245, 78, 3, 233, 243, 225, 23, 23, 39, 21, 74, 176, 161, 52, 4, 50, 122, 240, 80, 241, 145, 198, 208, 44, 80, 131, 47, 108, 105, 51, 106, 45, 89, 119, 212, 62, 187, 46, 102, 214, 119, 33, 96, 181, 177, 117, 145, 52, 71, 43, 197, 250, 241, 195, 26, 2, 224, 66, 135, 100, 104, 245, 14, 166, 63, 200, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 159, 48, 129, 156, 48, 67, 160, 6, 48, 4, 160, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 77, 75, 24, 6, 47, 133, 2, 89, 141, 224, 69, 202, 123, 105, 240, 103, 245, 159, 147, 177, 110, 58, 248, 115, 58, 152, 138, 220, 35, 65, 245, 200, 48, 85, 160, 24, 48, 22, 161, 20, 48, 18, 160, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 125, 23, 127, 30, 113, 180, 144, 173, 12, 227, 128, 249, 87, 138, 177, 43, 176, 252, 0, 169, 141, 232, 246, 165, 85, 200, 29, 72, 194, 3, 146, 73];
+        let ser_check = ser::serialize(&trans).unwrap();
+        let ser = [160, 130, 1, 230, 48, 130, 1, 226, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203, 142, 148, 84, 206, 16, 28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191, 181, 136, 133, 189, 166, 11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108, 108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 126, 211, 248, 125, 247, 70, 44, 106, 7, 197, 177, 121, 25, 118, 5, 100, 96, 210, 7, 49, 214, 133, 140, 43, 161, 52, 4, 50, 50, 61, 176, 253, 193, 203, 151, 105, 21, 18, 9, 43, 235, 225, 118, 44, 149, 110, 145, 115, 98, 235, 65, 219, 156, 13, 170, 216, 244, 198, 121, 156, 250, 36, 176, 190, 92, 116, 212, 140, 193, 73, 68, 13, 184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 159, 48, 129, 156, 48, 67, 160, 6, 48, 4, 160, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 48, 85, 160, 24, 48, 22, 161, 20, 48, 18, 160, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88];
+        assert_eq!(ser_check, ser);
         let trans_deser: TransactionBody = ser::deserialize(&ser).unwrap();
 
         match (trans, trans_deser) {
@@ -1022,14 +1033,15 @@ mod tests {
 
     #[test]
     fn trans_serde_reset_identity_v1() {
-        let master_key = SecretKey::new_xchacha20poly1305_from_slice(&[0; 32]).unwrap();
+        let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519_from_seed(&master_key, &[1; 32]).unwrap()),
+            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "alpha",
             Some("hello there")
         );
         let admin_key2 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519_from_seed(&master_key, &[2; 32]).unwrap()),
+            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "name-claim",
             None
         );
@@ -1054,8 +1066,12 @@ mod tests {
             admin_keys: None,
             policies: None,
         };
-        let ser1 = [161, 130, 1, 230, 48, 130, 1, 226, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 77, 75, 24, 6, 47, 133, 2, 89, 141, 224, 69, 202, 123, 105, 240, 103, 245, 159, 147, 177, 110, 58, 248, 115, 58, 152, 138, 220, 35, 65, 245, 200, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 233, 4, 20, 159, 189, 234, 171, 252, 109, 7, 5, 30, 173, 129, 169, 211, 245, 168, 3, 239, 163, 222, 92, 253, 161, 52, 4, 50, 107, 118, 90, 234, 38, 194, 66, 235, 174, 95, 141, 16, 230, 174, 65, 178, 186, 172, 171, 34, 175, 61, 22, 14, 94, 98, 182, 250, 154, 88, 150, 44, 65, 159, 207, 236, 172, 7, 147, 217, 189, 128, 118, 119, 255, 140, 133, 151, 165, 23, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108, 108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 125, 23, 127, 30, 113, 180, 144, 173, 12, 227, 128, 249, 87, 138, 177, 43, 176, 252, 0, 169, 141, 232, 246, 165, 85, 200, 29, 72, 194, 3, 146, 73, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 184, 215, 57, 141, 185, 145, 192, 58, 130, 84, 13, 47, 28, 196, 174, 125, 182, 194, 180, 153, 220, 14, 215, 86, 161, 52, 4, 50, 111, 216, 243, 159, 182, 232, 109, 74, 68, 62, 192, 8, 50, 126, 21, 96, 102, 139, 242, 146, 72, 195, 103, 83, 219, 97, 113, 55, 252, 232, 74, 114, 138, 213, 47, 168, 141, 240, 34, 69, 188, 134, 89, 228, 210, 145, 119, 159, 226, 109, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 159, 48, 129, 156, 48, 67, 160, 6, 48, 4, 160, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 77, 75, 24, 6, 47, 133, 2, 89, 141, 224, 69, 202, 123, 105, 240, 103, 245, 159, 147, 177, 110, 58, 248, 115, 58, 152, 138, 220, 35, 65, 245, 200, 48, 85, 160, 24, 48, 22, 161, 20, 48, 18, 160, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 125, 23, 127, 30, 113, 180, 144, 173, 12, 227, 128, 249, 87, 138, 177, 43, 176, 252, 0, 169, 141, 232, 246, 165, 85, 200, 29, 72, 194, 3, 146, 73];
+        let ser1_check = ser::serialize(&trans1).unwrap();
+        let ser2_check = ser::serialize(&trans2).unwrap();
+        let ser1 = [161, 130, 1, 230, 48, 130, 1, 226, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203, 142, 148, 84, 206, 16, 28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191, 181, 136, 133, 189, 166, 11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108, 108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 126, 211, 248, 125, 247, 70, 44, 106, 7, 197, 177, 121, 25, 118, 5, 100, 96, 210, 7, 49, 214, 133, 140, 43, 161, 52, 4, 50, 50, 61, 176, 253, 193, 203, 151, 105, 21, 18, 9, 43, 235, 225, 118, 44, 149, 110, 145, 115, 98, 235, 65, 219, 156, 13, 170, 216, 244, 198, 121, 156, 250, 36, 176, 190, 92, 116, 212, 140, 193, 73, 68, 13, 184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 159, 48, 129, 156, 48, 67, 160, 6, 48, 4, 160, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 48, 85, 160, 24, 48, 22, 161, 20, 48, 18, 160, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88];
         let ser2 = [161, 2, 48, 0];
+        assert_eq!(ser1_check, ser1);
+        assert_eq!(ser2_check, ser2);
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
         let trans_deser2: TransactionBody = ser::deserialize(&ser2).unwrap();
 
@@ -1082,16 +1098,19 @@ mod tests {
 
     #[test]
     fn trans_serde_add_admin_key_v1() {
-        let master_key = SecretKey::new_xchacha20poly1305_from_slice(&[0; 32]).unwrap();
+        let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519_from_seed(&master_key, &[3; 32]).unwrap()),
+            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "alpha",
             Some("been watching you for quite a while now")
         );
         let trans1 = TransactionBody::AddAdminKeyV1 {
             admin_key: admin_key1,
         };
-        let ser1 = [162, 129, 195, 48, 129, 192, 160, 129, 189, 48, 129, 186, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 91, 4, 106, 214, 52, 192, 140, 163, 195, 39, 181, 159, 112, 135, 253, 242, 62, 47, 86, 225, 164, 231, 164, 207, 169, 14, 185, 87, 230, 177, 29, 250, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 134, 243, 201, 153, 106, 228, 220, 47, 211, 214, 235, 2, 236, 85, 39, 179, 84, 157, 211, 69, 187, 144, 64, 117, 161, 52, 4, 50, 237, 14, 55, 198, 27, 15, 7, 33, 92, 210, 204, 186, 200, 3, 106, 10, 143, 165, 116, 143, 95, 76, 37, 6, 78, 64, 233, 253, 171, 34, 161, 48, 35, 81, 240, 193, 17, 110, 222, 38, 236, 251, 28, 191, 137, 0, 110, 216, 155, 220, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 41, 12, 39, 98, 101, 101, 110, 32, 119, 97, 116, 99, 104, 105, 110, 103, 32, 121, 111, 117, 32, 102, 111, 114, 32, 113, 117, 105, 116, 101, 32, 97, 32, 119, 104, 105, 108, 101, 32, 110, 111, 119];
+        let ser1_check = ser::serialize(&trans1).unwrap();
+        let ser1 = [162, 129, 195, 48, 129, 192, 160, 129, 189, 48, 129, 186, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203, 142, 148, 84, 206, 16, 28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191, 181, 136, 133, 189, 166, 11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 41, 12, 39, 98, 101, 101, 110, 32, 119, 97, 116, 99, 104, 105, 110, 103, 32, 121, 111, 117, 32, 102, 111, 114, 32, 113, 117, 105, 116, 101, 32, 97, 32, 119, 104, 105, 108, 101, 32, 110, 111, 119];
+        assert_eq!(ser1_check, ser1);
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
 
         match (trans1, trans_deser1) {
@@ -1104,9 +1123,10 @@ mod tests {
 
     #[test]
     fn trans_serde_edit_admin_key_v1() {
-        let master_key = SecretKey::new_xchacha20poly1305_from_slice(&[22; 32]).unwrap();
+        let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519_from_seed(&master_key, &[8; 32]).unwrap()),
+            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "admin/edit",
             Some("i like your hat")
         );
@@ -1145,9 +1165,10 @@ mod tests {
 
     #[test]
     fn trans_serde_revoke_admin_key_v1() {
-        let master_key = SecretKey::new_xchacha20poly1305_from_slice(&[22; 32]).unwrap();
+        let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519_from_seed(&master_key, &[8; 32]).unwrap()),
+            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "admin/edit",
             Some("i like your hat")
         );
@@ -1171,9 +1192,10 @@ mod tests {
 
     #[test]
     fn trans_serde_add_policy_v1() {
-        let master_key = SecretKey::new_xchacha20poly1305_from_slice(&[22; 32]).unwrap();
+        let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519_from_seed(&master_key, &[8; 32]).unwrap()),
+            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "admin/edit",
             Some("i like your hat")
         );
@@ -1219,11 +1241,12 @@ mod tests {
 
     #[test]
     fn trans_serde_make_claim_v1() {
-        let master_key = SecretKey::new_xchacha20poly1305_from_slice(&[22; 32]).unwrap();
+        let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
+        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let claim1 = ClaimSpec::Identity(MaybePrivate::new_public(IdentityID::from(TransactionID::from(Hash::new_blake3(&[1, 2, 3, 4, 5]).unwrap()))));
         let claim2 = ClaimSpec::Extension {
             key: BinaryVec::from(vec![2, 4, 6, 8]),
-            value: MaybePrivate::new_private(&master_key, BinaryVec::from(vec![9, 9, 9])).unwrap(),
+            value: MaybePrivate::new_private(&mut rng, &master_key, BinaryVec::from(vec![9, 9, 9])).unwrap(),
         };
         let trans1 = TransactionBody::MakeClaimV1 {
             spec: claim1,
