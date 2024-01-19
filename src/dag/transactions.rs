@@ -725,14 +725,16 @@ impl SerText for Transactions {}
 mod tests {
     use super::*;
     use crate::{
-        crypto::base::{SignKeypair, CryptoKeypair},
+        crypto::{
+            base::{SignKeypair, CryptoKeypair},
+            private::{PrivateWithHmac, MaybePrivate},
+        },
         identity::{
             claim::{Relationship, RelationshipType},
             keychain::{AdminKeypair, ExtendKeypair},
             stamp::Confidence,
         },
         policy::{Capability, Context, MultisigPolicy, MultisigPolicySignature, Policy, PolicyContainer, TransactionBodyType},
-        private::{PrivateWithHmac, MaybePrivate},
         util::{Date, Url, ser::BinaryVec, test::{self, sign_and_push}},
     };
     use std::str::FromStr;

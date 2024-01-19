@@ -14,8 +14,10 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::base::{KeyID, SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
-    private::{PrivateWithHmac},
+    crypto::{
+        base::{KeyID, SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
+        private::{PrivateWithHmac},
+    },
     util::{Public, sign::Signable, ser},
 };
 use getset;

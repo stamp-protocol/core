@@ -38,7 +38,7 @@ impl<T> AsnType for Private<T> {
 
 impl<T> Constructed for Private<T> {
     const FIELDS: Fields = Fields::from_static(&[
-        Field::new_required(Sealed::TAG, Sealed::TAG_TREE),
+        Field::new_required(Sealed::TAG, Sealed::TAG_TREE, "sealed"),
     ]);
 }
 
@@ -136,7 +136,7 @@ impl<T> AsnType for SealedTyped<T> {
 
 impl<T> Constructed for SealedTyped<T> {
     const FIELDS: Fields = Fields::from_static(&[
-        Field::new_required(Sealed::TAG, Sealed::TAG_TREE),
+        Field::new_required(Sealed::TAG, Sealed::TAG_TREE, "sealed"),
     ]);
 }
 

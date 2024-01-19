@@ -714,13 +714,15 @@ impl DeText for Transaction {}
 mod tests {
     use super::*;
     use crate::{
-        crypto::base::SignKeypair,
+        crypto::{
+            base::SignKeypair,
+            private::MaybePrivate,
+        },
         identity::{
             keychain::RevocationReason,
             stamp::Confidence,
         },
         policy::{Capability, Context, ContextClaimType, MultisigPolicy, Policy, TransactionBodyType},
-        private::{MaybePrivate},
         util::{ser, test},
     };
 

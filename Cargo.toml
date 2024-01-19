@@ -18,7 +18,7 @@ hkdf = "0.12"
 hmac = "0.12"
 rand = { version = "0.8", features = ["getrandom"] }
 rand_chacha = "0.3"
-rasn = "0.11"
+rasn = "0.12"
 serde = "1.0"
 serde_derive = "1.0"
 serde_yaml = "0.8"

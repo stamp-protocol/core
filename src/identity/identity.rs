@@ -7,14 +7,16 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::base::{KeyID, SecretKey},
+    crypto::{
+        base::{KeyID, SecretKey},
+        private::MaybePrivate,
+    },
     identity::{
         claim::{ClaimID, ClaimSpec, Claim},
         keychain::{AdminKey, AdminKeyID, ExtendKeypair, RevocationReason, Key, Keychain},
         stamp::{RevocationReason as StampRevocationReason, StampID, Stamp},
     },
     policy::{PolicyID, PolicyContainer},
-    private::MaybePrivate,
     util::{
         Public,
         SerText,

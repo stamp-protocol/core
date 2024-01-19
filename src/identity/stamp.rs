@@ -223,8 +223,10 @@ mod tests {
             keychain::{ExtendKeypair, AdminKey, AdminKeypair, Key, Keychain},
             stamp::Confidence,
         },
-        crypto::base::{SecretKey, SignKeypair, CryptoKeypair},
-        private::MaybePrivate,
+        crypto::{
+            base::{SecretKey, SignKeypair, CryptoKeypair},
+            private::MaybePrivate,
+        },
         util::{Timestamp, Date, Url, ser::BinaryVec},
     };
     use std::str::FromStr;

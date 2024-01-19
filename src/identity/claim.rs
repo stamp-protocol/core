@@ -12,8 +12,10 @@ use crate::{
         stamp::Stamp,
         identity::IdentityID,
     },
-    crypto::base::SecretKey,
-    private::{MaybePrivate},
+    crypto::{
+        base::SecretKey,
+        private::MaybePrivate,
+    },
     util::{Public, Date, Url, BinaryVec, SerText},
 };
 use getset;
@@ -416,9 +418,9 @@ impl SerText for Claim {}
 pub(crate) mod tests {
     use super::*;
     use crate::{
+        crypto::private::PrivateWithHmac,
         error::Error,
         identity::{IdentityID},
-        private::PrivateWithHmac,
     };
     use std::convert::TryFrom;
     use std::str::FromStr;

@@ -185,7 +185,6 @@
 pub mod error;
 #[macro_use]
 pub mod util;
-pub mod private;
 pub mod crypto;
 pub mod policy;
 pub mod identity;

@@ -3,6 +3,7 @@
 
 pub mod base;
 pub mod message;
+pub mod private;
 pub mod seal;
 pub mod sign;
 

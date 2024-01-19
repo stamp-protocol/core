@@ -39,7 +39,7 @@ pub fn text_export<T>(obj: &T) -> Result<String>
 }
 
 pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
-    rasn::der::decode(bytes).map_err(|e| Error::ASNDeserialize(e))
+    rasn::der::decode(bytes).map_err(|e| Error::ASNDeserialize(*e.kind))
 }
 
 pub(crate) fn deserialize_text<T>(ser: &str) -> Result<T>

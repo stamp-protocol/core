@@ -1,7 +1,9 @@
 use crate::{
-    crypto::base::{KeyID, SecretKey},
+    crypto::{
+        base::{KeyID, SecretKey},
+        private::Private,
+    },
     error::{Error, Result},
-    private::Private,
     util::{
         Public,
 

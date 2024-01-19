@@ -784,9 +784,11 @@ impl Deref for PolicyContainer {
 mod tests {
     use super::*;
     use crate::{
-        crypto::base::{HashAlgo, SecretKey},
+        crypto::{
+            base::{HashAlgo, SecretKey},
+            private::MaybePrivate,
+        },
         identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
-        private::MaybePrivate,
         util::{self, Timestamp, Url, test::sign_and_push},
     };
 
