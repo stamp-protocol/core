@@ -1005,7 +1005,7 @@ mod tests {
         let policy2 = Policy::new(
             vec![
                 Capability::Transaction {
-                    body_type: TransactionBodyType::MakeClaimV1,
+                    body_type: vec![TransactionBodyType::MakeClaimV1],
                     context: Context::All(vec![Context::ClaimType(ContextClaimType::Name)]),
                 },
             ],
@@ -1054,7 +1054,7 @@ mod tests {
         let policy2 = Policy::new(
             vec![
                 Capability::Transaction {
-                    body_type: TransactionBodyType::MakeClaimV1,
+                    body_type: vec![TransactionBodyType::MakeClaimV1],
                     context: Context::All(vec![Context::ClaimType(ContextClaimType::Name)]),
                 },
             ],
@@ -1204,7 +1204,7 @@ mod tests {
         let policy1 = Policy::new(
             vec![
                 Capability::Transaction {
-                    body_type: TransactionBodyType::MakeClaimV1,
+                    body_type: vec![TransactionBodyType::MakeClaimV1],
                     context: Context::All(vec![Context::ClaimType(ContextClaimType::Name)]),
                 },
             ],

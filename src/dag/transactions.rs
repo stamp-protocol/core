@@ -868,8 +868,8 @@ mod tests {
         let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Alpha", None);
         let admin_key3 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Zing", None);
-        let capability2 = Capability::Transaction { body_type: TransactionBodyType::ResetIdentityV1, context: Context::Permissive };
-        let capability3 = Capability::Transaction { body_type: TransactionBodyType::AcceptStampV1, context: Context::IdentityID(IdentityID::random()) };
+        let capability2 = Capability::Transaction { body_type: vec![TransactionBodyType::ResetIdentityV1], context: Context::Permissive };
+        let capability3 = Capability::Transaction { body_type: vec![TransactionBodyType::AcceptStampV1], context: Context::IdentityID(IdentityID::random()) };
         let policy2 = Policy::new(
             vec![capability2],
             MultisigPolicy::MOfN { must_have: 0, participants: vec![] }
@@ -995,7 +995,7 @@ mod tests {
     fn transactions_add_policy() {
         let mut rng = crate::util::test::rng();
         let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let capability2 = Capability::Transaction { body_type: TransactionBodyType::ResetIdentityV1, context: Context::Permissive };
+        let capability2 = Capability::Transaction { body_type: vec![TransactionBodyType::ResetIdentityV1], context: Context::Permissive };
         let policy2 = Policy::new(
             vec![capability2],
             MultisigPolicy::MOfN { must_have: 0, participants: vec![] }
@@ -1613,11 +1613,11 @@ mod tests {
 
         let cap1 = vec![
             Capability::Transaction {
-                body_type: TransactionBodyType::MakeClaimV1,
+                body_type: vec![TransactionBodyType::MakeClaimV1],
                 context: Context::Permissive,
             },
             Capability::Transaction {
-                body_type: TransactionBodyType::AddSubkeyV1,
+                body_type: vec![TransactionBodyType::AddSubkeyV1],
                 context: Context::Name("logins/websites/beeets.com".into()),
             },
         ];
@@ -1633,7 +1633,7 @@ mod tests {
 
         let cap2 = vec![
             Capability::Transaction {
-                body_type: TransactionBodyType::PublishV1,
+                body_type: vec![TransactionBodyType::PublishV1],
                 context: Context::Permissive,
             },
         ];

@@ -496,11 +496,12 @@ pub enum Capability {
     /// A capability that allows all actions
     #[rasn(tag(explicit(0)))]
     Permissive,
-    /// The ability to perform a transaction in a given context
+    /// The ability to perform a transaction in a given context. Allows specifying
+    /// multiple transaction body types, of which *ANY* can match (an OR gate).
     #[rasn(tag(explicit(1)))]
     Transaction {
         #[rasn(tag(explicit(0)))]
-        body_type: TransactionBodyType,
+        body_type: Vec<TransactionBodyType>,
         #[rasn(tag(explicit(1)))]
         context: Context,
     },
@@ -538,7 +539,10 @@ impl Capability {
             Self::Transaction { body_type, context } => {
                 match against {
                     Self::Transaction { body_type: against_body_type, context: against_context } => {
-                        if body_type == against_body_type {
+                        if against_body_type.len() != 1 {
+                            Err(Error::PolicyCapabilityMismatch)?;
+                        }
+                        if body_type.contains(&against_body_type[0]) {
                             context.test(against_context)
                         } else {
                             Err(Error::PolicyCapabilityMismatch)
@@ -718,7 +722,7 @@ impl Policy {
         // needed to satisfy the policy. signature checks happen higher level.
         self.multisig_policy().test(transaction.signatures())?;
         let transaction_capability = Capability::Transaction {
-            body_type: transaction.entry().body().into(),
+            body_type: vec![transaction.entry().body().into()],
             context: Context::Any(Vec::from(contexts)),
         };
         if !self.can(&transaction_capability) {
@@ -1056,18 +1060,18 @@ mod tests {
         };
         cap1.test(&Capability::Permissive).unwrap();
         cap1.test(&Capability::Transaction {
-            body_type: TransactionBodyType::CreateIdentityV1,
+            body_type: vec![TransactionBodyType::CreateIdentityV1],
             context: Context::Any(vec![]),
         }).unwrap();
         cap1.test(&cap2).unwrap();
 
         assert_eq!(cap2.test(&Capability::Permissive).err(), Some(Error::PolicyCapabilityMismatch));
         let res2_1 = cap2.test(&Capability::Transaction {
-            body_type: TransactionBodyType::CreateIdentityV1,
+            body_type: vec![TransactionBodyType::CreateIdentityV1],
             context: Context::Any(vec![]),
         });
         let res2_2 = cap2.test(&Capability::Transaction {
-            body_type: TransactionBodyType::MakeStampV1,
+            body_type: vec![TransactionBodyType::MakeStampV1],
             context: Context::Name("lalala".into()),
         });
         assert_eq!(res2_1.err(), Some(Error::PolicyCapabilityMismatch));
@@ -1075,27 +1079,64 @@ mod tests {
 
         // alright, now the tricky stuff
         let cap3 = Capability::Transaction {
-            body_type: TransactionBodyType::CreateIdentityV1,
+            body_type: vec![TransactionBodyType::CreateIdentityV1],
             context: Context::Any(vec![Context::Name("omglol".into())]),
         };
         assert_eq!(cap3.test(&cap1).err(), Some(Error::PolicyCapabilityMismatch));
         assert_eq!(cap3.test(&cap2).err(), Some(Error::PolicyCapabilityMismatch));
         let res3_1 = cap3.test(&Capability::Transaction {
-            body_type: TransactionBodyType::SignV1,
+            body_type: vec![TransactionBodyType::SignV1],
             context: Context::Any(vec![]),
         });
         assert_eq!(res3_1.err(), Some(Error::PolicyCapabilityMismatch));
 
         let res3_2 = cap3.test(&Capability::Transaction {
-            body_type: TransactionBodyType::CreateIdentityV1,
+            body_type: vec![TransactionBodyType::CreateIdentityV1],
             context: Context::Any(vec![]),
         });
         assert_eq!(res3_2.err(), Some(Error::PolicyContextMismatch));
 
         cap3.test(&Capability::Transaction {
-            body_type: TransactionBodyType::CreateIdentityV1,
+            body_type: vec![TransactionBodyType::CreateIdentityV1],
             context: Context::Any(vec![Context::Name("omglol".into())]),
         }).unwrap();
+
+        let cap4 = Capability::Transaction {
+            body_type: vec![
+                TransactionBodyType::MakeClaimV1,
+                TransactionBodyType::EditClaimV1,
+                TransactionBodyType::DeleteClaimV1,
+            ],
+            context: Context::Any(vec![Context::NameGlob("email/*".into())]),
+        };
+        cap4.test(&Capability::Transaction {
+            body_type: vec![TransactionBodyType::MakeClaimV1],
+            context: Context::Any(vec![Context::Name("email/default".into())]),
+        }).unwrap();
+        cap4.test(&Capability::Transaction {
+            body_type: vec![TransactionBodyType::EditClaimV1],
+            context: Context::Any(vec![Context::Name("email/omg".into())]),
+        }).unwrap();
+        cap4.test(&Capability::Transaction {
+            body_type: vec![TransactionBodyType::DeleteClaimV1],
+            context: Context::Any(vec![Context::Name("email/suckerrr".into())]),
+        }).unwrap();
+        let res4_1 = cap4.test(&Capability::Transaction {
+            body_type: vec![TransactionBodyType::AddSubkeyV1],
+            context: Context::Any(vec![Context::Name("email/suckerrr".into())]),
+        });
+        assert_eq!(res4_1.err(), Some(Error::PolicyCapabilityMismatch));
+        let res4_2 = cap4.test(&Capability::Transaction {
+            // can only specify EXACTLY ONE body_type in the testee capability
+            body_type: vec![TransactionBodyType::MakeClaimV1, TransactionBodyType::EditClaimV1],
+            context: Context::Any(vec![Context::Name("email/suckerrr".into())]),
+        });
+        assert_eq!(res4_2.err(), Some(Error::PolicyCapabilityMismatch));
+        let res4_3 = cap4.test(&Capability::Transaction {
+            body_type: vec![],
+            context: Context::Any(vec![Context::Name("email/suckerrr".into())]),
+        });
+        assert_eq!(res4_3.err(), Some(Error::PolicyCapabilityMismatch));
     }
 
     #[test]
@@ -1232,7 +1273,7 @@ mod tests {
         let admin_keypair = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let tid = TransactionID::random();
         let testcap = Capability::Transaction {
-            body_type: TransactionBodyType::MakeStampV1,
+            body_type: vec![TransactionBodyType::MakeStampV1],
             context: Context::Any(vec![
                 Context::ObjectID(tid.clone()),
                 Context::Name("keys/publish".into()),
@@ -1258,7 +1299,7 @@ mod tests {
                 context: Vec::from("34".as_bytes()).into(),
             },
             Capability::Transaction {
-                body_type: TransactionBodyType::CreateIdentityV1,
+                body_type: vec![TransactionBodyType::CreateIdentityV1],
                 context: Context::Any(vec![
                     Context::Name("shooter mcgavin".into()),
                 ]),
@@ -1269,7 +1310,7 @@ mod tests {
 
         let mut capabilities3 = capabilities2.clone();
         capabilities3.push(Capability::Transaction {
-            body_type: TransactionBodyType::MakeStampV1,
+            body_type: vec![TransactionBodyType::MakeStampV1],
             context: Context::Any(vec![
                 Context::ObjectID(tid.clone()),
             ]),
@@ -1278,7 +1319,7 @@ mod tests {
         assert!(policy3.can(&testcap));
 
         let testcap2 = Capability::Transaction {
-            body_type: TransactionBodyType::ExtV1,
+            body_type: vec![TransactionBodyType::ExtV1],
             context: Context::Any(vec![
                 Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
                 Context::ExtContext {
@@ -1292,7 +1333,7 @@ mod tests {
             ]),
         };
         let testcap3 = Capability::Transaction {
-            body_type: TransactionBodyType::ExtV1,
+            body_type: vec![TransactionBodyType::ExtV1],
             context: Context::Any(vec![
                 Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
                 Context::ExtContext {
@@ -1307,7 +1348,7 @@ mod tests {
         };
         let capabilities4 = vec![
             Capability::Transaction {
-                body_type: TransactionBodyType::ExtV1,
+                body_type: vec![TransactionBodyType::ExtV1],
                 context: Context::All(vec![
                     Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
                     Context::ExtContext {
@@ -1336,7 +1377,7 @@ mod tests {
 
         let capabilities = vec![
             Capability::Transaction {
-                body_type: TransactionBodyType::MakeClaimV1,
+                body_type: vec![TransactionBodyType::MakeClaimV1],
                 context: Context::Any(vec![
                     Context::ClaimType(ContextClaimType::Url),
                 ]),
@@ -1377,7 +1418,7 @@ mod tests {
 
         let capabilities2 = vec![
             Capability::Transaction {
-                body_type: TransactionBodyType::EditClaimV1,
+                body_type: vec![TransactionBodyType::EditClaimV1],
                 context: Context::Any(vec![
                     Context::ClaimType(ContextClaimType::Url),
                 ]),
