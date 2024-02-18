@@ -73,6 +73,8 @@ pub trait ExtendKeypair: From<SignKeypair> + Clone + PartialEq + Deref<Target = 
     }
 }
 
+/// A signature from an [`AdminKeypair`]. This basically just wraps [`SignKeypairSignature`]
+/// in a new type that allows specifying that specifically an admin key signature is required.
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(delegate)]
 pub struct AdminKeypairSignature(SignKeypairSignature);
@@ -98,6 +100,7 @@ impl AsRef<[u8]> for AdminKeypairSignature {
 
 impl ExtendKeypairSignature for AdminKeypairSignature {}
 
+/// The public key format of an [`AdminKeypair`].
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(delegate)]
 pub struct AdminKeypairPublic(SignKeypairPublic);
@@ -115,6 +118,8 @@ impl Deref for AdminKeypairPublic {
     }
 }
 
+/// An admin keypair. This basically just wraps [`SignKeypair`] in a new type that allows
+/// specifying that specifically an admin key is required.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(delegate)]
 pub struct AdminKeypair(SignKeypair);
@@ -165,6 +170,7 @@ impl ExtendKeypair for AdminKeypair {
     type Signature = AdminKeypairSignature;
 }
 
+/// A [`KeyID`] but for an [`AdminKeypair`]
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(delegate)]
 pub struct AdminKeyID(KeyID);

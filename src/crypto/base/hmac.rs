@@ -37,7 +37,9 @@ impl HmacKey {
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Hmac {
-    /// Blake3 HMAC
+    /// Blake3 HMAC. Yes, I know that technically you don't need to do blake3 in an HMAC format
+    /// because it is not vulnerable to length extension blah blah. However, doing it this way expands the
+    /// possibilities to other hash types which *do* require an HMAC if they are so desired.
     #[rasn(tag(explicit(0)))]
     Blake3(Binary<32>),
 }

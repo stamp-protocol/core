@@ -51,7 +51,7 @@ pub const KDF_MEM_SENSITIVE: u32 = 1048576;
 /// [`chacha8()`][rng::chacha8] can be used.
 ///
 /// These can be used as an input to any Stamp function that accepts `&mut rng`. Otherwise, you can
-/// bring your own RNG that implements [`RngCore`].
+/// bring your own RNG that implements [`rand::RngCore`].
 pub mod rng {
     use rand::{RngCore, SeedableRng, rngs::OsRng};
 
@@ -73,7 +73,7 @@ pub mod rng {
 }
 
 
-/// A value that lets us reference keys by a unique identifier (pubkey for asymc keypairs
+/// A value that lets us reference keys by a unique identifier (pubkey for async keypairs
 /// and HMAC for secret keys).
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]

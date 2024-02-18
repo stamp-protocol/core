@@ -175,6 +175,7 @@ impl FromStr for Timestamp {
     }
 }
 
+/// Describes a date without a time. Really, just exists for the birthday claim.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Date(NaiveDate);
 
@@ -229,6 +230,7 @@ impl FromStr for Date {
     }
 }
 
+/// Marks a type as having a public mode, ie stripped of all private data.
 pub trait Public {
     /// Strip the private data from a object, returning only public data.
     fn strip_private(&self) -> Self;

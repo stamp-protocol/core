@@ -702,18 +702,18 @@ pub struct Policy {
 }
 
 impl Policy {
-    /// Create a new `CapabilityPolicy`
+    /// Create a new `Policy`
     pub fn new(capabilities: Vec<Capability>, multisig_policy: MultisigPolicy) -> Self {
         Self { capabilities, multisig_policy }
     }
 
-    /// Determine if this particular `CapabilityPolicy` allows performing the
+    /// Determine if this particular `Policy` allows performing the
     /// action `capability`.
     pub fn can(&self, capability: &Capability) -> bool {
         self.capabilities().iter().any(|c| c.test(capability).is_ok())
     }
 
-    /// Determine if this particular `CapabilityPolicy` allows performing the
+    /// Determine if this particular `Policy` allows performing the
     /// action `capability`, and also checks the transaction's signatures against the policy
     /// to make sure we have the signatures we need to perform this action (although
     /// this function does not validate transactions, that needs to happen higher up).
@@ -751,7 +751,7 @@ impl PolicyContainer {
     }
 
     /// Generates a `PolicyID` given a transaction id and the policy's position (index) in that
-    /// transactions.
+    /// transaction.
     pub fn gen_id(transaction_id: &TransactionID, idx: usize) -> Result<PolicyID> {
         #[derive(AsnType, Encode)]
         struct PolicyContainerSer<'a> {

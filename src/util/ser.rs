@@ -20,10 +20,12 @@ use std::convert::From;
 use std::ops::{Deref, DerefMut};
 use zeroize::Zeroize;
 
+/// Serialize an object into binary.
 pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
     rasn::der::encode(obj).map_err(|_| Error::ASNSerialize)
 }
 
+/// Serialize an object into human-readable format.
 pub(crate) fn serialize_text<T>(obj: &T) -> Result<String>
     where T: Serialize + Public
 {
@@ -38,10 +40,12 @@ pub fn text_export<T>(obj: &T) -> Result<String>
     Ok(serde_yaml::to_string(&obj)?)
 }
 
+/// Deserialize an object from binary.
 pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
     rasn::der::decode(bytes).map_err(|e| Error::ASNDeserialize(*e.kind))
 }
 
+/// Deserialize an object from human-readable format.
 pub(crate) fn deserialize_text<T>(ser: &str) -> Result<T>
     where T: DeserializeOwned + Public
 {
@@ -60,6 +64,7 @@ pub fn base64_encode<T: AsRef<[u8]>>(bytes: T) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes.as_ref())
 }
 
+/// Convert base64 to bytes.
 pub fn base64_decode<T: AsRef<[u8]>>(bytes: T) -> Result<Vec<u8>> {
     // annoying alloc, but seems necessary as the base64 crate doesn't ignore whitespace
     let mut filter_whitespace = Vec::from(bytes.as_ref());
@@ -92,6 +97,7 @@ pub trait SerText: Serialize + Public + Sized {
     }
 }
 
+/// Allows deserializing a public object from human-readable format.
 pub trait DeText: DeserializeOwned + Public + Sized {
     /// Deserialize this object from human readable format
     fn deserialize_text(ser: &str) -> Result<Self> {

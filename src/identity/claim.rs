@@ -127,20 +127,20 @@ pub enum ClaimSpec {
     /// you have the identity ID:
     ///
     /// ```txt
-    /// o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA
+    /// s0f__TtNxiUrNJ8yi14vVQteecP7xQYQzcohhPqOdt8A
     /// ```
     ///
     /// and the domain claim has an ID of:
     ///
     /// ```txt
-    /// cZVhuW0Of5aqaFa1aCf6J_1vS2XtNV94r1LxfgIgkK8tpZmzlVnA_Xb04LJrRWno--cVj5P8P9zOMMXmZe75AQA
+    /// zYY3Z_P_MappC5sdHumcZ7goXMAlHuNQ9uCG9NEi02IA
     /// ```
     ///
     /// Then you would create a DNS TXT record on the killtheradio.net domain as
     /// follows:
     ///
     /// ```txt
-    /// stamp://o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA/claim/cZVhuW0Of5aqaFa1aCf6J_1vS2XtNV94r1LxfgIgkK8tpZmzlVnA_Xb04LJrRWno--cVj5P8P9zOMMXmZe75AQA
+    /// stamp://s0f__TtNxiUrNJ8yi14vVQteecP7xQYQzcohhPqOdt8A/claim/zYY3Z_P_MappC5sdHumcZ7goXMAlHuNQ9uCG9NEi02IA
     /// ```
     ///
     /// It's a mouthfull, I know. But now anybody who can read the domain DNS
@@ -148,54 +148,52 @@ pub enum ClaimSpec {
     /// you can use the short form URL:
     ///
     /// ```txt
-    /// stamp://o8AL10aawwthQIUR/claim/cZVhuW0Of5aqaFa1
+    /// stamp://s0f__TtNxiUrNJ8y/claim/zYY3Z_P_MappC5sd
     /// ```
     #[rasn(tag(explicit(6)))]
     Domain(MaybePrivate<String>),
     /// A claim that I own or have write access to a specific URL.
     ///
     /// This claim can generally be validated by implementations themselves.
-    /// After creation of the claim, the ID of the claim should be published to
-    /// that URL and prepended with "stamp:" (a 16-character shortened ID can be
-    /// used if space is limited).
-    ///
-    /// For instance, if you want to claim ownership of <https://killtheradio.net/>
-    /// then you would create a Url claim with that URL as the value. Let's say
-    /// the resulting claim ID is:
-    ///
-    /// ```txt
-    /// 0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
-    /// ```
-    ///
-    /// You would then publish on <https://killtheradio.net/> a string somewhere
-    /// on the homepage
-    ///
-    /// ```txt
-    /// stamp:0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
-    /// ```
-    ///
-    /// or for stupid, useless, idiotic platforms like twitter, abbreviated:
-    ///
-    /// ```txt
-    /// stamp:0SgfsdQ2YNk6Nlre
-    /// ```
-    ///
-    /// Long-form is preferred for security, but obviously not as hip.
-    ///
-    /// It's also possible, although very unstylish, to use the full URL of the
-    /// claim itself, in the format
+    /// After creation of the claim, the url should be updated with one of the following
+    /// formats:
     ///
     /// ```txt
     /// stamp://<identityID>/claim/<claimID>
+    /// stamp:<identityID>:<claimID>
     /// ```
     ///
-    /// This can be specified either with long-form IDs or short-form, 16-char
-    /// abbreviated IDs:
+    /// For instance, if you want to claim ownership of <https://killtheradio.net/>
+    /// then you would create a Url claim with that URL as the value. Let's say (hypothetically!!1)
+    /// that your identity ID is:
     ///
     /// ```txt
-    /// stamp://o8AL10aawwthQIURV5RND2fo1RM-GU6x6H_ZtwRxv-rVeFnh4Eaa2ps9Xq5Pzbn27_CPQHm2sObYu22bxaWDDwA/claim/0SgfsdQ2YNk6Nlre9ENLrcRVuFffm81OcAPxYWFNXG9-XMfEI2LtW9LW_yIWiMUX6oOjszqaLlxrGy1vufc8AAA
-    /// stamp://o8AL10aawwthQIUR/claim/0SgfsdQ2YNk6Nlre
+    /// s0f__TtNxiUrNJ8yi14vVQteecP7xQYQzcohhPqOdt8A
     /// ```
+    ///
+    /// and your URL claim has the ID:
+    ///
+    /// ```txt
+    /// gsIXBbspigIQ-34m2TCxxRA_1V-fiefRa60WfXbR408A
+    /// ```
+    ///
+    /// You would then publish on <https://killtheradio.net/> a string somewhere
+    /// on the homepage one of the following values:
+    ///
+    /// ```txt
+    /// stamp://s0f__TtNxiUrNJ8yi14vVQteecP7xQYQzcohhPqOdt8A/claim/gsIXBbspigIQ-34m2TCxxRA_1V-fiefRa60WfXbR408A
+    /// stamp:s0f__TtNxiUrNJ8yi14vVQteecP7xQYQzcohhPqOdt8A:gsIXBbspigIQ-34m2TCxxRA_1V-fiefRa60WfXbR408A
+    /// ```
+    ///
+    /// or if you are tryping to impress your crush with your baller website and don't want to clutter
+    /// your page with enourmous amounts of base64 you can use the short-hand:
+    ///
+    /// ```txt
+    /// stamp://s0f__TtNxiUrNJ8y/claim/gsIXBbspigIQ-34m
+    /// stamp:s0f__TtNxiUrNJ8y:gsIXBbspigIQ-34m
+    /// ```
+    ///
+    /// Long-form is preferred for security, but obviously not as hip.
     ///
     /// If whatever system you're using doesn't have the concept of a "profile"
     /// with editable text you can update, and doesn't provide a predictable URL
@@ -320,8 +318,7 @@ impl Public for ClaimSpec {
     }
 }
 
-/// A type used when signing a claim. Contains all data about the claim except
-/// the stamps.
+/// A claim on an identity, along with its ID, name, and any [stamps][Stamp] we've received.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Claim {

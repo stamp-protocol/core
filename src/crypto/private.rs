@@ -1,6 +1,6 @@
 //! The private module locks data away via a [`SecretKey`]
 //! while never storing or serializing or displaying the locked (private) data.
-//! It can only be retrieved via the [open](crate::private::Private::open)
+//! It can only be retrieved via the [open](crate::crypto::private::Private::open)
 //! method, given the correct unlocking key.
 //!
 //! This allows for secure storage of things like private keys, or even claims

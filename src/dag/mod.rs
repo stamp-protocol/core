@@ -23,7 +23,9 @@ pub use crate::{
             Transactions,
         },
     },
-    error::{Error, Result},
+};
+use crate::{
+    error::Result,
     util::Timestamp,
 };
 use getset::{Getters, MutGetters};
@@ -86,7 +88,7 @@ pub struct Dag<'a> {
 }
 
 impl<'a> Dag<'a> {
-    /// Takes a flat list of transactions and returns a set of DAGs that model those transactions.
+    /// Takes a flat list of transactions and returns a of DAG that models those transactions.
     pub fn from_transactions(transactions: &[&'a Transaction]) -> Dag<'a> {
         // create our DAG object.
         let mut dag = Dag::default();
