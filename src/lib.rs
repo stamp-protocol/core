@@ -54,26 +54,29 @@
 //!
 //! ```
 //! use stamp_core::{
-//!     crypto::base::{derive_secret_key, Hash, HashAlgo, KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
+//!     crypto::base::{derive_secret_key, rng, Hash, HashAlgo, KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
 //!     dag::Transactions,
 //!     identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
 //!     policy::{Capability, MultisigPolicy, Policy},
 //!     util::Timestamp,
 //! };
 //! use std::ops::Deref;
-//! 
+//!
+//! // create a random context for key generation
+//! let mut rng = stamp_core::crypto::base::rng::chacha20();
+//!
 //! // Let's create a master key. This key locks/unlocks the sensitive data within the
 //! // identity, such as private keys. Generally, you'd create this using a passphrase:
 //! let salt = Hash::new_blake3("2022-12-06T11:59:59-0800".as_bytes()).unwrap();
 //! let passphrase = "lumpy coal makes good sandwhiches";
 //! // here's how you generate your master key (commented out because it's slow)
 //! //let master_key = derive_secret_key(passphrase.as_bytes(), salt.as_bytes(), KDF_OPS_MODERATE, KDF_MEM_MODERATE).unwrap();
-//! # let master_key = SecretKey::new_xchacha20poly1305_from_slice(Hash::new_blake3(passphrase.as_bytes()).unwrap().as_bytes()).unwrap();
+//! # let master_key = SecretKey::new_xchacha20poly1305_from_bytes(Hash::new_blake3(passphrase.as_bytes()).unwrap().as_bytes().try_into().unwrap()).unwrap();
 //!
 //! // Next, we'll create an admin key. Admin keys are how we sign changes to our identity,
 //! // including its creation. All private/secret keys in the identity (including Admin keys)
 //! // are encrypted and only accessible by using the master key, as we're doing here.
-//! let admin_keypair = AdminKeypair::new_ed25519(&master_key).unwrap();
+//! let admin_keypair = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
 //! let admin_key = AdminKey::new(admin_keypair, "Alpha", Some("Our primary admin key"));
 //!
 //! // Admin keys by themselves cannot actually do anything. They need a policy that describes

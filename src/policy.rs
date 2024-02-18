@@ -134,10 +134,12 @@ pub enum ContextClaimType {
     #[rasn(tag(explicit(8)))]
     Address,
     #[rasn(tag(explicit(9)))]
-    Relation,
+    PhoneNumber,
     #[rasn(tag(explicit(10)))]
-    RelationExtension,
+    Relation,
     #[rasn(tag(explicit(11)))]
+    RelationExtension,
+    #[rasn(tag(explicit(12)))]
     Extension,
 }
 
@@ -155,6 +157,7 @@ impl From<&ClaimSpec> for ContextClaimType {
             ClaimSpec::Domain(..) => Self::Domain,
             ClaimSpec::Url(..) => Self::Url,
             ClaimSpec::Address(..) => Self::Address,
+            ClaimSpec::PhoneNumber(..) => Self::PhoneNumber,
             ClaimSpec::Relation(..) => Self::Relation,
             ClaimSpec::RelationExtension(..) => Self::RelationExtension,
             ClaimSpec::Extension { .. } => Self::Extension,
