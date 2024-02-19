@@ -54,25 +54,30 @@ pub enum RevocationReason {
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Confidence {
-    /// Some verification of the claim happened, but it was quick and dirty.
-    /// This could be something like clicking a link in email, or entering a
-    /// code from an SMS.
+    /// You are certain the claim is false. This might be issued if you determine someone
+    /// is impersonating a valid identity. Obviously, the stampee will likely not add
+    /// this stamp to their identity, but it can serve as a warning to those who trust
+    /// you.
     #[rasn(tag(explicit(0)))]
+    Negative,
+    /// Some verification of the claim happened, but it was quick and
+    /// dirty.
+    #[rasn(tag(explicit(1)))]
     Low,
     /// We verified the claim using a decent amount of diligence. This could be
     /// like checking someone's state-issued ID.
-    #[rasn(tag(explicit(1)))]
+    #[rasn(tag(explicit(2)))]
     Medium,
     /// The claim was extensively investigated: birth certificates, background
     /// checks, photo verification.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(explicit(3)))]
     High,
     /// We climbed mountains, pulled teeth, interrogated family members, and are
     /// absolutely positive that this claim is true in every way.
     ///
     /// This should really only be used between people who have known each other
     /// for years (like family).
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(explicit(4)))]
     Extreme,
 }
 
