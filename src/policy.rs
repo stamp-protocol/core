@@ -327,9 +327,11 @@ impl Context {
             }
             TransactionBody::EditClaimV1 { claim_id, .. } => {
                 contexts.push(Self::ObjectID(claim_id.deref().clone()));
+                // TODO: look up the claim and grab its name (#38)
             }
             TransactionBody::DeleteClaimV1 { claim_id } => {
                 contexts.push(Self::ObjectID(claim_id.deref().clone()));
+                // TODO: look up the claim and grab its name (#38)
             }
             TransactionBody::MakeStampV1 { stamp } => {
                 contexts.push(Self::ObjectID(stamp.claim_id().deref().clone()));
