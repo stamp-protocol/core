@@ -3,7 +3,7 @@
 
 use crate::{
     error::{Error, Result},
-    crypto::base::{HashAlgo, KeyID, SecretKey},
+    crypto::base::{Hash, HashAlgo, KeyID, SecretKey},
     dag::{Dag, TransactionBody, TransactionID, TransactionEntry, Transaction},
     identity::{
         claim::{
@@ -666,19 +666,20 @@ impl Transactions {
         let body = TransactionBody::PublishV1 {
             transactions: Box::new(self.strip_private()),
         };
-        // leave previous transactions blank (irrelevant here)
-        Transaction::new(TransactionEntry::new(now, vec![], body), hash_with)
+        self.prepare_transaction(hash_with, now, body)
     }
 
     /// Sign a message
-    pub fn sign<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, body: BinaryVec) -> Result<Transaction> {
+    pub fn sign<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, body_hash_with: &HashAlgo, body: &[u8]) -> Result<Transaction> {
         let creator = self.identity_id().ok_or(Error::DagEmpty)?;
+        let body_hash = match body_hash_with {
+            HashAlgo::Blake3 => Hash::new_blake3(body)?,
+        };
         let body = TransactionBody::SignV1 {
             creator,
-            body: Some(body),
+            body_hash,
         };
-        // leave previous transactions blank (irrelevant here)
-        Transaction::new(TransactionEntry::new(now, vec![], body), hash_with)
+        self.prepare_transaction(hash_with, now, body)
     }
 
     /// Create a transaction for use in an external system.
@@ -1547,19 +1548,19 @@ mod tests {
     fn transactions_sign() {
         let mut rng = crate::util::test::rng();
         let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let sig = transactions.sign(&HashAlgo::Blake3, Timestamp::now(), BinaryVec::from(Vec::from("get a job".as_bytes()))).unwrap()
+        let sig = transactions.sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from(b"get a job").as_slice()).unwrap()
             .sign(&master_key, &admin_key).unwrap();
         let identity = transactions.build_identity().unwrap();
         sig.verify(Some(&identity)).unwrap();
 
         let transactions_blank = Transactions::new();
-        let blank_res = transactions_blank.sign(&HashAlgo::Blake3, Timestamp::now(), BinaryVec::from(Vec::from("get a job".as_bytes())));
+        let blank_res = transactions_blank.sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from("get a job").as_slice());
         assert!(matches!(blank_res, Err(Error::DagEmpty)));
 
         let mut sig_mod = sig.clone();
         match sig_mod.entry_mut().body_mut() {
-            TransactionBody::SignV1 { creator: _creator, body: Some(ref mut body) } => {
-                *body = BinaryVec::from(Vec::from("hold on...".as_bytes()));
+            TransactionBody::SignV1 { creator: _creator, body_hash: ref mut body_hash } => {
+                *body_hash = Hash::new_blake3(b"hold on...").unwrap();
             }
             _ => panic!("Unexpected transaction: {:?}", sig_mod),
         }
@@ -1576,7 +1577,7 @@ mod tests {
         ext.verify(Some(&identity)).unwrap();
 
         let transactions_blank = Transactions::new();
-        let blank_res = transactions_blank.sign(&HashAlgo::Blake3, Timestamp::now(), BinaryVec::from(Vec::from("get a job".as_bytes())));
+        let blank_res = transactions_blank.sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from(b"get a job").as_slice());
         assert!(matches!(blank_res, Err(Error::DagEmpty)));
 
         let mut ext_mod = ext.clone();

@@ -212,7 +212,8 @@ pub enum TransactionBody {
     /// identity signing transaction must match an existing policy to be valid. This
     /// allows creating group signatures that are policy-validated.
     ///
-    /// To create detached signatures, set `body` to None after signing.
+    /// Note that we don't actually sign the body, but the body's hash. This makes the
+    /// transaction fairly lightweight while still being reasonably secure.
     ///
     /// `Sign` transactions cannot be applied to the identity!
     #[rasn(tag(explicit(19)))]
@@ -220,7 +221,7 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(0)))]
         creator: IdentityID,
         #[rasn(tag(explicit(1)))]
-        body: Option<BinaryVec>,
+        body_hash: Hash,
     },
     /// Create a transaction for use in an external network. This allows Stamp to act
     /// as a transactional medium for other networks. If the members of that network
@@ -319,7 +320,7 @@ impl TransactionBody {
             Self::PublishV1 { transactions } => Self::PublishV1 {
                 transactions: Box::new(transactions.reencrypt(rng, old_master_key, new_master_key)?),
             },
-            Self::SignV1 { creator, body } => Self::SignV1 { creator, body },
+            Self::SignV1 { creator, body_hash } => Self::SignV1 { creator, body_hash },
             Self::ExtV1 { creator, ty, previous_transactions, context, payload } => Self::ExtV1 { creator, ty, previous_transactions, context, payload },
         };
         Ok(new_self)
@@ -361,7 +362,7 @@ impl Public for TransactionBody {
             Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
             Self::PublishV1 { transactions } => Self::PublishV1 { transactions: Box::new(transactions.strip_private()) },
-            Self::SignV1 { creator, body } => Self::SignV1 { creator, body },
+            Self::SignV1 { creator, body_hash } => Self::SignV1 { creator, body_hash },
             Self::ExtV1 { creator, ty, previous_transactions, context, payload } => Self::ExtV1 { creator, ty, previous_transactions, context, payload },
         }
     }
