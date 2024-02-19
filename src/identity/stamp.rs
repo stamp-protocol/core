@@ -54,27 +54,25 @@ pub enum RevocationReason {
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Confidence {
-    /// The stamp is being made with absolutely no verification whatsoever.
+    /// Some verification of the claim happened, but it was quick and dirty.
+    /// This could be something like clicking a link in email, or entering a
+    /// code from an SMS.
     #[rasn(tag(explicit(0)))]
-    None,
-    /// Some verification of the claim happened, but it was quick and
-    /// dirty.
-    #[rasn(tag(explicit(1)))]
     Low,
     /// We verified the claim using a decent amount of diligence. This could be
     /// like checking someone's state-issued ID.
-    #[rasn(tag(explicit(2)))]
+    #[rasn(tag(explicit(1)))]
     Medium,
     /// The claim was extensively investigated: birth certificates, background
     /// checks, photo verification.
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(explicit(2)))]
     High,
     /// We climbed mountains, pulled teeth, interrogated family members, and are
     /// absolutely positive that this claim is true in every way.
     ///
     /// This should really only be used between people who have known each other
     /// for years (like family).
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(explicit(3)))]
     Extreme,
 }
 
@@ -233,7 +231,7 @@ mod tests {
 
     #[test]
     fn stamp_strip() {
-        let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::None, None);
+        let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::Low, None);
         let stamp = Stamp::new(StampID::random(), entry, Timestamp::now());
         let stamp2 = stamp.strip_private();
         // we only really need strip_private() so we can serialized_human, but
