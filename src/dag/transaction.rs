@@ -688,7 +688,7 @@ impl Transaction {
     }
 
     /// Reencrypt this transaction.
-    pub(crate) fn reencrypt<R: RngCore + CryptoRng>(mut self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt<R: RngCore + CryptoRng>(mut self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let new_body = self.entry().body().clone().reencrypt(rng, old_master_key, new_master_key)?;
         self.entry_mut().set_body(new_body);
         Ok(self)
