@@ -1559,7 +1559,7 @@ mod tests {
 
         let mut sig_mod = sig.clone();
         match sig_mod.entry_mut().body_mut() {
-            TransactionBody::SignV1 { creator: _creator, body_hash: ref mut body_hash } => {
+            TransactionBody::SignV1 { creator: _creator, ref mut body_hash } => {
                 *body_hash = Hash::new_blake3(b"hold on...").unwrap();
             }
             _ => panic!("Unexpected transaction: {:?}", sig_mod),
