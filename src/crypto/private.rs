@@ -11,13 +11,19 @@
 //! it private and sealed away.
 
 use crate::{
+    crypto::base::{Hmac, HmacKey, Sealed, SecretKey},
     error::{Error, Result},
-    crypto::base::{SecretKey, Hmac, HmacKey, Sealed},
-    util::{Public, ser},
+    util::{ser, Public},
 };
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag, types::{Constructed, Class, fields::{Field, Fields}}};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{
+    types::{
+        fields::{Field, Fields},
+        Class, Constructed,
+    },
+    AsnType, Decode, Decoder, Encode, Encoder, Tag,
+};
+use serde_derive::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
 /// Holds private data, which can only be opened if you have the special key.
@@ -37,15 +43,19 @@ impl<T> AsnType for Private<T> {
 }
 
 impl<T> Constructed for Private<T> {
-    const FIELDS: Fields = Fields::from_static(&[
-        Field::new_required(Sealed::TAG, Sealed::TAG_TREE, "sealed"),
-    ]);
+    const FIELDS: Fields = Fields::from_static(&[Field::new_required(Sealed::TAG, Sealed::TAG_TREE, "sealed")]);
 }
 
 impl<T: AsnType> Encode for Private<T> {
-    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+    fn encode_with_tag_and_constraints<E: Encoder>(
+        &self,
+        encoder: &mut E,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<(), E::Error> {
         encoder.encode_sequence::<Self, _>(tag, |encoder| {
-            self.sealed.encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints)?;
+            self.sealed
+                .encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints)?;
             Ok(())
         })?;
         Ok(())
@@ -53,10 +63,17 @@ impl<T: AsnType> Encode for Private<T> {
 }
 
 impl<T: AsnType> Decode for Private<T> {
-    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+    fn decode_with_tag_and_constraints<D: Decoder>(
+        decoder: &mut D,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<Self, D::Error> {
         decoder.decode_sequence(tag, |decoder| {
             let sealed = Sealed::decode_with_tag_and_constraints(decoder, Tag::new(Class::Context, 0), constraints)?;
-            Ok(Self { _phantom: PhantomData, sealed })
+            Ok(Self {
+                _phantom: PhantomData,
+                sealed,
+            })
         })
     }
 }
@@ -84,16 +101,14 @@ impl<T: Encode + Decode> Private<T> {
 
     /// Open a Private container with a decrypting key.
     pub fn open(&self, seal_key: &SecretKey) -> Result<T> {
-        let open_bytes = seal_key.open(&self.sealed)
-            .map_err(|_| Error::CryptoOpenFailed)?;
+        let open_bytes = seal_key.open(&self.sealed).map_err(|_| Error::CryptoOpenFailed)?;
         let obj: T = ser::deserialize(&open_bytes[..])?;
         Ok(obj)
     }
 
     /// Re-encrypt the contained secret value with a new key.
     pub fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
-        let serialized = previous_seal_key.open(&self.sealed)
-            .map_err(|_| Error::CryptoOpenFailed)?;
+        let serialized = previous_seal_key.open(&self.sealed).map_err(|_| Error::CryptoOpenFailed)?;
         let sealed = new_seal_key.seal(rng, &serialized)?;
         Ok(Self {
             _phantom: PhantomData,
@@ -135,15 +150,19 @@ impl<T> AsnType for SealedTyped<T> {
 }
 
 impl<T> Constructed for SealedTyped<T> {
-    const FIELDS: Fields = Fields::from_static(&[
-        Field::new_required(Sealed::TAG, Sealed::TAG_TREE, "sealed"),
-    ]);
+    const FIELDS: Fields = Fields::from_static(&[Field::new_required(Sealed::TAG, Sealed::TAG_TREE, "sealed")]);
 }
 
 impl<T: AsnType> Encode for SealedTyped<T> {
-    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+    fn encode_with_tag_and_constraints<E: Encoder>(
+        &self,
+        encoder: &mut E,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<(), E::Error> {
         encoder.encode_sequence::<Self, _>(tag, |encoder| {
-            self.sealed.encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints)?;
+            self.sealed
+                .encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints)?;
             Ok(())
         })?;
         Ok(())
@@ -151,10 +170,17 @@ impl<T: AsnType> Encode for SealedTyped<T> {
 }
 
 impl<T: AsnType> Decode for SealedTyped<T> {
-    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+    fn decode_with_tag_and_constraints<D: Decoder>(
+        decoder: &mut D,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<Self, D::Error> {
         decoder.decode_sequence(tag, |decoder| {
             let sealed = Sealed::decode_with_tag_and_constraints(decoder, Tag::new(Class::Context, 0), constraints)?;
-            Ok(Self { _phantom: PhantomData, sealed })
+            Ok(Self {
+                _phantom: PhantomData,
+                sealed,
+            })
         })
     }
 }
@@ -185,10 +211,13 @@ impl<T: Encode + Decode> SealedTyped<T> {
         let serialized_inner = ser::serialize(&inner)?;
         // encrypt the data+hmac_key combo
         let sealed = seal_key.seal(rng, &serialized_inner)?;
-        Ok((hmac, Self {
-            _phantom: PhantomData,
-            sealed,
-        }))
+        Ok((
+            hmac,
+            Self {
+                _phantom: PhantomData,
+                sealed,
+            },
+        ))
     }
 
     /// Open and return the secret stored in this container, provided that the
@@ -199,8 +228,7 @@ impl<T: Encode + Decode> SealedTyped<T> {
     /// return an error.
     pub fn open_and_verify(&self, seal_key: &SecretKey, hmac: &Hmac) -> Result<T> {
         // decrypt the secret value
-        let open_bytes = seal_key.open(&self.sealed)
-            .map_err(|_| Error::CryptoOpenFailed)?;
+        let open_bytes = seal_key.open(&self.sealed).map_err(|_| Error::CryptoOpenFailed)?;
         // deserialize our secret to give us the stored data and the HMAC key.
         let obj: SealedTypedInner<T> = ser::deserialize(&open_bytes[..])?;
         let SealedTypedInner { value, hmac_key } = obj;
@@ -212,8 +240,7 @@ impl<T: Encode + Decode> SealedTyped<T> {
 
     /// Re-encrypt the contained secret value with a new key.
     pub fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
-        let serialized = previous_seal_key.open(&self.sealed)
-            .map_err(|_| Error::CryptoOpenFailed)?;
+        let serialized = previous_seal_key.open(&self.sealed).map_err(|_| Error::CryptoOpenFailed)?;
         let sealed = new_seal_key.seal(rng, &serialized)?;
         Ok(Self {
             _phantom: PhantomData,
@@ -274,7 +301,10 @@ impl<T: Encode + Decode> PrivateWithHmac<T> {
     /// Create a new `PrivateWithHmac` container around our data.
     pub fn seal<R: RngCore + CryptoRng>(rng: &mut R, seal_key: &SecretKey, val: T) -> Result<Self> {
         let (hmac, sealed_typed) = SealedTyped::seal(rng, seal_key, &val)?;
-        Ok(Self { hmac, data: Some(sealed_typed) })
+        Ok(Self {
+            hmac,
+            data: Some(sealed_typed),
+        })
     }
 
     /// Unlock the data held within, and verify it against our heroic HMAC.
@@ -286,15 +316,18 @@ impl<T: Encode + Decode> PrivateWithHmac<T> {
     }
 
     /// Reencrypt this PrivateWithHmac container with a new key.
-    pub(crate) fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
+    pub(crate) fn reencrypt<R: RngCore + CryptoRng>(
+        self,
+        rng: &mut R,
+        previous_seal_key: &SecretKey,
+        new_seal_key: &SecretKey,
+    ) -> Result<Self> {
         let res = match self {
-            Self {hmac, data: Some(prv)} => {
-                Self {
-                    hmac,
-                    data: Some(prv.reencrypt(rng, previous_seal_key, new_seal_key)?),
-                }
-            }
-            Self {hmac, data: None} => Self {hmac, data: None},
+            Self { hmac, data: Some(prv) } => Self {
+                hmac,
+                data: Some(prv.reencrypt(rng, previous_seal_key, new_seal_key)?),
+            },
+            Self { hmac, data: None } => Self { hmac, data: None },
         };
         Ok(res)
     }
@@ -343,7 +376,7 @@ pub enum MaybePrivate<T> {
     /// Make sure to check if this object has data via <MaybePrivate::has_data()>
     /// before trying to use it.
     #[rasn(tag(explicit(1)))]
-    Private(PrivateWithHmac<T>)
+    Private(PrivateWithHmac<T>),
 }
 
 impl<T: Encode + Decode + Clone> MaybePrivate<T> {
@@ -408,7 +441,12 @@ impl<T: Encode + Decode + Clone> MaybePrivate<T> {
     }
 
     /// Reencrypt this MaybePrivate container with a new key.
-    pub(crate) fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
+    pub(crate) fn reencrypt<R: RngCore + CryptoRng>(
+        self,
+        rng: &mut R,
+        previous_seal_key: &SecretKey,
+        new_seal_key: &SecretKey,
+    ) -> Result<Self> {
         let maybe = match self {
             Self::Public(x) => Self::Public(x),
             Self::Private(container) => Self::Private(container.reencrypt(rng, previous_seal_key, new_seal_key)?),
@@ -509,21 +547,18 @@ mod tests {
         let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let mut fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
-        while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap(); }
+        while seal_key == fake_key {
+            fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        }
         let fake_mac_key = HmacKey::new_blake3(&mut rng).unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
-            Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
-            None,
-        ));
+        let maybe3: MaybePrivate<String> =
+            MaybePrivate::Private(PrivateWithHmac::new(Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(), None));
         let maybe2_tampered = match maybe2.clone() {
             MaybePrivate::Private(PrivateWithHmac { data, .. }) => {
-                MaybePrivate::Private(PrivateWithHmac::new(
-                    Hmac::new(&fake_mac_key, String::from("loool").as_bytes()).unwrap(),
-                    data
-                ))
+                MaybePrivate::Private(PrivateWithHmac::new(Hmac::new(&fake_mac_key, String::from("loool").as_bytes()).unwrap(), data))
             }
             _ => panic!("bad maybeprivate given"),
         };
@@ -535,7 +570,7 @@ mod tests {
 
         assert_eq!(maybe2.open(&seal_key), Ok(String::from("omg")));
         assert_eq!(maybe2_tampered.open(&seal_key), Err(Error::CryptoHmacVerificationFailed));
-        // fake key cannot open 
+        // fake key cannot open
         assert_eq!(maybe2.open(&fake_key), Err(Error::CryptoOpenFailed));
         assert_eq!(maybe2.has_data(), true);
 
@@ -550,15 +585,15 @@ mod tests {
         let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let mut fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         // fake_key can never == seal_key. unfathomable, but possible.
-        while seal_key == fake_key { fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap(); }
+        while seal_key == fake_key {
+            fake_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        }
         let fake_mac_key = HmacKey::new_blake3(&mut rng).unwrap();
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
-            Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
-            None,
-        ));
+        let maybe3: MaybePrivate<String> =
+            MaybePrivate::Private(PrivateWithHmac::new(Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(), None));
 
         assert_eq!(maybe1.open_public().unwrap(), "hello");
         assert_eq!(maybe2.open_public(), None);
@@ -575,10 +610,8 @@ mod tests {
 
         let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = MaybePrivate::Private(PrivateWithHmac::new(
-            Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
-            None,
-        ));
+        let maybe3: MaybePrivate<String> =
+            MaybePrivate::Private(PrivateWithHmac::new(Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(), None));
 
         assert_eq!(maybe1.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("hello")));
         // fake key works too because who gives a crap if it's public. grind me
@@ -636,4 +669,3 @@ mod tests {
         assert!(!maybe2.has_data());
     }
 }
-

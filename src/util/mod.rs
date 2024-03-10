@@ -1,11 +1,9 @@
 //! Utilities. OBVIOUSLY.
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc, Local, SubsecRound, TimeZone};
-use crate::{
-    error::Result,
-};
-use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag};
-use serde_derive::{Serialize, Deserialize};
+use crate::error::Result;
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, SubsecRound, TimeZone, Utc};
+use rasn::{AsnType, Decode, Decoder, Encode, Encoder, Tag};
+use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 use std::str::FromStr;
 
@@ -15,17 +13,7 @@ pub(crate) mod sign;
 #[cfg(test)]
 pub(crate) mod test;
 
-pub use ser::{
-    base64_encode,
-    base64_decode,
-    DeText,
-    HashMapAsn1,
-    SerdeBinary,
-    SerText,
-    Binary,
-    BinarySecret,
-    BinaryVec,
-};
+pub use ser::{base64_decode, base64_encode, Binary, BinarySecret, BinaryVec, DeText, HashMapAsn1, SerText, SerdeBinary};
 
 #[cfg(feature = "yaml-export")]
 pub use ser::{text_export, text_import};
@@ -132,7 +120,12 @@ impl AsnType for Timestamp {
 }
 
 impl Encode for Timestamp {
-    fn encode_with_tag_and_constraints<E: rasn::Encoder>(&self, encoder: &mut E, tag: rasn::Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+    fn encode_with_tag_and_constraints<E: rasn::Encoder>(
+        &self,
+        encoder: &mut E,
+        tag: rasn::Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<(), E::Error> {
         let ts = self.timestamp_millis();
         ts.encode_with_tag_and_constraints(encoder, tag, constraints)?;
         Ok(())
@@ -140,7 +133,11 @@ impl Encode for Timestamp {
 }
 
 impl Decode for Timestamp {
-    fn decode_with_tag_and_constraints<D: rasn::Decoder>(decoder: &mut D, tag: rasn::Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+    fn decode_with_tag_and_constraints<D: rasn::Decoder>(
+        decoder: &mut D,
+        tag: rasn::Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<Self, D::Error> {
         let ts = <i64>::decode_with_tag_and_constraints(decoder, tag, constraints)?;
         let dt = match chrono::Utc.timestamp_millis_opt(ts) {
             chrono::offset::LocalResult::Single(dt) => dt,
@@ -152,7 +149,9 @@ impl Decode for Timestamp {
 
 impl Deref for Timestamp {
     type Target = DateTime<Utc>;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl From<NaiveDateTime> for Timestamp {
@@ -197,7 +196,12 @@ impl AsnType for Date {
 }
 
 impl Encode for Date {
-    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+    fn encode_with_tag_and_constraints<E: Encoder>(
+        &self,
+        encoder: &mut E,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<(), E::Error> {
         let ts: Timestamp = self.clone().into();
         ts.encode_with_tag_and_constraints(encoder, tag, constraints)?;
         Ok(())
@@ -205,7 +209,11 @@ impl Encode for Date {
 }
 
 impl Decode for Date {
-    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+    fn decode_with_tag_and_constraints<D: Decoder>(
+        decoder: &mut D,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<Self, D::Error> {
         let ts = Timestamp::decode_with_tag_and_constraints(decoder, tag, constraints)?;
         Ok(ts.into())
     }
@@ -213,7 +221,9 @@ impl Decode for Date {
 
 impl Deref for Date {
     type Target = NaiveDate;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl From<NaiveDate> for Date {
@@ -252,7 +262,9 @@ impl Url {
 
 impl Deref for Url {
     type Target = url::Url;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl From<url::Url> for Url {
@@ -261,7 +273,7 @@ impl From<url::Url> for Url {
     }
 }
 
-#[allow(deprecated)]    // omg stfu
+#[allow(deprecated)] // omg stfu
 impl From<Url> for String {
     fn from(url: Url) -> Self {
         let Url(inner) = url;
@@ -274,7 +286,12 @@ impl AsnType for Url {
 }
 
 impl Encode for Url {
-    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+    fn encode_with_tag_and_constraints<E: Encoder>(
+        &self,
+        encoder: &mut E,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<(), E::Error> {
         let url_str: &str = self.deref().as_ref();
         url_str.encode_with_tag_and_constraints(encoder, tag, constraints)?;
         Ok(())
@@ -282,10 +299,13 @@ impl Encode for Url {
 }
 
 impl Decode for Url {
-    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+    fn decode_with_tag_and_constraints<D: Decoder>(
+        decoder: &mut D,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<Self, D::Error> {
         let url_str: &str = &decoder.decode_utf8_string(tag, constraints)?;
-        let url = url::Url::parse(url_str)
-            .map_err(|_| rasn::de::Error::custom("could not deserialize Url", rasn::Codec::Der))?;
+        let url = url::Url::parse(url_str).map_err(|_| rasn::de::Error::custom("could not deserialize Url", rasn::Codec::Der))?;
         Ok(Self(url))
     }
 }
@@ -299,11 +319,7 @@ impl std::fmt::Display for Url {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        crypto::base::{Hash},
-        dag::TransactionID,
-        util::ser,
-    };
+    use crate::{crypto::base::Hash, dag::TransactionID, util::ser};
     use std::convert::TryFrom;
     use std::ops::Deref;
 
@@ -365,7 +381,6 @@ mod tests {
         let ser4 = ser::serialize(&date4).unwrap();
         let date4_2: Timestamp = ser::deserialize(ser4.as_slice()).unwrap();
         assert_eq!(date4_2, date4_comp);
-
     }
 
     #[test]
@@ -386,4 +401,3 @@ mod tests {
         assert_eq!(date3, date3_2);
     }
 }
-

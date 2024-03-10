@@ -11,23 +11,11 @@
 mod transaction;
 mod transactions;
 
-pub use crate::{
-    dag::{
-        transaction::{
-            TransactionBody,
-            TransactionID,
-            TransactionEntry,
-            Transaction,
-        },
-        transactions::{
-            Transactions,
-        },
-    },
+pub use crate::dag::{
+    transaction::{Transaction, TransactionBody, TransactionEntry, TransactionID},
+    transactions::Transactions,
 };
-use crate::{
-    error::Result,
-    util::Timestamp,
-};
+use crate::{error::Result, util::Timestamp};
 use getset::{Getters, MutGetters};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -154,21 +142,21 @@ impl<'a> Dag<'a> {
         // sort our head transactions by create time ASC, transaction id ASC, then store the sorted
         // transaction IDs into `dag.head`. this makes walking the DAG deterministic.
         head_transactions.sort_unstable();
-        *dag.head_mut() = head_transactions.into_iter()
-            .map(|(_, tid)| tid)
-            .collect::<Vec<_>>();
+        *dag.head_mut() = head_transactions.into_iter().map(|(_, tid)| tid).collect::<Vec<_>>();
 
         // walk our dag and look for tail nodes and problems (missing nodes, circular links, etc)
         let mut tail_nodes = Vec::new();
         // NOTE: we unwrap() here because we know for a fact that this walk() always returns Ok().
         // if this changes in the future, *please* update the logic accordingly, possibly wrapping
         // `from_transactions()` in a Result...
-        let (visited, missing) = dag.walk(|node, _ancestry, _ancestry_idx| {
-            if node.next().is_empty() {
-                tail_nodes.push(node.transaction().id().clone());
-            }
-            Ok(())
-        }).unwrap();
+        let (visited, missing) = dag
+            .walk(|node, _ancestry, _ancestry_idx| {
+                if node.next().is_empty() {
+                    tail_nodes.push(node.transaction().id().clone());
+                }
+                Ok(())
+            })
+            .unwrap();
         for entry in missing {
             missing_transactions.insert(entry);
         }
@@ -211,7 +199,8 @@ impl<'a> Dag<'a> {
     ///
     /// And so these are the things we return. In that order. As a tuple.
     pub fn walk<F>(&self, mut opfn: F) -> Result<(Vec<TransactionID>, HashSet<TransactionID>)>
-        where F: FnMut(&DagNode, &[u32], &HashMap<TransactionID, Vec<u32>>) -> Result<()>,
+    where
+        F: FnMut(&DagNode, &[u32], &HashMap<TransactionID, Vec<u32>>) -> Result<()>,
     {
         /// stored with the `pending_transactions` as a way to instruct nodes whether they should
         /// use the given ancestry as-is or whether they should grab a new branch and append it to
@@ -228,11 +217,17 @@ impl<'a> Dag<'a> {
 
         impl AncestryGrabber {
             fn new(ancestry: Vec<u32>, grab_next_branch: bool) -> Self {
-                Self { ancestry, grab_next_branch }
+                Self {
+                    ancestry,
+                    grab_next_branch,
+                }
             }
 
             fn consume(self) -> (Vec<u32>, bool) {
-                let Self { ancestry, grab_next_branch } = self;
+                let Self {
+                    ancestry,
+                    grab_next_branch,
+                } = self;
                 (ancestry, grab_next_branch)
             }
         }
@@ -276,12 +271,12 @@ impl<'a> Dag<'a> {
         macro_rules! with_trans {
             ($id:expr, $node:ident, $run:block) => {{
                 match self.index().get($id) {
-                    Some($node) => { $run }
+                    Some($node) => $run,
                     None => {
                         missing_transactions.insert($id.clone());
                     }
                 }
-            }}
+            }};
         }
 
         // loop over our head nodes and push them into the pending list. they are going to kick off
@@ -405,12 +400,10 @@ impl<'a> Dag<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        util::{
-            Timestamp,
-            ser::{BinaryVec, HashMapAsn1},
-            test::make_dag_chain,
-        }
+    use crate::util::{
+        ser::{BinaryVec, HashMapAsn1},
+        test::make_dag_chain,
+        Timestamp,
     };
     use std::str::FromStr;
 
@@ -431,21 +424,17 @@ mod tests {
            []
         };
         let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
-        assert_eq!(
-            dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
-            vec!["A", "B"],
-        );
-        assert_eq!(
-            dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
-            vec!["G"],
-        );
+        assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
+        assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["G"],);
         assert_eq!(
             dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["A", "B", "C", "D", "E", "F", "G"],
         );
         assert_eq!(dag.missing().len(), 0);
 
-        let dag_nodes = dag.index().iter()
+        let dag_nodes = dag
+            .index()
+            .iter()
             .map(|(tid, node)| {
                 (
                     *tid_to_name.get(tid).unwrap(),
@@ -457,37 +446,20 @@ mod tests {
             })
             .collect::<HashMap<_, _>>();
         assert_eq!(dag_nodes.len(), 7);
-        assert_eq!(
-            dag_nodes.get("A").unwrap(),
-            &(vec![], vec!["C"])
-        );
-        assert_eq!(
-            dag_nodes.get("B").unwrap(),
-            &(vec![], vec!["C"])
-        );
-        assert_eq!(
-            dag_nodes.get("C").unwrap(),
-            &(vec!["A", "B"], vec!["D", "E"])
-        );
-        assert_eq!(
-            dag_nodes.get("D").unwrap(),
-            &(vec!["C"], vec!["G"])
-        );
-        assert_eq!(
-            dag_nodes.get("E").unwrap(),
-            &(vec!["C"], vec!["F"])
-        );
-        assert_eq!(
-            dag_nodes.get("F").unwrap(),
-            &(vec!["E"], vec!["G"])
-        );
-        assert_eq!(
-            dag_nodes.get("G").unwrap(),
-            &(vec!["D", "F"], vec![])
-        );
+        assert_eq!(dag_nodes.get("A").unwrap(), &(vec![], vec!["C"]));
+        assert_eq!(dag_nodes.get("B").unwrap(), &(vec![], vec!["C"]));
+        assert_eq!(dag_nodes.get("C").unwrap(), &(vec!["A", "B"], vec!["D", "E"]));
+        assert_eq!(dag_nodes.get("D").unwrap(), &(vec!["C"], vec!["G"]));
+        assert_eq!(dag_nodes.get("E").unwrap(), &(vec!["C"], vec!["F"]));
+        assert_eq!(dag_nodes.get("F").unwrap(), &(vec!["E"], vec!["G"]));
+        assert_eq!(dag_nodes.get("G").unwrap(), &(vec!["D", "F"], vec![]));
 
         let mut visited = Vec::new();
-        dag.walk(|node, ancestry, _| { visited.push((*tid_to_name.get(node.transaction().id()).unwrap(), Vec::from(ancestry))); Ok(()) }).unwrap();
+        dag.walk(|node, ancestry, _| {
+            visited.push((*tid_to_name.get(node.transaction().id()).unwrap(), Vec::from(ancestry)));
+            Ok(())
+        })
+        .unwrap();
         assert_eq!(
             visited,
             vec![
@@ -523,21 +495,17 @@ mod tests {
         };
         transaction_list.sort_by_key(|x| x.id().clone());
         let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
-        assert_eq!(
-            dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
-            vec!["A", "B"],
-        );
-        assert_eq!(
-            dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
-            vec!["G"],
-        );
+        assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
+        assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["G"],);
         assert_eq!(
             dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["A", "B", "C", "D", "E", "F", "G"],
         );
         assert_eq!(dag.missing().len(), 0);
 
-        let dag_nodes = dag.index().iter()
+        let dag_nodes = dag
+            .index()
+            .iter()
             .map(|(tid, node)| {
                 (
                     *tid_to_name.get(tid).unwrap(),
@@ -549,37 +517,20 @@ mod tests {
             })
             .collect::<HashMap<_, _>>();
         assert_eq!(dag_nodes.len(), 7);
-        assert_eq!(
-            dag_nodes.get("A").unwrap(),
-            &(vec![], vec!["C"])
-        );
-        assert_eq!(
-            dag_nodes.get("B").unwrap(),
-            &(vec![], vec!["C"])
-        );
-        assert_eq!(
-            dag_nodes.get("C").unwrap(),
-            &(vec!["A", "B"], vec!["D", "E"])
-        );
-        assert_eq!(
-            dag_nodes.get("D").unwrap(),
-            &(vec!["C"], vec!["G"])
-        );
-        assert_eq!(
-            dag_nodes.get("E").unwrap(),
-            &(vec!["C"], vec!["F"])
-        );
-        assert_eq!(
-            dag_nodes.get("F").unwrap(),
-            &(vec!["E"], vec!["G"])
-        );
-        assert_eq!(
-            dag_nodes.get("G").unwrap(),
-            &(vec!["D", "F"], vec![])
-        );
+        assert_eq!(dag_nodes.get("A").unwrap(), &(vec![], vec!["C"]));
+        assert_eq!(dag_nodes.get("B").unwrap(), &(vec![], vec!["C"]));
+        assert_eq!(dag_nodes.get("C").unwrap(), &(vec!["A", "B"], vec!["D", "E"]));
+        assert_eq!(dag_nodes.get("D").unwrap(), &(vec!["C"], vec!["G"]));
+        assert_eq!(dag_nodes.get("E").unwrap(), &(vec!["C"], vec!["F"]));
+        assert_eq!(dag_nodes.get("F").unwrap(), &(vec!["E"], vec!["G"]));
+        assert_eq!(dag_nodes.get("G").unwrap(), &(vec!["D", "F"], vec![]));
 
         let mut visited = Vec::new();
-        dag.walk(|node, ancestry, _| { visited.push((*tid_to_name.get(node.transaction().id()).unwrap(), Vec::from(ancestry))); Ok(()) }).unwrap();
+        dag.walk(|node, ancestry, _| {
+            visited.push((*tid_to_name.get(node.transaction().id()).unwrap(), Vec::from(ancestry)));
+            Ok(())
+        })
+        .unwrap();
         assert_eq!(
             visited,
             vec![
@@ -613,29 +564,17 @@ mod tests {
         };
         transaction_list.sort_by_key(|x| x.id().clone());
         let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
-        assert_eq!(
-            dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
-            vec!["A", "B"],
-        );
-        assert_eq!(
-            dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
-            vec!["A", "B"],
-        );
-        assert_eq!(
-            dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
-            vec!["A", "B"],
-        );
-        let mut unvisited = dag.unvisited().iter()
-            .map(|x| *tid_to_name.get(x).unwrap())
-            .collect::<Vec<_>>();
+        assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
+        assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
+        assert_eq!(dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
+        let mut unvisited = dag.unvisited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>();
         unvisited.sort_unstable();
-        assert_eq!(
-            unvisited,
-            vec!["D", "E", "F", "G"],
-        );
+        assert_eq!(unvisited, vec!["D", "E", "F", "G"],);
         assert_eq!(dag.missing().len(), 1);
 
-        let dag_nodes = dag.index().iter()
+        let dag_nodes = dag
+            .index()
+            .iter()
             .map(|(tid, node)| {
                 (
                     *tid_to_name.get(tid).unwrap(),
@@ -647,41 +586,21 @@ mod tests {
             })
             .collect::<HashMap<_, _>>();
         assert_eq!(dag_nodes.len(), 6);
-        assert_eq!(
-            dag_nodes.get("A").unwrap(),
-            &(vec![], vec![])
-        );
-        assert_eq!(
-            dag_nodes.get("B").unwrap(),
-            &(vec![], vec![])
-        );
+        assert_eq!(dag_nodes.get("A").unwrap(), &(vec![], vec![]));
+        assert_eq!(dag_nodes.get("B").unwrap(), &(vec![], vec![]));
         assert_eq!(dag_nodes.get("C"), None);
-        assert_eq!(
-            dag_nodes.get("D").unwrap(),
-            &(vec!["C"], vec!["G"])
-        );
-        assert_eq!(
-            dag_nodes.get("E").unwrap(),
-            &(vec!["C"], vec!["F"])
-        );
-        assert_eq!(
-            dag_nodes.get("F").unwrap(),
-            &(vec!["E"], vec!["G"])
-        );
-        assert_eq!(
-            dag_nodes.get("G").unwrap(),
-            &(vec!["D", "F"], vec![])
-        );
+        assert_eq!(dag_nodes.get("D").unwrap(), &(vec!["C"], vec!["G"]));
+        assert_eq!(dag_nodes.get("E").unwrap(), &(vec!["C"], vec!["F"]));
+        assert_eq!(dag_nodes.get("F").unwrap(), &(vec!["E"], vec!["G"]));
+        assert_eq!(dag_nodes.get("G").unwrap(), &(vec!["D", "F"], vec![]));
 
         let mut visited = Vec::new();
-        dag.walk(|node, ancestry, _| { visited.push((*tid_to_name.get(node.transaction().id()).unwrap(), Vec::from(ancestry))); Ok(()) }).unwrap();
-        assert_eq!(
-            visited,
-            vec![
-                ("A", vec![0]),
-                ("B", vec![1]),
-            ],
-        );
+        dag.walk(|node, ancestry, _| {
+            visited.push((*tid_to_name.get(node.transaction().id()).unwrap(), Vec::from(ancestry)));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(visited, vec![("A", vec![0]), ("B", vec![1]),],);
     }
 
     #[test]
@@ -719,7 +638,8 @@ mod tests {
         dag.walk(|node, _ancestry, _anc_idx| {
             visited.push(node.transaction().id().clone());
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(
             visited.iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["E", "A", "F", "G", "B", "C", "D", "H"],
@@ -752,14 +672,8 @@ mod tests {
            []
         };
         let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
-        assert_eq!(
-            dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
-            vec!["A"],
-        );
-        assert_eq!(
-            dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
-            vec!["O", "Q"],
-        );
+        assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A"],);
+        assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["O", "Q"],);
         assert_eq!(
             dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["A", "B", "E", "J", "C", "F", "G", "D", "H", "I", "K", "L", "M", "O", "N", "P", "Q"],
@@ -771,17 +685,19 @@ mod tests {
         assert_eq!(dag.missing.len(), 0);
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, idx| {
-            visited.push(
-                (
-                    node.transaction().id().clone(),
-                    Vec::from(ancestry),
-                    idx.get(node.transaction().id()).map(|x| x.as_slice()) == Some(ancestry)
-                )
-            );
+            visited.push((
+                node.transaction().id().clone(),
+                Vec::from(ancestry),
+                idx.get(node.transaction().id()).map(|x| x.as_slice()) == Some(ancestry),
+            ));
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(
-            visited.into_iter().map(|(tid, ancestry, eq)| (*tid_to_name.get(&tid).unwrap(), ancestry, eq)).collect::<Vec<_>>(),
+            visited
+                .into_iter()
+                .map(|(tid, ancestry, eq)| (*tid_to_name.get(&tid).unwrap(), ancestry, eq))
+                .collect::<Vec<_>>(),
             vec![
                 ("A", vec![0], true),
                 ("B", vec![0, 1], true),
@@ -804,4 +720,3 @@ mod tests {
         )
     }
 }
-

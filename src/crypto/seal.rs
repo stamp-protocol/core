@@ -2,7 +2,7 @@
 
 use crate::{
     crypto::base::{Sealed, SecretKey},
-    error::{Result},
+    error::Result,
 };
 use rand::{CryptoRng, RngCore};
 
@@ -25,10 +25,12 @@ mod tests {
     fn seal_unseal() {
         let mut rng = crate::util::test::rng();
         let plain = b"omg lol wtf";
-        let key  = SecretKey::new_xchacha20poly1305_from_bytes([1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        let key = SecretKey::new_xchacha20poly1305_from_bytes([
+            1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8,
+        ])
+        .unwrap();
         let sealed = seal(&mut rng, &key, plain.as_slice()).unwrap();
         let plain2 = open(&key, &sealed).unwrap();
         assert_eq!(plain2, plain);
     }
 }
-

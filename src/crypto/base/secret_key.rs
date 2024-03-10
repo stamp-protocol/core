@@ -1,11 +1,11 @@
-use chacha20poly1305::aead::{Aead, KeyInit};
 use crate::{
     error::{Error, Result},
     util::ser::{Binary, BinarySecret, BinaryVec, SerdeBinary},
 };
+use chacha20poly1305::aead::{Aead, KeyInit};
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Encode, Decode};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// A symmetric encryption key nonce
@@ -25,7 +25,9 @@ pub enum SecretKey {
 }
 
 /// A self-describing, encrypted object that can be opened with the right key.
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Sealed {
     /// Our heroic nonce
@@ -81,7 +83,9 @@ impl SecretKey {
                 };
                 let secret: &'a [u8; 32] = key.expose_secret();
                 let cipher = chacha20poly1305::XChaCha20Poly1305::new(secret.into());
-                let enc = cipher.encrypt(chacha20poly1305::XNonce::from_slice(nonce_bin.as_slice()), data).map_err(|_| Error::CryptoSealFailed)?;
+                let enc = cipher
+                    .encrypt(chacha20poly1305::XNonce::from_slice(nonce_bin.as_slice()), data)
+                    .map_err(|_| Error::CryptoSealFailed)?;
                 Ok(Sealed::new(nonce, enc))
             }
         }
@@ -92,7 +96,9 @@ impl SecretKey {
         match (self, sealed.nonce()) {
             (SecretKey::XChaCha20Poly1305(ref key), SecretKeyNonce::XChaCha20Poly1305(ref nonce)) => {
                 let cipher = chacha20poly1305::XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(key.expose_secret().as_slice()));
-                let dec = cipher.decrypt(chacha20poly1305::XNonce::from_slice(nonce.as_slice()), sealed.ciphertext().deref().as_slice()).map_err(|_| Error::CryptoOpenFailed)?;
+                let dec = cipher
+                    .decrypt(chacha20poly1305::XNonce::from_slice(nonce.as_slice()), sealed.ciphertext().deref().as_slice())
+                    .map_err(|_| Error::CryptoOpenFailed)?;
                 Ok(dec)
             }
         }
@@ -136,12 +142,20 @@ pub(crate) mod tests {
     #[test]
     fn secretkey_xchacha20poly1305_from_slice() {
         let sealed = Sealed::new(
-            SecretKeyNonce::XChaCha20Poly1305(Binary::new([33, 86, 38, 93, 180, 121, 32, 51, 21, 36, 74, 137, 32, 165, 2, 99, 111, 179, 32, 242, 56, 9, 254, 1])),
-            vec![8, 175, 83, 132, 142, 229, 0, 29, 187, 23, 223, 152, 164, 120, 206, 13, 240, 105, 184, 47, 228, 239, 34, 85, 79, 242, 230, 150, 186, 203, 156, 26],
+            SecretKeyNonce::XChaCha20Poly1305(Binary::new([
+                33, 86, 38, 93, 180, 121, 32, 51, 21, 36, 74, 137, 32, 165, 2, 99, 111, 179, 32, 242, 56, 9, 254, 1,
+            ])),
+            vec![
+                8, 175, 83, 132, 142, 229, 0, 29, 187, 23, 223, 152, 164, 120, 206, 13, 240, 105, 184, 47, 228, 239, 34, 85, 79, 242, 230,
+                150, 186, 203, 156, 26,
+            ],
         );
-        let key = SecretKey::new_xchacha20poly1305_from_bytes([120, 111, 109, 233, 7, 27, 205, 94, 55, 95, 248, 113, 138, 246, 244, 109, 147, 168, 117, 163, 48, 193, 100, 103, 43, 205, 212, 197, 110, 111, 105, 1]).unwrap();
+        let key = SecretKey::new_xchacha20poly1305_from_bytes([
+            120, 111, 109, 233, 7, 27, 205, 94, 55, 95, 248, 113, 138, 246, 244, 109, 147, 168, 117, 163, 48, 193, 100, 103, 43, 205, 212,
+            197, 110, 111, 105, 1,
+        ])
+        .unwrap();
         let dec = key.open(&sealed).unwrap();
         assert_eq!(dec.as_slice(), b"HI HUNGRY IM DAD");
     }
 }
-

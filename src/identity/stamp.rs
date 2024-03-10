@@ -5,26 +5,25 @@
 //! a particular identity is "real" or trusted.
 
 use crate::{
-    error::Result,
-    identity::{
-        claim::{Claim, ClaimID},
-        identity::IdentityID,
-        keychain::{Subkey},
-    },
     crypto::{
         base::SecretKey,
         message::{self, Message},
     },
+    error::Result,
+    identity::{
+        claim::{Claim, ClaimID},
+        identity::IdentityID,
+        keychain::Subkey,
+    },
     util::{
-        Public,
-        Timestamp,
         ser::{self, SerText},
+        Public, Timestamp,
     },
 };
 use getset;
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Encode, Decode};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
 object_id! {
@@ -84,7 +83,9 @@ pub enum Confidence {
 /// An inner struct type created when making a stamp. This is what is wrapped in a
 /// [transaction][crate::dag::Transaction] for signing (and possibly
 /// publishing).
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct StampEntry {
     /// The ID of the identity that is stamping.
@@ -109,7 +110,13 @@ pub struct StampEntry {
 
 impl StampEntry {
     /// Create a new stamp entry.
-    pub fn new<T: Into<Timestamp>>(stamper: IdentityID, stampee: IdentityID, claim_id: ClaimID, confidence: Confidence, expires: Option<T>) -> Self {
+    pub fn new<T: Into<Timestamp>>(
+        stamper: IdentityID,
+        stampee: IdentityID,
+        claim_id: ClaimID,
+        confidence: Confidence,
+        expires: Option<T>,
+    ) -> Self {
         Self {
             stamper,
             stampee,
@@ -126,7 +133,9 @@ impl StampEntry {
 ///
 /// This is created by the stamper, and it is up to the claim owner to save the
 /// stamp to their identity.
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Stamp {
     /// The [transaction id][crate::dag::TransactionID] of the transaction that created
@@ -146,7 +155,12 @@ pub struct Stamp {
 
 impl Stamp {
     pub(crate) fn new(id: StampID, entry: StampEntry, created: Timestamp) -> Self {
-        Self { id, entry, created, revocation: None }
+        Self {
+            id,
+            entry,
+            created,
+            revocation: None,
+        }
     }
 }
 
@@ -188,7 +202,15 @@ impl StampRequest {
     ///
     /// This re-encryptes the claim with a new key, then creates a signed
     /// message to the recipient (stamper) using one of their keys.
-    pub fn new_message<R: RngCore + CryptoRng>(rng: &mut R, sender_master_key: &SecretKey, sender_identity_id: &IdentityID, sender_key: &Subkey, recipient_key: &Subkey, claim: &Claim, one_time_key: SecretKey) -> Result<Message> {
+    pub fn new_message<R: RngCore + CryptoRng>(
+        rng: &mut R,
+        sender_master_key: &SecretKey,
+        sender_identity_id: &IdentityID,
+        sender_key: &Subkey,
+        recipient_key: &Subkey,
+        claim: &Claim,
+        one_time_key: SecretKey,
+    ) -> Result<Message> {
         let claim_reencrypted_spec = claim.spec().clone().reencrypt(rng, sender_master_key, &one_time_key)?;
         let mut claim_reencrypted = claim.clone();
         claim_reencrypted.set_spec(claim_reencrypted_spec);
@@ -219,18 +241,18 @@ impl StampRequest {
 mod tests {
     use super::*;
     use crate::{
-        error::Error,
-        identity::{
-            claim::{Relationship, RelationshipType, ClaimSpec, Claim},
-            identity::IdentityID,
-            keychain::{ExtendKeypair, AdminKey, AdminKeypair, Key, Keychain},
-            stamp::Confidence,
-        },
         crypto::{
-            base::{SecretKey, SignKeypair, CryptoKeypair},
+            base::{CryptoKeypair, SecretKey, SignKeypair},
             private::MaybePrivate,
         },
-        util::{Timestamp, Date, Url, ser::BinaryVec},
+        error::Error,
+        identity::{
+            claim::{Claim, ClaimSpec, Relationship, RelationshipType},
+            identity::IdentityID,
+            keychain::{AdminKey, AdminKeypair, ExtendKeypair, Key, Keychain},
+            stamp::Confidence,
+        },
+        util::{ser::BinaryVec, Date, Timestamp, Url},
     };
     use std::str::FromStr;
 
@@ -259,11 +281,11 @@ mod tests {
                 let spec_private = $claimmaker(maybe_private, val.clone());
                 let spec_public = $claimmaker(maybe_public, val.clone());
                 (master_key, root_keypair, spec_private, spec_public)
-            }}
+            }};
         }
 
         macro_rules! req_open {
-            (raw, $claimmaker:expr, $val:expr) =>  {{
+            (raw, $claimmaker:expr, $val:expr) => {{
                 let mut rng = crate::util::test::rng();
                 let val = $val;
                 let (sender_master_key, _root_keypair, spec_private, spec_public) = make_specs!(&mut rng, $claimmaker, val.clone());
@@ -272,7 +294,8 @@ mod tests {
                 let admin = AdminKeypair::new_ed25519(&mut rng, &sender_master_key).unwrap();
                 let admin_key = AdminKey::new(admin, "MAIN LOL", None);
                 let sender_keychain = Keychain::new(vec![admin_key])
-                    .add_subkey(subkey_key, "default:crypto", None).unwrap();
+                    .add_subkey(subkey_key, "default:crypto", None)
+                    .unwrap();
                 let container_private = Claim::new(ClaimID::random(), spec_private, None);
                 let container_public = Claim::new(ClaimID::random(), spec_public, None);
                 let sender_subkey = sender_keychain.subkey_by_name("default:crypto").unwrap();
@@ -282,13 +305,32 @@ mod tests {
                 let admin = AdminKeypair::new_ed25519(&mut rng, &sender_master_key).unwrap();
                 let admin_key = AdminKey::new(admin, "ALPHA MALE BIG HANDS", None);
                 let recipient_keychain = Keychain::new(vec![admin_key])
-                    .add_subkey(subkey_key, "default:crypto", None).unwrap();
+                    .add_subkey(subkey_key, "default:crypto", None)
+                    .unwrap();
                 let recipient_subkey = recipient_keychain.subkey_by_name("default:crypto").unwrap();
 
                 let sk_tmp1 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
                 let sk_tmp2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-                let req_msg_priv = StampRequest::new_message(&mut rng, &sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, &container_private, sk_tmp1).unwrap();
-                let req_msg_pub = StampRequest::new_message(&mut rng, &sender_master_key, &sender_identity_id, sender_subkey, recipient_subkey, &container_public, sk_tmp2).unwrap();
+                let req_msg_priv = StampRequest::new_message(
+                    &mut rng,
+                    &sender_master_key,
+                    &sender_identity_id,
+                    sender_subkey,
+                    recipient_subkey,
+                    &container_private,
+                    sk_tmp1,
+                )
+                .unwrap();
+                let req_msg_pub = StampRequest::new_message(
+                    &mut rng,
+                    &sender_master_key,
+                    &sender_identity_id,
+                    sender_subkey,
+                    recipient_subkey,
+                    &container_public,
+                    sk_tmp2,
+                )
+                .unwrap();
 
                 let res1 = StampRequest::open(&sender_master_key, recipient_subkey, sender_subkey, &req_msg_priv);
                 let res2 = StampRequest::open(&sender_master_key, recipient_subkey, sender_subkey, &req_msg_pub);
@@ -304,12 +346,18 @@ mod tests {
 
             ($claimty:ident, $val:expr) => {
                 let val = $val;
-                let (opened_priv, opened_pub) = req_open!{
+                let (opened_priv, opened_pub) = req_open! {
                     raw,
                     |maybe, _| ClaimSpec::$claimty(maybe),
                     val.clone()
                 };
-                let getmaybe = |spec: ClaimSpec| if let ClaimSpec::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) };
+                let getmaybe = |spec: ClaimSpec| {
+                    if let ClaimSpec::$claimty(maybe) = spec {
+                        maybe
+                    } else {
+                        panic!("bad claim type: {}", stringify!($claimtype))
+                    }
+                };
                 match (getmaybe(opened_priv.spec().clone()), getmaybe(opened_pub.spec().clone())) {
                     (MaybePrivate::Public(val1), MaybePrivate::Public(val2)) => {
                         assert_eq!(val1, val);
@@ -321,22 +369,31 @@ mod tests {
             };
         }
 
-        req_open!{ Identity, IdentityID::random() }
-        req_open!{ Name, String::from("Hippie Steve") }
-        req_open!{ Birthday, Date::from_str("1957-12-03").unwrap() }
-        req_open!{ Email, String::from("decolonizing.decolonialism@decolonize.dclnze") }
-        req_open!{ Photo, BinaryVec::from(vec![5,6,7]) }
-        req_open!{ Pgp, String::from("8989898989") }
-        req_open!{ Domain, String::from("get.a.job") }
-        req_open!{ Url, Url::parse("http://mrwgifs.com/wp-content/uploads/2014/05/Beavis-Typing-Random-Characters-On-The-Computer-On-Mike-Judges-Beavis-and-Butt-Head.gif").unwrap() }
-        req_open!{ Address, String::from("123 DOINK ln., Bork, KY 44666") }
-        req_open!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        req_open!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
+        req_open! { Identity, IdentityID::random() }
+        req_open! { Name, String::from("Hippie Steve") }
+        req_open! { Birthday, Date::from_str("1957-12-03").unwrap() }
+        req_open! { Email, String::from("decolonizing.decolonialism@decolonize.dclnze") }
+        req_open! { Photo, BinaryVec::from(vec![5,6,7]) }
+        req_open! { Pgp, String::from("8989898989") }
+        req_open! { Domain, String::from("get.a.job") }
+        req_open! { Url, Url::parse("http://mrwgifs.com/wp-content/uploads/2014/05/Beavis-Typing-Random-Characters-On-The-Computer-On-Mike-Judges-Beavis-and-Butt-Head.gif").unwrap() }
+        req_open! { Address, String::from("123 DOINK ln., Bork, KY 44666") }
+        req_open! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
+        req_open! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
 
         let val = BinaryVec::from(vec![89, 89, 89]);
-        let (opened_priv, opened_pub) = req_open!{ raw, |maybe, _| ClaimSpec::Extension { key: Vec::from("a-new-kind-of-claimspec".as_bytes()).into(), value: maybe }, val.clone() };
+        let (opened_priv, opened_pub) = req_open! { raw, |maybe, _| ClaimSpec::Extension { key: Vec::from("a-new-kind-of-claimspec".as_bytes()).into(), value: maybe }, val.clone() };
         match (opened_priv.spec().clone(), opened_pub.spec().clone()) {
-            (ClaimSpec::Extension { key: key1, value: MaybePrivate::Public(val1) }, ClaimSpec::Extension{ key: key2, value: MaybePrivate::Public(val2) }) => {
+            (
+                ClaimSpec::Extension {
+                    key: key1,
+                    value: MaybePrivate::Public(val1),
+                },
+                ClaimSpec::Extension {
+                    key: key2,
+                    value: MaybePrivate::Public(val2),
+                },
+            ) => {
                 // the doctor said it was
                 assert_eq!(key1, Vec::from("a-new-kind-of-claimspec".as_bytes()).into());
                 assert_eq!(key2, Vec::from("a-new-kind-of-claimspec".as_bytes()).into());
@@ -348,4 +405,3 @@ mod tests {
         }
     }
 }
-

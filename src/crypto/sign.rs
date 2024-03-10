@@ -11,18 +11,15 @@
 
 use crate::{
     crypto::{
-        SignedObject,
         base::{SecretKey, SignKeypairSignature},
+        SignedObject,
     },
     error::{Error, Result},
-    identity::{
-        IdentityID,
-        keychain::Subkey,
-    },
+    identity::{keychain::Subkey, IdentityID},
     util::ser::{self, BinaryVec},
 };
-use rasn::{AsnType, Encode, Decode};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 
 /// A cryptographic signature.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
@@ -67,29 +64,24 @@ impl ser::SerdeBinary for Signature {}
 
 /// Sign a message with a private key, returning the detached signature.
 pub fn sign(master_key: &SecretKey, signing_identity_id: &IdentityID, signing_key: &Subkey, message: &[u8]) -> Result<Signature> {
-    let sign_key = signing_key.key().as_signkey()
-        .ok_or(Error::KeychainSubkeyWrongType)?;
+    let sign_key = signing_key.key().as_signkey().ok_or(Error::KeychainSubkeyWrongType)?;
     let signature = sign_key.sign(master_key, message)?;
     let key_id = signing_key.key_id();
     Ok(Signature::Detached {
-        sig: SignedObject::new(signing_identity_id.clone(), key_id, signature)
+        sig: SignedObject::new(signing_identity_id.clone(), key_id, signature),
     })
 }
 
 /// Verify a detached signature.
 pub fn verify(signing_key: &Subkey, signature: &Signature, message: &[u8]) -> Result<()> {
-    let detached = signature.detached()
-        .map(|x| x.body())
-        .ok_or(Error::CryptoWrongSignatureType)?;
-    let sign_key = signing_key.key().as_signkey()
-        .ok_or(Error::KeychainSubkeyWrongType)?;
+    let detached = signature.detached().map(|x| x.body()).ok_or(Error::CryptoWrongSignatureType)?;
+    let sign_key = signing_key.key().as_signkey().ok_or(Error::KeychainSubkeyWrongType)?;
     sign_key.verify(detached, message)
 }
 
 /// Sign a message with a private key, returning the detached signature.
 pub fn sign_attached(master_key: &SecretKey, signing_identity_id: &IdentityID, signing_key: &Subkey, message: &[u8]) -> Result<Signature> {
-    let sign_key = signing_key.key().as_signkey()
-        .ok_or(Error::KeychainSubkeyWrongType)?;
+    let sign_key = signing_key.key().as_signkey().ok_or(Error::KeychainSubkeyWrongType)?;
     let signature = sign_key.sign(master_key, message)?;
     let key_id = signing_key.key_id();
     Ok(Signature::Attached {
@@ -100,34 +92,32 @@ pub fn sign_attached(master_key: &SecretKey, signing_identity_id: &IdentityID, s
 
 /// Verify a detached signature.
 pub fn verify_attached(signing_key: &Subkey, signature: &Signature) -> Result<()> {
-    let attached = signature.attached()
+    let attached = signature
+        .attached()
         .map(|x| (x.0.body(), x.1))
         .ok_or(Error::CryptoWrongSignatureType)?;
-    let sign_key = signing_key.key().as_signkey()
-        .ok_or(Error::KeychainSubkeyWrongType)?;
+    let sign_key = signing_key.key().as_signkey().ok_or(Error::KeychainSubkeyWrongType)?;
     sign_key.verify(attached.0, attached.1)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        crypto::base::SignKeypair,
-        identity::keychain::Key,
-        util::test,
-    };
+    use crate::{crypto::base::SignKeypair, identity::keychain::Key, util::test};
 
     #[test]
     fn sign_verify_detached() {
         let mut rng = crate::util::test::rng();
         let (master_key, identity) = test::setup_identity_with_subkeys(&mut rng);
-        let message = b"Plaque is a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
+        let message =
+            b"Plaque is a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
         let signkey = identity.keychain().subkey_by_name("sign").unwrap();
         let signature = sign(&master_key, identity.id(), &signkey, message).unwrap();
         verify(&signkey, &signature, message).unwrap();
 
         // modify the message and it fails
-        let message2 = b"Plaque is NOT a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
+        let message2 =
+            b"Plaque is NOT a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
         let res = verify(&signkey, &signature, message2);
         assert_eq!(res, Err(Error::CryptoSignatureVerificationFailed));
 
@@ -139,7 +129,10 @@ mod tests {
         assert_eq!(res, Err(Error::CryptoSignatureVerificationFailed));
 
         // send the wrong type and it fails
-        let signature2 = Signature::Attached { sig: signature.detached().map(|x| x.clone()).unwrap(), data: BinaryVec::from(message.to_vec()) };
+        let signature2 = Signature::Attached {
+            sig: signature.detached().map(|x| x.clone()).unwrap(),
+            data: BinaryVec::from(message.to_vec()),
+        };
         let res = verify(&signkey, &signature2, message);
         assert_eq!(res, Err(Error::CryptoWrongSignatureType));
     }
@@ -148,14 +141,19 @@ mod tests {
     fn sign_verify_attached() {
         let mut rng = crate::util::test::rng();
         let (master_key, identity) = test::setup_identity_with_subkeys(&mut rng);
-        let message = b"Plaque is a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
+        let message =
+            b"Plaque is a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
         let signkey = identity.keychain().subkey_by_name("sign").unwrap();
         let signature = sign_attached(&master_key, identity.id(), &signkey, message).unwrap();
         verify_attached(&signkey, &signature).unwrap();
 
         // modify the message and it fails
-        let message2 = b"Plaque is NOT a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
-        let signature2 = Signature::Attached { sig: signature.attached().unwrap().0.clone(), data: BinaryVec::from(message2.to_vec()) };
+        let message2 =
+            b"Plaque is NOT a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
+        let signature2 = Signature::Attached {
+            sig: signature.attached().unwrap().0.clone(),
+            data: BinaryVec::from(message2.to_vec()),
+        };
         let res = verify_attached(&signkey, &signature2);
         assert_eq!(res, Err(Error::CryptoSignatureVerificationFailed));
 
@@ -167,9 +165,10 @@ mod tests {
         assert_eq!(res, Err(Error::CryptoSignatureVerificationFailed));
 
         // send the wrong type and it fails
-        let signature3 = Signature::Detached { sig: signature.attached().unwrap().0.clone() };
+        let signature3 = Signature::Detached {
+            sig: signature.attached().unwrap().0.clone(),
+        };
         let res = verify_attached(&signkey, &signature3);
         assert_eq!(res, Err(Error::CryptoWrongSignatureType));
     }
 }
-

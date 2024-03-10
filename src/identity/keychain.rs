@@ -13,26 +13,39 @@
 //! tied to just a single keypair.
 
 use crate::{
-    error::{Error, Result},
     crypto::{
-        base::{KeyID, SecretKey, SignKeypairSignature, SignKeypair, SignKeypairPublic, CryptoKeypair},
-        private::{PrivateWithHmac},
+        base::{CryptoKeypair, KeyID, SecretKey, SignKeypair, SignKeypairPublic, SignKeypairSignature},
+        private::PrivateWithHmac,
     },
-    util::{Public, sign::Signable, ser},
+    error::{Error, Result},
+    util::{ser, sign::Signable, Public},
 };
 use getset;
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Encode, Decode};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// Allows us to create new signature types from the base SignKeypairSignature.
-pub trait ExtendKeypairSignature: From<SignKeypairSignature> + Clone + PartialEq + Deref<Target = SignKeypairSignature> + serde::Serialize + serde::de::DeserializeOwned {}
+pub trait ExtendKeypairSignature:
+    From<SignKeypairSignature> + Clone + PartialEq + Deref<Target = SignKeypairSignature> + serde::Serialize + serde::de::DeserializeOwned
+{
+}
 
 /// Allows us to create new signing keypair types from the base SignKeypair.
 ///
 /// Now, says to myself, Colm, says I...
-pub trait ExtendKeypair: From<SignKeypair> + Clone + PartialEq + Deref<Target = SignKeypair> + Public + PartialEq + Signable + serde::Serialize + serde::de::DeserializeOwned {
+pub trait ExtendKeypair:
+    From<SignKeypair>
+    + Clone
+    + PartialEq
+    + Deref<Target = SignKeypair>
+    + Public
+    + PartialEq
+    + Signable
+    + serde::Serialize
+    + serde::de::DeserializeOwned
+{
     type Signature: ExtendKeypairSignature;
 
     /// Create a new ed25519 keypair
@@ -294,7 +307,12 @@ impl Key {
     }
 
     /// Consumes the key, and re-encryptes it with a new master key.
-    pub fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt<R: RngCore + CryptoRng>(
+        self,
+        rng: &mut R,
+        previous_master_key: &SecretKey,
+        new_master_key: &SecretKey,
+    ) -> Result<Self> {
         let key = match self {
             Self::Sign(keypair) => Self::Sign(keypair.reencrypt(rng, previous_master_key, new_master_key)?),
             Self::Crypto(keypair) => Self::Crypto(keypair.reencrypt(rng, previous_master_key, new_master_key)?),
@@ -421,7 +439,12 @@ impl AdminKey {
     }
 
     /// Create a new `AdminKey` with revocation specified.
-    pub fn new_with_revocation<T: Into<String>>(key: AdminKeypair, name: T, description: Option<T>, revocation: Option<RevocationReason>) -> Self {
+    pub fn new_with_revocation<T: Into<String>>(
+        key: AdminKeypair,
+        name: T,
+        description: Option<T>,
+        revocation: Option<RevocationReason>,
+    ) -> Self {
         Self {
             key,
             name: name.into(),
@@ -431,9 +454,24 @@ impl AdminKey {
     }
 
     /// Re-encrypt this signing keypair with a new master key.
-    pub fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
-        let Self { key, name, description, revocation } = self;
-        Ok(Self::new_with_revocation(key.reencrypt(rng, previous_master_key, new_master_key)?, name, description, revocation))
+    pub fn reencrypt<R: RngCore + CryptoRng>(
+        self,
+        rng: &mut R,
+        previous_master_key: &SecretKey,
+        new_master_key: &SecretKey,
+    ) -> Result<Self> {
+        let Self {
+            key,
+            name,
+            description,
+            revocation,
+        } = self;
+        Ok(Self::new_with_revocation(
+            key.reencrypt(rng, previous_master_key, new_master_key)?,
+            name,
+            description,
+            revocation,
+        ))
     }
 
     /// Grab this key's [AdminKeyID].
@@ -538,24 +576,17 @@ impl Keychain {
 
     /// Grab all admin keys (active and revoked).
     pub fn keys_admin(&self) -> Vec<&AdminKeypair> {
-        self.admin_keys()
-            .iter()
-            .map(|key| key.key())
-            .collect::<Vec<_>>()
+        self.admin_keys().iter().map(|key| key.key()).collect::<Vec<_>>()
     }
 
     /// Grab all signing subkeys.
     pub fn subkeys_sign(&self) -> Vec<&SignKeypair> {
-        self.subkeys().iter()
-            .filter_map(|x| x.key().as_signkey())
-            .collect::<Vec<_>>()
+        self.subkeys().iter().filter_map(|x| x.key().as_signkey()).collect::<Vec<_>>()
     }
 
     /// Grab all crypto subkeys.
     pub fn subkeys_crypto(&self) -> Vec<&CryptoKeypair> {
-        self.subkeys().iter()
-            .filter_map(|x| x.key().as_cryptokey())
-            .collect::<Vec<_>>()
+        self.subkeys().iter().filter_map(|x| x.key().as_cryptokey()).collect::<Vec<_>>()
     }
 
     /// Add an admin key but check for dupes
@@ -583,7 +614,12 @@ impl Keychain {
     }
 
     /// Update some info about an admin key
-    pub(crate) fn edit_admin_key<T: Into<String>>(mut self, id: &AdminKeyID, name: Option<T>, description: Option<Option<T>>) -> Result<Self> {
+    pub(crate) fn edit_admin_key<T: Into<String>>(
+        mut self,
+        id: &AdminKeyID,
+        name: Option<T>,
+        description: Option<Option<T>>,
+    ) -> Result<Self> {
         if let Some(key) = self.admin_key_by_keyid_mut(id) {
             if let Some(set_name) = name {
                 key.set_name(set_name.into());
@@ -596,7 +632,12 @@ impl Keychain {
     }
 
     /// Revoke an [Admin key][AdminKeypair].
-    pub(crate) fn revoke_admin_key<T: Into<String>>(mut self, id: &AdminKeyID, reason: RevocationReason, new_name: Option<T>) -> Result<Self> {
+    pub(crate) fn revoke_admin_key<T: Into<String>>(
+        mut self,
+        id: &AdminKeyID,
+        reason: RevocationReason,
+        new_name: Option<T>,
+    ) -> Result<Self> {
         if let Some(key) = self.admin_key_by_keyid_mut(id) {
             if let Some(name) = new_name {
                 key.set_name(name.into());
@@ -615,8 +656,7 @@ impl Keychain {
 
     /// Edit a subkey (set name/description).
     pub(crate) fn edit_subkey<T: Into<String>>(mut self, id: &KeyID, name: Option<T>, description: Option<Option<T>>) -> Result<Self> {
-        let key = self.subkey_by_keyid_mut(id)
-            .ok_or_else(|| Error::KeychainKeyNotFound(id.clone()))?;
+        let key = self.subkey_by_keyid_mut(id).ok_or_else(|| Error::KeychainKeyNotFound(id.clone()))?;
         if let Some(set_name) = name {
             key.set_name(set_name.into());
         }
@@ -648,13 +688,19 @@ impl Keychain {
 impl Public for Keychain {
     fn strip_private(&self) -> Self {
         let mut keychain_clone = self.clone();
-        let admin_stripped = keychain_clone.admin_keys().clone().into_iter()
+        let admin_stripped = keychain_clone
+            .admin_keys()
+            .clone()
+            .into_iter()
             .map(|mut ak| {
                 ak.set_key(ak.key().strip_private());
                 ak
             })
             .collect::<Vec<_>>();
-        let subkeys_stripped = self.subkeys().clone().into_iter()
+        let subkeys_stripped = self
+            .subkeys()
+            .clone()
+            .into_iter()
             .map(|mut sk| {
                 sk.set_key(sk.key().strip_private());
                 sk
@@ -666,8 +712,7 @@ impl Public for Keychain {
     }
 
     fn has_private(&self) -> bool {
-        self.admin_keys().iter().any(|x| x.key().has_private()) ||
-            self.subkeys().iter().any(|x| x.key().has_private())
+        self.admin_keys().iter().any(|x| x.key().has_private()) || self.subkeys().iter().any(|x| x.key().has_private())
     }
 }
 
@@ -719,7 +764,7 @@ mod tests {
         macro_rules! keytype {
             ($keys:ident, $fn:ident) => {
                 $keys.iter().map(|x| x.$fn().is_some()).collect::<Vec<_>>()
-            }
+            };
         }
         assert_eq!(keytype!(keys, as_signkey), vec![true, false, false]);
         assert_eq!(keytype!(keys, as_cryptokey), vec![false, true, false]);
@@ -752,7 +797,11 @@ mod tests {
         let key6 = Key::Secret(PrivateWithHmac::seal(&mut rng, &master_key, secret_key).unwrap());
 
         let val4 = key4.as_signkey().unwrap().sign(&master_key, b"hi i'm butch").unwrap();
-        let val5 = key5.as_cryptokey().unwrap().seal_anonymous(&mut rng, b"sufferin succotash").unwrap();
+        let val5 = key5
+            .as_cryptokey()
+            .unwrap()
+            .seal_anonymous(&mut rng, b"sufferin succotash")
+            .unwrap();
         let val6_key = key6.as_secretkey().unwrap().open_and_verify(&master_key).unwrap();
         let val6 = val6_key.seal(&mut rng, b"and your nose like a delicious slope of cream").unwrap();
 
@@ -786,7 +835,7 @@ mod tests {
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
-        let secret_key = SecretKey::new_xchacha20poly1305(&mut rng ).unwrap();
+        let secret_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let key4 = Key::Sign(sign_keypair.clone());
         let key5 = Key::Crypto(crypto_keypair.clone());
         let key6 = Key::Secret(PrivateWithHmac::seal(&mut rng, &master_key, secret_key).unwrap());
@@ -821,7 +870,13 @@ mod tests {
         let mut keychain = Keychain::new(vec![]);
         assert_eq!(keychain.admin_key_by_keyid(&KeyID::random_sign().into()).as_ref().map(|x| x.key()), None);
         assert_eq!(keychain.admin_key_by_keyid_str("abcdefg").as_ref().map(|x| x.key()), None);
-        assert_eq!(keychain.admin_key_by_keyid_mut(&KeyID::random_sign().into()).as_ref().map(|x| x.key()), None);
+        assert_eq!(
+            keychain
+                .admin_key_by_keyid_mut(&KeyID::random_sign().into())
+                .as_ref()
+                .map(|x| x.key()),
+            None
+        );
         assert_eq!(keychain.admin_key_by_name("Alpha").as_ref().map(|x| x.key()), None);
 
         let adminkey1 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Alpha", None);
@@ -830,14 +885,36 @@ mod tests {
         let adminkey4 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Alpha", None);
 
         let mut keychain2 = keychain
-            .add_admin_key(adminkey1.clone()).unwrap()
-            .add_admin_key(adminkey2.clone()).unwrap()
-            .add_admin_key(adminkey3.clone()).unwrap()
-            .add_admin_key(adminkey4.clone()).unwrap();
+            .add_admin_key(adminkey1.clone())
+            .unwrap()
+            .add_admin_key(adminkey2.clone())
+            .unwrap()
+            .add_admin_key(adminkey3.clone())
+            .unwrap()
+            .add_admin_key(adminkey4.clone())
+            .unwrap();
 
-        assert_eq!(keychain2.admin_key_by_keyid(&adminkey1.key().key_id().into()).as_ref().map(|x| x.key()), Some(adminkey1.key()));
-        assert_eq!(keychain2.admin_key_by_keyid_str(adminkey2.key().key_id().as_string().as_str()).as_ref().map(|x| x.key()), Some(adminkey2.key()));
-        assert_eq!(keychain2.admin_key_by_keyid_mut(&adminkey3.key().key_id().into()).as_ref().map(|x| x.key()), Some(adminkey3.key()));
+        assert_eq!(
+            keychain2
+                .admin_key_by_keyid(&adminkey1.key().key_id().into())
+                .as_ref()
+                .map(|x| x.key()),
+            Some(adminkey1.key())
+        );
+        assert_eq!(
+            keychain2
+                .admin_key_by_keyid_str(adminkey2.key().key_id().as_string().as_str())
+                .as_ref()
+                .map(|x| x.key()),
+            Some(adminkey2.key())
+        );
+        assert_eq!(
+            keychain2
+                .admin_key_by_keyid_mut(&adminkey3.key().key_id().into())
+                .as_ref()
+                .map(|x| x.key()),
+            Some(adminkey3.key())
+        );
         assert_eq!(keychain2.admin_key_by_name("Alpha").as_ref().map(|x| x.key()), Some(adminkey4.key()));
     }
 
@@ -848,7 +925,13 @@ mod tests {
         let mut keychain = Keychain::new(vec![]);
         assert_eq!(keychain.subkey_by_keyid(&KeyID::random_sign().into()).as_ref().map(|x| x.key_id()), None);
         assert_eq!(keychain.subkey_by_keyid_str("abcdefg").as_ref().map(|x| x.key_id()), None);
-        assert_eq!(keychain.subkey_by_keyid_mut(&KeyID::random_sign().into()).as_ref().map(|x| x.key_id()), None);
+        assert_eq!(
+            keychain
+                .subkey_by_keyid_mut(&KeyID::random_sign().into())
+                .as_ref()
+                .map(|x| x.key_id()),
+            None
+        );
         assert_eq!(keychain.subkey_by_name("Alpha").as_ref().map(|x| x.key_id()), None);
 
         let subkey1 = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
@@ -857,14 +940,30 @@ mod tests {
         let subkey4 = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
 
         let mut keychain2 = keychain
-            .add_subkey(subkey1.clone(), "Alpha", None).unwrap()
-            .add_subkey(subkey2.clone(), "Publish", None).unwrap()
-            .add_subkey(subkey3.clone(), "Alpha", None).unwrap()
-            .add_subkey(subkey4.clone(), "Alpha", None).unwrap();
+            .add_subkey(subkey1.clone(), "Alpha", None)
+            .unwrap()
+            .add_subkey(subkey2.clone(), "Publish", None)
+            .unwrap()
+            .add_subkey(subkey3.clone(), "Alpha", None)
+            .unwrap()
+            .add_subkey(subkey4.clone(), "Alpha", None)
+            .unwrap();
 
-        assert_eq!(keychain2.subkey_by_keyid(&subkey1.key_id().into()).as_ref().map(|x| x.key_id()), Some(subkey1.key_id()));
-        assert_eq!(keychain2.subkey_by_keyid_str(subkey2.key_id().as_string().as_str()).as_ref().map(|x| x.key_id()), Some(subkey2.key_id()));
-        assert_eq!(keychain2.subkey_by_keyid_mut(&subkey3.key_id().into()).as_ref().map(|x| x.key_id()), Some(subkey3.key_id()));
+        assert_eq!(
+            keychain2.subkey_by_keyid(&subkey1.key_id().into()).as_ref().map(|x| x.key_id()),
+            Some(subkey1.key_id())
+        );
+        assert_eq!(
+            keychain2
+                .subkey_by_keyid_str(subkey2.key_id().as_string().as_str())
+                .as_ref()
+                .map(|x| x.key_id()),
+            Some(subkey2.key_id())
+        );
+        assert_eq!(
+            keychain2.subkey_by_keyid_mut(&subkey3.key_id().into()).as_ref().map(|x| x.key_id()),
+            Some(subkey3.key_id())
+        );
         assert_eq!(keychain2.subkey_by_name("Alpha").as_ref().map(|x| x.key_id()), Some(subkey4.key_id()));
     }
 
@@ -889,17 +988,23 @@ mod tests {
         assert_eq!(keychain3.admin_keys()[0].name(), "Default");
         assert_eq!(keychain3.admin_keys()[0].description(), &None::<String>);
 
-        let keychain4 = keychain3.edit_admin_key(&key_id, Some("frizzy"), Some(Some("SO IT'S CONTINENTAL?"))).unwrap();
+        let keychain4 = keychain3
+            .edit_admin_key(&key_id, Some("frizzy"), Some(Some("SO IT'S CONTINENTAL?")))
+            .unwrap();
         assert_eq!(keychain4.admin_keys().len(), 1);
         assert_eq!(keychain4.admin_keys()[0].name(), "frizzy");
         assert_eq!(keychain4.admin_keys()[0].description(), &Some("SO IT'S CONTINENTAL?".into()));
 
-        let keychain5 = keychain4.edit_admin_key(&AdminKeyID::from(KeyID::random_sign()), Some("GERRRR"), Some(None)).unwrap();
+        let keychain5 = keychain4
+            .edit_admin_key(&AdminKeyID::from(KeyID::random_sign()), Some("GERRRR"), Some(None))
+            .unwrap();
         assert_eq!(keychain5.admin_keys().len(), 1);
         assert_eq!(keychain5.admin_keys()[0].name(), "frizzy");
         assert_eq!(keychain5.admin_keys()[0].description(), &Some("SO IT'S CONTINENTAL?".into()));
 
-        let keychain6 = keychain5.revoke_admin_key(&key_id, RevocationReason::Superseded, Some("WROOONG")).unwrap();
+        let keychain6 = keychain5
+            .revoke_admin_key(&key_id, RevocationReason::Superseded, Some("WROOONG"))
+            .unwrap();
         assert_eq!(keychain6.admin_keys().len(), 1);
         assert_eq!(keychain6.subkeys().len(), 0);
         assert_eq!(keychain6.admin_keys()[0].name(), "WROOONG");
@@ -924,26 +1029,35 @@ mod tests {
         //
         // we want to make sure new keys are always added to the end of the
         // keychain.
-        let keychain = keychain.add_subkey(sign, "MY signing key", Some("The key I use to sign things generally LOL")).unwrap();
+        let keychain = keychain
+            .add_subkey(sign, "MY signing key", Some("The key I use to sign things generally LOL"))
+            .unwrap();
         let last = keychain.subkeys().iter().last().unwrap();
         assert_eq!(last.name(), "MY signing key");
         assert_eq!(Some(last.name()), keychain.subkey_by_name("MY signing key").map(|x| x.name()));
         assert_eq!(Some(last.name()), keychain.subkey_by_keyid(&last.key_id()).map(|x| x.name()));
 
-        let keychain = keychain.add_subkey(crypto, "MY crypto key", Some("Send me messages with this key OR ELSE")).unwrap();
+        let keychain = keychain
+            .add_subkey(crypto, "MY crypto key", Some("Send me messages with this key OR ELSE"))
+            .unwrap();
         let last = keychain.subkeys().iter().last().unwrap();
         assert_eq!(last.name(), "MY crypto key");
         assert_eq!(Some(last.name()), keychain.subkey_by_name("MY crypto key").map(|x| x.name()));
         assert_eq!(Some(last.name()), keychain.subkey_by_keyid(&last.key_id()).map(|x| x.name()));
 
-        let keychain = keychain.add_subkey(secret, "MY secret key", Some("I use this to encrypt files and shit")).unwrap();
+        let keychain = keychain
+            .add_subkey(secret, "MY secret key", Some("I use this to encrypt files and shit"))
+            .unwrap();
         let last = keychain.subkeys().iter().last().unwrap();
         assert_eq!(last.name(), "MY secret key");
         assert_eq!(Some(last.name()), keychain.subkey_by_name("MY secret key").map(|x| x.name()));
 
         // make sure finding by name does what we expect (first matching key
         // with that name)
-        match (keychain.subkeys().iter().find(|x| x.name() == "MY crypto key"), keychain.subkey_by_name("MY crypto key")) {
+        match (
+            keychain.subkeys().iter().find(|x| x.name() == "MY crypto key"),
+            keychain.subkey_by_name("MY crypto key"),
+        ) {
             (Some(key1), Some(key2)) => {
                 assert_eq!(key1 as *const Subkey, key2 as *const Subkey);
             }
@@ -961,11 +1075,17 @@ mod tests {
         let signkey = keychain.subkey_by_name("sign").unwrap().clone();
         assert!(signkey.revocation.is_none());
 
-        let keychain2 = keychain.clone().revoke_subkey(&signkey.key_id(), RevocationReason::Unspecified, None).unwrap();
+        let keychain2 = keychain
+            .clone()
+            .revoke_subkey(&signkey.key_id(), RevocationReason::Unspecified, None)
+            .unwrap();
         let signkey = keychain2.subkey_by_name("sign").unwrap().clone();
         assert_eq!(signkey.revocation().as_ref().unwrap(), &RevocationReason::Unspecified);
 
-        let keychain3 = keychain.clone().revoke_subkey(&signkey.key_id(), RevocationReason::Unspecified, Some("revoked:sign".into())).unwrap();
+        let keychain3 = keychain
+            .clone()
+            .revoke_subkey(&signkey.key_id(), RevocationReason::Unspecified, Some("revoked:sign".into()))
+            .unwrap();
         let signkey = keychain3.subkey_by_name("revoked:sign").unwrap().clone();
         assert_eq!(signkey.revocation().as_ref().unwrap(), &RevocationReason::Unspecified);
     }
@@ -993,9 +1113,12 @@ mod tests {
         let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let secret = Key::new_secret(PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap());
         let keychain = keychain
-            .add_subkey(sign, "sign", None).unwrap()
-            .add_subkey(crypto, "crypto", None).unwrap()
-            .add_subkey(secret, "secret", None).unwrap();
+            .add_subkey(sign, "sign", None)
+            .unwrap()
+            .add_subkey(crypto, "crypto", None)
+            .unwrap()
+            .add_subkey(secret, "secret", None)
+            .unwrap();
         assert_eq!(keychain.admin_keys().iter().fold(false, |acc, x| acc || x.has_private()), true);
         assert_eq!(keychain.subkey_by_name("sign").unwrap().key().has_private(), true);
         assert_eq!(keychain.subkey_by_name("crypto").unwrap().key().has_private(), true);
@@ -1009,4 +1132,3 @@ mod tests {
         assert_eq!(keychain.subkey_by_name("secret").unwrap().key().has_private(), false);
     }
 }
-

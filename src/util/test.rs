@@ -2,8 +2,8 @@ use crate::{
     crypto::base::{CryptoKeypair, Hash, HashAlgo, SecretKey, SignKeypair},
     dag::{TransactionID, Transactions},
     identity::{
-        identity::{IdentityID, Identity},
-        keychain::{ExtendKeypair, AdminKey, AdminKeypair, Key},
+        identity::{Identity, IdentityID},
+        keychain::{AdminKey, AdminKeypair, ExtendKeypair, Key},
     },
     policy::{Capability, MultisigPolicy, Participant, Policy, PolicyContainer},
     util::Timestamp,
@@ -18,7 +18,7 @@ pub(crate) fn sleep(millis: u64) {
     thread::sleep(Duration::from_millis(millis));
 }
 
-pub(crate) fn rng() -> rand_chacha::ChaCha20Rng { 
+pub(crate) fn rng() -> rand_chacha::ChaCha20Rng {
     crate::crypto::base::rng::chacha20()
 }
 
@@ -35,11 +35,16 @@ pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Tim
     let admin_key = AdminKey::new(admin, "Alpha", None);
     let policy = Policy::new(
         vec![Capability::Permissive],
-        MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key.key().clone().into()] }
+        MultisigPolicy::MOfN {
+            must_have: 1,
+            participants: vec![admin_key.key().clone().into()],
+        },
     );
     let trans = transactions
-        .create_identity(&HashAlgo::Blake3, now, vec![admin_key.clone()], vec![policy]).unwrap()
-        .sign(&master_key, &admin_key).unwrap();
+        .create_identity(&HashAlgo::Blake3, now, vec![admin_key.clone()], vec![policy])
+        .unwrap()
+        .sign(&master_key, &admin_key)
+        .unwrap();
     let transactions2 = transactions.push_transaction(trans).unwrap();
     (master_key, transactions2, admin_key)
 }
@@ -51,17 +56,24 @@ pub(crate) fn setup_identity_with_subkeys<R: RngCore + CryptoRng>(rng: &mut R) -
         vec![Capability::Permissive],
         MultisigPolicy::MOfN {
             must_have: 1,
-            participants: vec![
-                Participant::Key { name: Some("Default".into()), key: admin_keypair.clone().into() },
-            ],
-        }
+            participants: vec![Participant::Key {
+                name: Some("Default".into()),
+                key: admin_keypair.clone().into(),
+            }],
+        },
     );
     let policy_transaction_id = TransactionID::from(Hash::new_blake3(b"policy").unwrap());
     let policy_con = PolicyContainer::from_policy_transaction(&policy_transaction_id, 0, policy).unwrap();
     let admin_key = AdminKey::new(admin_keypair, "Alpha", None);
     let identity = Identity::create(IdentityID::random(), vec![admin_key], vec![policy_con], Timestamp::now())
-        .add_subkey(Key::new_sign(SignKeypair::new_ed25519(rng, &master_key).unwrap()), "sign", None).unwrap()
-        .add_subkey(Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(rng, &master_key).unwrap()), "cryptololol", None).unwrap();
+        .add_subkey(Key::new_sign(SignKeypair::new_ed25519(rng, &master_key).unwrap()), "sign", None)
+        .unwrap()
+        .add_subkey(
+            Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(rng, &master_key).unwrap()),
+            "cryptololol",
+            None,
+        )
+        .unwrap();
     (master_key, identity)
 }
 
@@ -140,4 +152,3 @@ macro_rules! make_dag_chain {
     }}
 }
 pub(crate) use make_dag_chain;
-

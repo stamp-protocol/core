@@ -1,13 +1,11 @@
 use crate::{
     error::{Error, Result},
-    util::{
-        ser::{Binary, BinarySecret},
-    },
+    util::ser::{Binary, BinarySecret},
 };
-use hmac::{SimpleHmac, Mac};
+use hmac::{Mac, SimpleHmac};
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Encode, Decode};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// A key for deriving an HMAC.
@@ -49,13 +47,13 @@ impl Hmac {
     pub fn new(hmac_key: &HmacKey, data: &[u8]) -> Result<Self> {
         match hmac_key {
             HmacKey::Blake3(hmac_key) => {
-                let mut hmac = SimpleHmac::<blake3::Hasher>::new_from_slice(hmac_key.expose_secret().as_slice())
-                    .map_err(|_| Error::CryptoBadKey)?;
+                let mut hmac =
+                    SimpleHmac::<blake3::Hasher>::new_from_slice(hmac_key.expose_secret().as_slice()).map_err(|_| Error::CryptoBadKey)?;
                 hmac.update(data);
                 let result = hmac.finalize();
                 let gen_arr = result.into_bytes();
                 let arr: &[u8; 32] = gen_arr.as_ref();
-                Ok(Hmac::Blake3(Binary::new(arr.clone())))
+                Ok(Hmac::Blake3(Binary::new(*arr)))
             }
         }
     }
@@ -64,10 +62,11 @@ impl Hmac {
     pub fn verify(&self, hmac_key: &HmacKey, data: &[u8]) -> Result<()> {
         match (self, hmac_key) {
             (Self::Blake3(hmac), HmacKey::Blake3(hmac_key)) => {
-                let mut hmac_ver = SimpleHmac::<blake3::Hasher>::new_from_slice(hmac_key.expose_secret().as_slice())
-                    .map_err(|_| Error::CryptoBadKey)?;
+                let mut hmac_ver =
+                    SimpleHmac::<blake3::Hasher>::new_from_slice(hmac_key.expose_secret().as_slice()).map_err(|_| Error::CryptoBadKey)?;
                 hmac_ver.update(data);
-                hmac_ver.verify_slice(hmac.deref())
+                hmac_ver
+                    .verify_slice(hmac.deref())
                     .map_err(|_| Error::CryptoHmacVerificationFailed)?;
             }
         }
@@ -93,13 +92,16 @@ pub(crate) mod tests {
     fn hmac_result() {
         let data = String::from("PARDON ME GOOD SIR DO YOU HAVE ANY goats FOR SALE!!!!!!?");
         let hmac_key = HmacKey::new_blake3_from_bytes([
-            0, 1, 2, 3, 4, 5, 6, 7,
-            1, 2, 3, 4, 5, 6, 7, 8,
-            2, 3, 4, 5, 6, 7, 8, 9,
-            3, 4, 5, 6, 7, 8, 9, 9,
+            0, 1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 4, 5, 6, 7, 8, 2, 3, 4, 5, 6, 7, 8, 9, 3, 4, 5, 6, 7, 8, 9, 9,
         ]);
         let hmac = Hmac::new(&hmac_key, data.as_bytes()).unwrap();
-        assert_eq!(hmac, Hmac::Blake3(Binary::new([64, 13, 214, 251, 117, 123, 250, 89, 128, 228, 226, 211, 142, 212, 238, 115, 50, 230, 69, 202, 84, 248, 52, 139, 28, 86, 138, 202, 63, 142, 2, 29])));
+        assert_eq!(
+            hmac,
+            Hmac::Blake3(Binary::new([
+                64, 13, 214, 251, 117, 123, 250, 89, 128, 228, 226, 211, 142, 212, 238, 115, 50, 230, 69, 202, 84, 248, 52, 139, 28, 86,
+                138, 202, 63, 142, 2, 29
+            ]))
+        );
     }
 
     #[test]
@@ -119,4 +121,3 @@ pub(crate) mod tests {
         assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
     }
 }
-

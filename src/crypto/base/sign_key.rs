@@ -5,18 +5,14 @@ use crate::{
     },
     error::{Error, Result},
     util::{
-        Public,
-
-        ser::{
-            self,
-            Binary, BinarySecret,
-        },
+        ser::{self, Binary, BinarySecret},
         sign::Signable,
+        Public,
     },
 };
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Encode, Decode};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// A signature derived from a signing keypair.
@@ -46,26 +42,31 @@ pub enum SignKeypair {
         public: Binary<32>,
         #[rasn(tag(explicit(1)))]
         secret: Option<Private<BinarySecret<32>>>,
-    }
+    },
 }
 
 impl Clone for SignKeypair {
     fn clone(&self) -> Self {
         match self {
-            SignKeypair::Ed25519 { public, secret: secret_maybe } => {
-                SignKeypair::Ed25519 {
-                    public: public.clone(),
-                    secret: secret_maybe.as_ref().cloned(),
-                }
-            }
+            SignKeypair::Ed25519 {
+                public,
+                secret: secret_maybe,
+            } => SignKeypair::Ed25519 {
+                public: public.clone(),
+                secret: secret_maybe.as_ref().cloned(),
+            },
         }
     }
 }
 
 impl SignKeypair {
-    fn new_ed25519_from_secret<R: RngCore + CryptoRng>(rng: &mut R, master_key: &SecretKey, secret: ed25519_consensus::SigningKey) -> Result<Self> {
+    fn new_ed25519_from_secret<R: RngCore + CryptoRng>(
+        rng: &mut R,
+        master_key: &SecretKey,
+        secret: ed25519_consensus::SigningKey,
+    ) -> Result<Self> {
         let public = secret.verification_key();
-        Ok(Self::Ed25519 { 
+        Ok(Self::Ed25519 {
             public: Binary::new(public.to_bytes()),
             secret: Some(Private::seal(rng, master_key, &BinarySecret::new(secret.to_bytes()))?),
         })
@@ -90,7 +91,10 @@ impl SignKeypair {
     /// ourselves so we can return the hash.
     pub fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<SignKeypairSignature> {
         match self {
-            Self::Ed25519 { secret: ref sec_locked_opt, .. } => {
+            Self::Ed25519 {
+                secret: ref sec_locked_opt,
+                ..
+            } => {
                 let sec_locked = sec_locked_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let sec_bytes: [u8; 32] = *sec_locked.open(master_key)?.expose_secret();
                 let seckey = ed25519_consensus::SigningKey::from(sec_bytes);
@@ -105,24 +109,37 @@ impl SignKeypair {
     /// signer.
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
         match (self, signature) {
-            (Self::Ed25519 { public: ref pubkey_bytes, .. }, SignKeypairSignature::Ed25519(ref sig_bytes)) => {
+            (
+                Self::Ed25519 {
+                    public: ref pubkey_bytes, ..
+                },
+                SignKeypairSignature::Ed25519(ref sig_bytes),
+            ) => {
                 let pubkey = ed25519_consensus::VerificationKey::try_from(*pubkey_bytes.deref())
                     .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
                 let sig_arr: [u8; 64] = *sig_bytes.deref();
                 let sig = ed25519_consensus::Signature::from(sig_arr);
-                pubkey.verify(&sig, data)
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
+                pubkey.verify(&sig, data).map_err(|_| Error::CryptoSignatureVerificationFailed)?;
                 Ok(())
             }
         }
     }
 
     /// Re-encrypt this signing keypair with a new master key.
-    pub fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt<R: RngCore + CryptoRng>(
+        self,
+        rng: &mut R,
+        previous_master_key: &SecretKey,
+        new_master_key: &SecretKey,
+    ) -> Result<Self> {
         match self {
-            Self::Ed25519 { public, secret: Some(private) } => {
-                Ok(Self::Ed25519 { public, secret: Some(private.reencrypt(rng, previous_master_key, new_master_key)?) })
-            }
+            Self::Ed25519 {
+                public,
+                secret: Some(private),
+            } => Ok(Self::Ed25519 {
+                public,
+                secret: Some(private.reencrypt(rng, previous_master_key, new_master_key)?),
+            }),
             _ => Err(Error::CryptoKeyMissing),
         }
     }
@@ -136,9 +153,10 @@ impl SignKeypair {
 impl Public for SignKeypair {
     fn strip_private(&self) -> Self {
         match self {
-            Self::Ed25519 { public: pubkey, .. } => {
-                Self::Ed25519 { public: pubkey.clone(), secret: None }
-            }
+            Self::Ed25519 { public: pubkey, .. } => Self::Ed25519 {
+                public: pubkey.clone(),
+                secret: None,
+            },
         }
     }
 
@@ -179,9 +197,10 @@ impl SignKeypairPublic {
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
         // this clone()s, but at least we aren't duplicating code anymore
         let keypair = match self {
-            SignKeypairPublic::Ed25519(pubkey) => {
-                SignKeypair::Ed25519 { public: pubkey.clone(), secret: None }
-            }
+            SignKeypairPublic::Ed25519(pubkey) => SignKeypair::Ed25519 {
+                public: pubkey.clone(),
+                secret: None,
+            },
         };
         keypair.verify(signature, data)
     }
@@ -219,8 +238,11 @@ pub(crate) mod tests {
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let our_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
 
-        let msg_real = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
-        let msg_fake = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...");
+        let msg_real =
+            String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
+        let msg_fake = String::from(
+            "the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...",
+        );
         let sig = our_keypair.sign(&master_key, msg_real.as_bytes()).unwrap();
         let verify_real = our_keypair.verify(&sig, msg_real.as_bytes());
         let verify_fake = our_keypair.verify(&sig, msg_fake.as_bytes());
@@ -232,15 +254,25 @@ pub(crate) mod tests {
     fn signkeypair_ed25519_seed_sign_verify() {
         let mut rng = crate::util::test::rng();
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let seed = [233, 229, 76, 13, 231, 38, 253, 27, 53, 2, 235, 174, 151, 186, 192, 33, 16, 2, 57, 32, 170, 23, 13, 47, 44, 234, 231, 35, 38, 107, 93, 198];
+        let seed = [
+            233, 229, 76, 13, 231, 38, 253, 27, 53, 2, 235, 174, 151, 186, 192, 33, 16, 2, 57, 32, 170, 23, 13, 47, 44, 234, 231, 35, 38,
+            107, 93, 198,
+        ];
         let our_keypair = SignKeypair::new_ed25519_from_bytes(&mut rng, &master_key, seed).unwrap();
 
-        let msg_real = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
-        let msg_fake = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...");
+        let msg_real =
+            String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
+        let msg_fake = String::from(
+            "the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...",
+        );
         let sig = our_keypair.sign(&master_key, msg_real.as_bytes()).unwrap();
         match sig {
             SignKeypairSignature::Ed25519(ref sig) => {
-                let should_be: Vec<u8> = vec![161, 93, 247, 4, 187, 12, 160, 118, 111, 79, 16, 100, 205, 38, 238, 153, 217, 214, 230, 195, 175, 228, 165, 183, 5, 151, 159, 114, 7, 32, 156, 115, 34, 108, 194, 252, 86, 102, 133, 35, 129, 224, 146, 254, 91, 185, 97, 207, 0, 63, 241, 184, 144, 15, 20, 26, 187, 235, 95, 207, 43, 144, 216, 6];
+                let should_be: Vec<u8> = vec![
+                    161, 93, 247, 4, 187, 12, 160, 118, 111, 79, 16, 100, 205, 38, 238, 153, 217, 214, 230, 195, 175, 228, 165, 183, 5,
+                    151, 159, 114, 7, 32, 156, 115, 34, 108, 194, 252, 86, 102, 133, 35, 129, 224, 146, 254, 91, 185, 97, 207, 0, 63, 241,
+                    184, 144, 15, 20, 26, 187, 235, 95, 207, 43, 144, 216, 6,
+                ];
                 assert_eq!(sig.as_ref(), should_be.as_slice());
             }
         }
@@ -254,18 +286,28 @@ pub(crate) mod tests {
     fn signkeypair_ed25519_seckey_sign_verify() {
         let mut rng = crate::util::test::rng();
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let seed = [111, 229, 76, 13, 231, 38, 253, 27, 53, 2, 235, 174, 151, 186, 192, 33, 16, 2, 57, 32, 170, 23, 13, 47, 44, 234, 231, 35, 38, 107, 93, 198];
+        let seed = [
+            111, 229, 76, 13, 231, 38, 253, 27, 53, 2, 235, 174, 151, 186, 192, 33, 16, 2, 57, 32, 170, 23, 13, 47, 44, 234, 231, 35, 38,
+            107, 93, 198,
+        ];
         let seckey = SecretKey::new_xchacha20poly1305_from_bytes(seed).expect("bad seed");
         let bytes: &[u8] = seckey.as_ref();
         let seed: [u8; 32] = bytes[0..32].try_into().unwrap();
         let our_keypair = SignKeypair::new_ed25519_from_bytes(&mut rng, &master_key, seed).unwrap();
 
-        let msg_real = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
-        let msg_fake = String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...");
+        let msg_real =
+            String::from("the old man leaned back in his chair, his face weathered by the ceaseless march of time, pondering his...");
+        let msg_fake = String::from(
+            "the old man leaned back in his chair, his face weathered by the ceaseless march of NATUREFRESH MILK, pondering his...",
+        );
         let sig = our_keypair.sign(&master_key, msg_real.as_bytes()).unwrap();
         match sig {
             SignKeypairSignature::Ed25519(ref sig) => {
-                let should_be: Vec<u8> = vec![17, 231, 166, 244, 122, 249, 185, 25, 178, 140, 210, 159, 14, 92, 120, 135, 28, 110, 235, 86, 175, 63, 104, 145, 128, 242, 145, 72, 127, 184, 232, 35, 213, 6, 226, 12, 188, 212, 101, 194, 225, 178, 224, 234, 137, 157, 209, 149, 106, 139, 205, 30, 40, 153, 55, 151, 78, 15, 9, 216, 57, 27, 139, 0];
+                let should_be: Vec<u8> = vec![
+                    17, 231, 166, 244, 122, 249, 185, 25, 178, 140, 210, 159, 14, 92, 120, 135, 28, 110, 235, 86, 175, 63, 104, 145, 128,
+                    242, 145, 72, 127, 184, 232, 35, 213, 6, 226, 12, 188, 212, 101, 194, 225, 178, 224, 234, 137, 157, 209, 149, 106, 139,
+                    205, 30, 40, 153, 55, 151, 78, 15, 9, 216, 57, 27, 139, 0,
+                ];
                 assert_eq!(sig.as_ref(), should_be.as_slice());
             }
         }
@@ -280,7 +322,7 @@ pub(crate) mod tests {
         let mut rng = crate::util::test::rng();
         let master_key1 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let master_key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        assert!(master_key1 != master_key2);    // lazy, but ok
+        assert!(master_key1 != master_key2); // lazy, but ok
         let keypair = SignKeypair::new_ed25519(&mut rng, &master_key1).unwrap();
         let data = vec![1, 2, 3, 4, 5];
         let sig1 = keypair.sign(&master_key1, data.as_slice()).unwrap();
@@ -324,4 +366,3 @@ pub(crate) mod tests {
         assert!(keypair1 != keypair3);
     }
 }
-

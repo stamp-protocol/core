@@ -11,10 +11,9 @@
 //! provides all the mechanisms necessary for encryption, decryption, signing,
 //! and verification of data.
 
-pub mod keychain;
 pub mod claim;
-pub mod stamp;
 pub mod identity;
+pub mod keychain;
+pub mod stamp;
 
 pub use identity::*;
-

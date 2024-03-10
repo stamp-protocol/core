@@ -193,7 +193,7 @@ pub enum Error {
 
     /// Error parsing a URL
     #[error("URL parse error")]
-    Url(#[from] url::ParseError)
+    Url(#[from] url::ParseError),
 }
 
 impl PartialEq for Error {
@@ -208,4 +208,3 @@ impl PartialEq for Error {
 
 /// Wraps `std::result::Result` around our `Error` enum
 pub type Result<T> = std::result::Result<T, Error>;
-

@@ -1,12 +1,11 @@
 use crate::{
     error::{Error, Result},
-    util::{
-        ser::{self, Binary},
-    },
+    util::ser::{self, Binary},
 };
-#[cfg(test)] use rand::{RngCore, rngs::OsRng};
-use rasn::{AsnType, Encode, Decode};
-use serde_derive::{Serialize, Deserialize};
+#[cfg(test)]
+use rand::{rngs::OsRng, RngCore};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// An enum we can pass to various signing functions to tell them which hashing
@@ -34,7 +33,7 @@ impl Hash {
     /// Create a new blake3 (512 bit) hash from a message
     pub fn new_blake3(message: &[u8]) -> Result<Self> {
         let hash = blake3::hash(message);
-        let arr: [u8; 32] = hash.as_bytes().clone();
+        let arr: [u8; 32] = *hash.as_bytes();
         Ok(Self::Blake3(Binary::new(arr)))
     }
 
@@ -63,9 +62,7 @@ impl TryFrom<&Hash> for String {
             vec
         }
         let enc = match hash {
-            Hash::Blake3(bin) => {
-                bin_with_tag(bin, 0)
-            }
+            Hash::Blake3(bin) => bin_with_tag(bin, 0),
         };
         Ok(ser::base64_encode(&enc[..]))
     }
@@ -80,8 +77,7 @@ impl TryFrom<&str> for Hash {
         let bytes = &dec[0..dec.len() - 1];
         let hash = match tag {
             0 => {
-                let arr: [u8; 32] = bytes.try_into()
-                    .map_err(|_| Error::BadLength)?;
+                let arr: [u8; 32] = bytes.try_into().map_err(|_| Error::BadLength)?;
                 Self::Blake3(Binary::new(arr))
             }
             _ => Err(Error::CryptoAlgoMismatch)?,
@@ -128,4 +124,3 @@ pub(crate) mod tests {
         }
     }
 }
-

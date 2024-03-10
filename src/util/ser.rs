@@ -7,14 +7,18 @@
 //! readily supported by rust, we kind of have to take things into our own hands
 //! here and just make some serialization calls.
 
-use base64::Engine as _;
-use core::hash::Hash;
 use crate::{
     error::{Error, Result},
     util::Public,
 };
-use rasn::{AsnType, Encode, Encoder, Decode, Decoder, Tag};
-use serde::{Serialize, Deserialize, ser::Serializer, de::{Deserializer, DeserializeOwned}};
+use base64::Engine as _;
+use core::hash::Hash;
+use rasn::{AsnType, Decode, Decoder, Encode, Encoder, Tag};
+use serde::{
+    de::{DeserializeOwned, Deserializer},
+    ser::Serializer,
+    Deserialize, Serialize,
+};
 use std::collections::HashMap;
 use std::convert::From;
 use std::ops::{Deref, DerefMut};
@@ -27,7 +31,8 @@ pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
 
 /// Serialize an object into human-readable format.
 pub(crate) fn serialize_text<T>(obj: &T) -> Result<String>
-    where T: Serialize + Public
+where
+    T: Serialize + Public,
 {
     let stripped: T = obj.strip_private();
     Ok(serde_yaml::to_string(&stripped)?)
@@ -35,7 +40,8 @@ pub(crate) fn serialize_text<T>(obj: &T) -> Result<String>
 
 #[cfg(feature = "yaml-export")]
 pub fn text_export<T>(obj: &T) -> Result<String>
-    where T: Serialize
+where
+    T: Serialize,
 {
     Ok(serde_yaml::to_string(&obj)?)
 }
@@ -47,14 +53,16 @@ pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
 
 /// Deserialize an object from human-readable format.
 pub(crate) fn deserialize_text<T>(ser: &str) -> Result<T>
-    where T: DeserializeOwned + Public
+where
+    T: DeserializeOwned + Public,
 {
-    Ok(serde_yaml::from_str(&ser)?)
+    Ok(serde_yaml::from_str(ser)?)
 }
 
 #[cfg(feature = "yaml-export")]
 pub fn text_import<T>(ser: &str) -> Result<T>
-    where T: DeserializeOwned
+where
+    T: DeserializeOwned,
 {
     Ok(serde_yaml::from_str(&ser)?)
 }
@@ -68,8 +76,7 @@ pub fn base64_encode<T: AsRef<[u8]>>(bytes: T) -> String {
 pub fn base64_decode<T: AsRef<[u8]>>(bytes: T) -> Result<Vec<u8>> {
     // annoying alloc, but seems necessary as the base64 crate doesn't ignore whitespace
     let mut filter_whitespace = Vec::from(bytes.as_ref());
-    filter_whitespace
-        .retain(|b| !b" \n\t\r\x0b\x0c".contains(b));
+    filter_whitespace.retain(|b| !b" \n\t\r\x0b\x0c".contains(b));
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&filter_whitespace[..])?)
 }
 
@@ -113,7 +120,12 @@ macro_rules! impl_asn1_binary {
         }
 
         impl<const N: usize> Encode for $name<N> {
-            fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+            fn encode_with_tag_and_constraints<E: Encoder>(
+                &self,
+                encoder: &mut E,
+                tag: Tag,
+                constraints: rasn::types::constraints::Constraints,
+            ) -> std::result::Result<(), E::Error> {
                 // Accepts a closure that encodes the contents of the sequence.
                 encoder.encode_octet_string(tag, constraints, &self.0[..])?;
                 Ok(())
@@ -121,14 +133,19 @@ macro_rules! impl_asn1_binary {
         }
 
         impl<const N: usize> Decode for $name<N> {
-            fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+            fn decode_with_tag_and_constraints<D: Decoder>(
+                decoder: &mut D,
+                tag: Tag,
+                constraints: rasn::types::constraints::Constraints,
+            ) -> std::result::Result<Self, D::Error> {
                 let vec = decoder.decode_octet_string(tag, constraints)?;
-                let arr = vec.try_into()
+                let arr = vec
+                    .try_into()
                     .map_err(|_| rasn::de::Error::no_valid_choice("octet string is incorrect length", rasn::Codec::Der))?;
                 Ok(Self(arr))
             }
         }
-    }
+    };
 }
 
 /// Defines a container for fixed-length binary data in octet form. Effectively
@@ -238,12 +255,16 @@ impl From<BinaryVec> for Vec<u8> {
 
 impl Deref for BinaryVec {
     type Target = Vec<u8>;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 #[cfg(test)]
 impl DerefMut for BinaryVec {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl AsnType for BinaryVec {
@@ -251,14 +272,23 @@ impl AsnType for BinaryVec {
 }
 
 impl Encode for BinaryVec {
-    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
+    fn encode_with_tag_and_constraints<E: Encoder>(
+        &self,
+        encoder: &mut E,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<(), E::Error> {
         encoder.encode_octet_string(tag, constraints, &self.0[..])?;
         Ok(())
     }
 }
 
 impl Decode for BinaryVec {
-    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+    fn decode_with_tag_and_constraints<D: Decoder>(
+        decoder: &mut D,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<Self, D::Error> {
         let vec = decoder.decode_octet_string(tag, constraints)?;
         Ok(Self(vec))
     }
@@ -282,8 +312,10 @@ impl<'de> serde::Deserialize<'de> for BinaryVec {
 ///
 /// Mainly useful for representing hash-table-esque data in places where hash
 /// tables are not supported (*cough* ASN1).
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-struct KeyValEntry< K, V> {
+#[derive(
+    Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
+struct KeyValEntry<K, V> {
     /// The key
     #[rasn(tag(explicit(0)))]
     key: K,
@@ -305,11 +337,15 @@ pub struct HashMapAsn1<K, V>(HashMap<K, V>);
 
 impl<K, V> Deref for HashMapAsn1<K, V> {
     type Target = HashMap<K, V>;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl<K, V> DerefMut for HashMapAsn1<K, V> {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl<K, V> From<HashMap<K, V>> for HashMapAsn1<K, V> {
@@ -323,17 +359,24 @@ impl<K: AsnType, V: AsnType> AsnType for HashMapAsn1<K, V> {
 }
 
 impl<K: Encode, V: Encode> Encode for HashMapAsn1<K, V> {
-    fn encode_with_tag_and_constraints<E: Encoder>(&self, encoder: &mut E, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<(), E::Error> {
-        let entries = self.iter()
-            .map(|(k, v)| KeyValEntry::new(k, v))
-            .collect::<Vec<_>>();
+    fn encode_with_tag_and_constraints<E: Encoder>(
+        &self,
+        encoder: &mut E,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<(), E::Error> {
+        let entries = self.iter().map(|(k, v)| KeyValEntry::new(k, v)).collect::<Vec<_>>();
         encoder.encode_sequence_of(tag, &entries[..], constraints)?;
         Ok(())
     }
 }
 
 impl<K: Decode + Eq + Hash, V: Decode> Decode for HashMapAsn1<K, V> {
-    fn decode_with_tag_and_constraints<D: Decoder>(decoder: &mut D, tag: Tag, constraints: rasn::types::constraints::Constraints) -> std::result::Result<Self, D::Error> {
+    fn decode_with_tag_and_constraints<D: Decoder>(
+        decoder: &mut D,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<Self, D::Error> {
         let vec: Vec<KeyValEntry<K, V>> = decoder.decode_sequence_of(tag, constraints)?;
         let mut map = HashMap::with_capacity(vec.len());
         for KeyValEntry { key, val } in vec {
@@ -380,10 +423,11 @@ impl<const N: usize> From<[(&str, &str); N]> for HashMapAsn1<BinaryVec, BinaryVe
 /// nanosecond timestamp when in binary (much smaller).
 pub(crate) mod timestamp {
     use chrono::{DateTime, Utc};
-    use serde::{Serialize, Serializer, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(ts: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer,
+    where
+        S: Serializer,
     {
         if serializer.is_human_readable() {
             ts.serialize(serializer)
@@ -393,7 +437,8 @@ pub(crate) mod timestamp {
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
-        where D: Deserializer<'de>,
+    where
+        D: Deserializer<'de>,
     {
         if deserializer.is_human_readable() {
             chrono::DateTime::deserialize(deserializer)
@@ -477,15 +522,10 @@ mod tests {
             },
         }
 
-        let transactions1 = vec![
-            MultisigPolicySignature::Key {
-                key: String::from("key"),
-            },
-        ];
+        let transactions1 = vec![MultisigPolicySignature::Key { key: String::from("key") }];
 
         let ser1 = rasn::der::encode(&transactions1).unwrap();
         let transactions1_2: Vec<MultisigPolicySignature> = rasn::der::decode(&ser1[..]).unwrap();
         assert_eq!(transactions1_2.len(), 1);
     }
 }
-

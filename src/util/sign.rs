@@ -1,6 +1,6 @@
 //! Includes some utilities helpful for generating signatures.
 
-use rasn::{Encode};
+use rasn::Encode;
 
 /// A trait that allows an object to return a signable representation of itself.
 pub trait Signable {
@@ -16,4 +16,3 @@ impl Signable for String {
         self.clone()
     }
 }
-

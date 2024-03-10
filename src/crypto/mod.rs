@@ -7,14 +7,9 @@ pub mod private;
 pub mod seal;
 pub mod sign;
 
-use crate::{
-    crypto::base::KeyID,
-    identity::{
-        IdentityID,
-    },
-};
-use rasn::{AsnType, Encode, Decode};
-use serde_derive::{Serialize, Deserialize};
+use crate::{crypto::base::KeyID, identity::IdentityID};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 
 /// A signature or object containing a signature that lists the identity and key
 /// that created the signature.
@@ -41,4 +36,3 @@ impl<T: serde::ser::Serialize + serde::de::DeserializeOwned> SignedObject<T> {
         }
     }
 }
-

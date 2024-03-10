@@ -7,44 +7,25 @@
 //! that transaction.
 
 use crate::{
-    error::{Error, Result},
-    crypto::base::{KeyID, SecretKey, Hash, HashAlgo},
+    crypto::base::{Hash, HashAlgo, KeyID, SecretKey},
     dag::Transactions,
+    error::{Error, Result},
     identity::{
-        claim::{
-            ClaimID,
-            ClaimSpec,
-        },
-        identity::{
-            IdentityID,
-            Identity,
-        },
-        keychain::{
-            AdminKey,
-            AdminKeyID,
-            AdminKeypair,
-            AdminKeypairPublic,
-            ExtendKeypair,
-            Key,
-            RevocationReason,
-        },
-        stamp::{
-            RevocationReason as StampRevocationReason,
-            StampID,
-            StampEntry,
-        },
+        claim::{ClaimID, ClaimSpec},
+        identity::{Identity, IdentityID},
+        keychain::{AdminKey, AdminKeyID, AdminKeypair, AdminKeypairPublic, ExtendKeypair, Key, RevocationReason},
+        stamp::{RevocationReason as StampRevocationReason, StampEntry, StampID},
     },
     policy::{Context, MultisigPolicySignature, Policy, PolicyContainer, PolicyID},
     util::{
-        Public,
-        Timestamp,
-        ser::{self, BinaryVec, DeText, HashMapAsn1, SerdeBinary, SerText},
+        ser::{self, BinaryVec, DeText, HashMapAsn1, SerText, SerdeBinary},
+        Public, Timestamp,
     },
 };
 use getset;
 use rand::{CryptoRng, RngCore};
-use rasn::{Encode, Decode, AsnType};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::hash::{Hash as StdHash, Hasher};
 use std::ops::Deref;
 
@@ -166,7 +147,7 @@ pub enum TransactionBody {
     },
     /// Add a new subkey to our keychain.
     #[rasn(tag(explicit(14)))]
-    AddSubkeyV1 { 
+    AddSubkeyV1 {
         #[rasn(tag(explicit(0)))]
         key: Key,
         #[rasn(tag(explicit(1)))]
@@ -272,7 +253,8 @@ impl TransactionBody {
     fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let new_self = match self {
             Self::CreateIdentityV1 { admin_keys, policies } => {
-                let admin_reenc = admin_keys.into_iter()
+                let admin_reenc = admin_keys
+                    .into_iter()
                     .map(|x| x.reencrypt(rng, old_master_key, new_master_key))
                     .collect::<Result<Vec<_>>>()?;
                 Self::CreateIdentityV1 {
@@ -283,7 +265,8 @@ impl TransactionBody {
             Self::ResetIdentityV1 { admin_keys, policies } => {
                 let admin_keys_reenc = admin_keys
                     .map(|keyvec| {
-                        keyvec.into_iter()
+                        keyvec
+                            .into_iter()
                             .map(|k| k.reencrypt(rng, old_master_key, new_master_key))
                             .collect::<Result<Vec<_>>>()
                     })
@@ -304,7 +287,7 @@ impl TransactionBody {
                 spec: spec.reencrypt(rng, old_master_key, new_master_key)?,
                 name,
             },
-            Self::EditClaimV1 { claim_id, name} => Self::EditClaimV1 { claim_id, name },
+            Self::EditClaimV1 { claim_id, name } => Self::EditClaimV1 { claim_id, name },
             Self::DeleteClaimV1 { claim_id } => Self::DeleteClaimV1 { claim_id },
             Self::MakeStampV1 { stamp } => Self::MakeStampV1 { stamp },
             Self::RevokeStampV1 { stamp_id, reason } => Self::RevokeStampV1 { stamp_id, reason },
@@ -312,7 +295,11 @@ impl TransactionBody {
             Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
             Self::AddSubkeyV1 { key, name, desc } => {
                 let new_subkey = key.reencrypt(rng, old_master_key, new_master_key)?;
-                Self::AddSubkeyV1 { key: new_subkey, name, desc }
+                Self::AddSubkeyV1 {
+                    key: new_subkey,
+                    name,
+                    desc,
+                }
             }
             Self::EditSubkeyV1 { id, new_name, new_desc } => Self::EditSubkeyV1 { id, new_name, new_desc },
             Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
@@ -321,7 +308,19 @@ impl TransactionBody {
                 transactions: Box::new(transactions.reencrypt(rng, old_master_key, new_master_key)?),
             },
             Self::SignV1 { creator, body_hash } => Self::SignV1 { creator, body_hash },
-            Self::ExtV1 { creator, ty, previous_transactions, context, payload } => Self::ExtV1 { creator, ty, previous_transactions, context, payload },
+            Self::ExtV1 {
+                creator,
+                ty,
+                previous_transactions,
+                context,
+                payload,
+            } => Self::ExtV1 {
+                creator,
+                ty,
+                previous_transactions,
+                context,
+                payload,
+            },
         };
         Ok(new_self)
     }
@@ -331,51 +330,73 @@ impl Public for TransactionBody {
     fn strip_private(&self) -> Self {
         match self.clone() {
             Self::CreateIdentityV1 { admin_keys, policies } => {
-                let admin_stripped = admin_keys.into_iter()
-                    .map(|k| k.strip_private())
-                    .collect::<Vec<_>>();
-                Self::CreateIdentityV1 { admin_keys: admin_stripped, policies }
+                let admin_stripped = admin_keys.into_iter().map(|k| k.strip_private()).collect::<Vec<_>>();
+                Self::CreateIdentityV1 {
+                    admin_keys: admin_stripped,
+                    policies,
+                }
             }
             Self::ResetIdentityV1 { admin_keys, policies } => {
-                let stripped_admin = admin_keys
-                    .map(|keys| {
-                        keys.into_iter()
-                            .map(|k| k.strip_private())
-                            .collect::<Vec<_>>()
-                    });
-                Self::ResetIdentityV1 { admin_keys: stripped_admin, policies }
+                let stripped_admin = admin_keys.map(|keys| keys.into_iter().map(|k| k.strip_private()).collect::<Vec<_>>());
+                Self::ResetIdentityV1 {
+                    admin_keys: stripped_admin,
+                    policies,
+                }
             }
-            Self::AddAdminKeyV1 { admin_key } => Self::AddAdminKeyV1 { admin_key: admin_key.strip_private() },
+            Self::AddAdminKeyV1 { admin_key } => Self::AddAdminKeyV1 {
+                admin_key: admin_key.strip_private(),
+            },
             Self::EditAdminKeyV1 { id, name, description } => Self::EditAdminKeyV1 { id, name, description },
             Self::RevokeAdminKeyV1 { id, reason, new_name } => Self::RevokeAdminKeyV1 { id, reason, new_name },
             Self::AddPolicyV1 { policy } => Self::AddPolicyV1 { policy },
             Self::DeletePolicyV1 { id } => Self::DeletePolicyV1 { id },
-            Self::MakeClaimV1 { spec, name } => Self::MakeClaimV1 { spec: spec.strip_private(), name },
+            Self::MakeClaimV1 { spec, name } => Self::MakeClaimV1 {
+                spec: spec.strip_private(),
+                name,
+            },
             Self::EditClaimV1 { claim_id, name } => Self::EditClaimV1 { claim_id, name },
             Self::DeleteClaimV1 { claim_id } => Self::DeleteClaimV1 { claim_id },
             Self::MakeStampV1 { stamp } => Self::MakeStampV1 { stamp },
             Self::RevokeStampV1 { stamp_id, reason } => Self::RevokeStampV1 { stamp_id, reason },
-            Self::AcceptStampV1 { stamp_transaction } => Self::AcceptStampV1 { stamp_transaction: Box::new(stamp_transaction.strip_private()) },
+            Self::AcceptStampV1 { stamp_transaction } => Self::AcceptStampV1 {
+                stamp_transaction: Box::new(stamp_transaction.strip_private()),
+            },
             Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
-            Self::AddSubkeyV1 { key, name, desc } => Self::AddSubkeyV1 { key: key.strip_private(), name, desc },
+            Self::AddSubkeyV1 { key, name, desc } => Self::AddSubkeyV1 {
+                key: key.strip_private(),
+                name,
+                desc,
+            },
             Self::EditSubkeyV1 { id, new_name, new_desc } => Self::EditSubkeyV1 { id, new_name, new_desc },
             Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
-            Self::PublishV1 { transactions } => Self::PublishV1 { transactions: Box::new(transactions.strip_private()) },
+            Self::PublishV1 { transactions } => Self::PublishV1 {
+                transactions: Box::new(transactions.strip_private()),
+            },
             Self::SignV1 { creator, body_hash } => Self::SignV1 { creator, body_hash },
-            Self::ExtV1 { creator, ty, previous_transactions, context, payload } => Self::ExtV1 { creator, ty, previous_transactions, context, payload },
+            Self::ExtV1 {
+                creator,
+                ty,
+                previous_transactions,
+                context,
+                payload,
+            } => Self::ExtV1 {
+                creator,
+                ty,
+                previous_transactions,
+                context,
+                payload,
+            },
         }
     }
 
     fn has_private(&self) -> bool {
         match self {
             Self::CreateIdentityV1 { admin_keys, .. } => admin_keys.iter().any(|k| k.has_private()),
-            Self::ResetIdentityV1 { admin_keys, .. } => {
-                admin_keys
-                    .as_ref()
-                    .map(|keys| keys.iter().any(|x| x.key().has_private()))
-                    .unwrap_or(false)
-            }
+            Self::ResetIdentityV1 { admin_keys, .. } => admin_keys
+                .as_ref()
+                .map(|keys| keys.iter().any(|x| x.key().has_private()))
+                .unwrap_or(false),
             Self::AddAdminKeyV1 { admin_key } => admin_key.has_private(),
             Self::EditAdminKeyV1 { .. } => false,
             Self::RevokeAdminKeyV1 { .. } => false,
@@ -557,16 +578,14 @@ impl Transaction {
     /// Sign this transaction. This consumes the transaction, adds the signature
     /// to the `signatures` list, then returns the new transaction.
     pub fn sign<K>(mut self, master_key: &SecretKey, admin_key: &K) -> Result<Self>
-        where K: Deref<Target = AdminKeypair>
+    where
+        K: Deref<Target = AdminKeypair>,
     {
         let admin_key = admin_key.deref();
         let admin_key_pub: AdminKeypairPublic = admin_key.clone().into();
-        let sig_exists = self.signatures().iter()
-            .find(|sig| {
-                match sig {
-                    MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
-                }
-            });
+        let sig_exists = self.signatures().iter().find(|sig| match sig {
+            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
+        });
         if sig_exists.is_some() {
             Err(Error::DuplicateSignature)?;
         }
@@ -641,7 +660,7 @@ impl Transaction {
                 if !found_match {
                     Err(Error::PolicyNotFound)?;
                 }
-            }
+            };
         }
 
         // if we got here, the transaction, and all the signatures on it, are
@@ -666,7 +685,12 @@ impl Transaction {
                             .enumerate()
                             .map(|(idx, x)| PolicyContainer::from_policy_transaction(self.id(), idx, x.clone()))
                             .collect::<Result<Vec<PolicyContainer>>>()?;
-                        let identity = Identity::create(IdentityID::from(self.id().clone()), admin_keys.clone(), policies_con, self.entry().created().clone());
+                        let identity = Identity::create(
+                            IdentityID::from(self.id().clone()),
+                            admin_keys.clone(),
+                            policies_con,
+                            self.entry().created().clone(),
+                        );
                         search_capabilities! { &identity }
                         Ok(())
                     }
@@ -678,17 +702,21 @@ impl Transaction {
 
     /// Determines if this transaction has been signed by a given key.
     pub fn is_signed_by(&self, admin_key: &AdminKeypairPublic) -> bool {
-        self.signatures().iter()
-            .find(|sig| {
-                match sig {
-                    MultisigPolicySignature::Key { key, .. } => key == admin_key,
-                }
+        self.signatures()
+            .iter()
+            .find(|sig| match sig {
+                MultisigPolicySignature::Key { key, .. } => key == admin_key,
             })
             .is_some()
     }
 
     /// Reencrypt this transaction.
-    pub fn reencrypt<R: RngCore + CryptoRng>(mut self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt<R: RngCore + CryptoRng>(
+        mut self,
+        rng: &mut R,
+        old_master_key: &SecretKey,
+        new_master_key: &SecretKey,
+    ) -> Result<Self> {
         let new_body = self.entry().body().clone().reencrypt(rng, old_master_key, new_master_key)?;
         self.entry_mut().set_body(new_body);
         Ok(self)
@@ -715,14 +743,8 @@ impl DeText for Transaction {}
 mod tests {
     use super::*;
     use crate::{
-        crypto::{
-            base::SignKeypair,
-            private::MaybePrivate,
-        },
-        identity::{
-            keychain::RevocationReason,
-            stamp::Confidence,
-        },
+        crypto::{base::SignKeypair, private::MaybePrivate},
+        identity::{keychain::RevocationReason, stamp::Confidence},
         policy::{Capability, Context, ContextClaimType, MultisigPolicy, Policy, TransactionBodyType},
         util::{ser, test},
     };
@@ -744,14 +766,18 @@ mod tests {
                     assert!(body.has_private());
                     assert!(!body.strip_private().has_private());
                     let body2 = TransactionBody::ResetIdentityV1 {
-                        admin_keys: admin_keys.clone().map(|x| x.into_iter().map(|y| y.strip_private()).collect::<Vec<_>>()),
+                        admin_keys: admin_keys
+                            .clone()
+                            .map(|x| x.into_iter().map(|y| y.strip_private()).collect::<Vec<_>>()),
                         policies: policies.clone(),
                     };
                     assert!(!body2.has_private());
                 }
                 TransactionBody::AddAdminKeyV1 { admin_key } => {
                     assert!(body.has_private());
-                    let body2 = TransactionBody::AddAdminKeyV1 { admin_key: admin_key.strip_private() };
+                    let body2 = TransactionBody::AddAdminKeyV1 {
+                        admin_key: admin_key.strip_private(),
+                    };
                     assert!(!body2.has_private());
                 }
                 TransactionBody::EditAdminKeyV1 { .. } => {
@@ -768,7 +794,10 @@ mod tests {
                 }
                 TransactionBody::MakeClaimV1 { spec, name } => {
                     assert_eq!(body.has_private(), spec.has_private());
-                    let body2 = TransactionBody::MakeClaimV1 { spec: spec.strip_private(), name: name.clone() };
+                    let body2 = TransactionBody::MakeClaimV1 {
+                        spec: spec.strip_private(),
+                        name: name.clone(),
+                    };
                     assert!(!body2.has_private());
                     let body3 = body.strip_private();
                     assert!(!body3.has_private());
@@ -815,36 +844,73 @@ mod tests {
                     assert!(!body.has_private());
                 }
                 // blehhhh...
-                TransactionBody::PublishV1 { .. } => { }
+                TransactionBody::PublishV1 { .. } => {}
                 // blehhhh...
-                TransactionBody::SignV1 { .. } => { }
+                TransactionBody::SignV1 { .. } => {}
                 // blehhhh...
-                TransactionBody::ExtV1 { .. } => { }
+                TransactionBody::ExtV1 { .. } => {}
             }
         }
 
         let mut rng = crate::util::test::rng();
         let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
-        test_privates(&TransactionBody::CreateIdentityV1 { admin_keys: vec![admin_key.clone()], policies: Vec::new() });
-        test_privates(&TransactionBody::ResetIdentityV1 { admin_keys: Some(vec![admin_key.clone()]), policies: None });
-        test_privates(&TransactionBody::AddAdminKeyV1 { admin_key: admin_key.clone() });
-        test_privates(&TransactionBody::EditAdminKeyV1 { id: admin_key.key_id(), name: Some("poopy".into()), description: None });
-        test_privates(&TransactionBody::RevokeAdminKeyV1 { id: admin_key.key_id(), reason: RevocationReason::Compromised, new_name: Some("old key".into()) });
+        test_privates(&TransactionBody::CreateIdentityV1 {
+            admin_keys: vec![admin_key.clone()],
+            policies: Vec::new(),
+        });
+        test_privates(&TransactionBody::ResetIdentityV1 {
+            admin_keys: Some(vec![admin_key.clone()]),
+            policies: None,
+        });
+        test_privates(&TransactionBody::AddAdminKeyV1 {
+            admin_key: admin_key.clone(),
+        });
+        test_privates(&TransactionBody::EditAdminKeyV1 {
+            id: admin_key.key_id(),
+            name: Some("poopy".into()),
+            description: None,
+        });
+        test_privates(&TransactionBody::RevokeAdminKeyV1 {
+            id: admin_key.key_id(),
+            reason: RevocationReason::Compromised,
+            new_name: Some("old key".into()),
+        });
 
-        let policy = Policy::new(vec![], MultisigPolicy::MOfN { must_have: 0, participants: vec![] });
+        let policy = Policy::new(
+            vec![],
+            MultisigPolicy::MOfN {
+                must_have: 0,
+                participants: vec![],
+            },
+        );
         test_privates(&TransactionBody::AddPolicyV1 { policy });
         test_privates(&TransactionBody::DeletePolicyV1 { id: PolicyID::random() });
-        test_privates(&TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_public(String::from("Negative Nancy"))), name: None });
-        test_privates(&TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, String::from("Positive Pyotr")).unwrap()), name: Some("Grover".into()) });
-        test_privates(&TransactionBody::DeleteClaimV1 { claim_id: ClaimID::random() });
+        test_privates(&TransactionBody::MakeClaimV1 {
+            spec: ClaimSpec::Name(MaybePrivate::new_public(String::from("Negative Nancy"))),
+            name: None,
+        });
+        test_privates(&TransactionBody::MakeClaimV1 {
+            spec: ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, String::from("Positive Pyotr")).unwrap()),
+            name: Some("Grover".into()),
+        });
+        test_privates(&TransactionBody::DeleteClaimV1 {
+            claim_id: ClaimID::random(),
+        });
 
         let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::Low, None);
         test_privates(&TransactionBody::MakeStampV1 { stamp: entry.clone() });
-        test_privates(&TransactionBody::RevokeStampV1 { stamp_id: StampID::random(), reason: StampRevocationReason::Unspecified });
+        test_privates(&TransactionBody::RevokeStampV1 {
+            stamp_id: StampID::random(),
+            reason: StampRevocationReason::Unspecified,
+        });
         let stamp_transaction = transactions.make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry.clone()).unwrap();
-        test_privates(&TransactionBody::AcceptStampV1 { stamp_transaction: Box::new(stamp_transaction) });
-        test_privates(&TransactionBody::DeleteStampV1 { stamp_id: StampID::random() });
+        test_privates(&TransactionBody::AcceptStampV1 {
+            stamp_transaction: Box::new(stamp_transaction),
+        });
+        test_privates(&TransactionBody::DeleteStampV1 {
+            stamp_id: StampID::random(),
+        });
 
         let key = Key::new_sign(admin_key.key().deref().clone());
         let key_id = key.key_id();
@@ -890,7 +956,10 @@ mod tests {
         let (_master_key2, mut transactions2, _admin_key2) = test::create_fake_identity(&mut rng, now.clone());
         transactions1.transactions()[0].verify_hash_and_signatures().unwrap();
         *transactions2.transactions_mut()[0].signatures_mut() = transactions1.transactions()[0].signatures().clone();
-        assert!(matches!(transactions2.transactions()[0].verify_hash_and_signatures(), Err(Error::TransactionSignatureInvalid(_))));
+        assert!(matches!(
+            transactions2.transactions()[0].verify_hash_and_signatures(),
+            Err(Error::TransactionSignatureInvalid(_))
+        ));
     }
 
     #[test]
@@ -974,7 +1043,16 @@ mod tests {
     macro_rules! assert_sign_keys_eq {
         ($master:expr, $key1:expr, $key2:expr) => {
             match ($key1, $key2) {
-                (SignKeypair::Ed25519 { public: public1, secret: Some(secret1)}, SignKeypair::Ed25519 { public: public2, secret: Some(secret2)}) => {
+                (
+                    SignKeypair::Ed25519 {
+                        public: public1,
+                        secret: Some(secret1),
+                    },
+                    SignKeypair::Ed25519 {
+                        public: public2,
+                        secret: Some(secret2),
+                    },
+                ) => {
                     assert_eq!(public1, public2);
                     let revealed1 = secret1.open($master).unwrap();
                     let revealed2 = secret2.open($master).unwrap();
@@ -982,7 +1060,7 @@ mod tests {
                 }
                 _ => panic!("assert_keys_eq -- invalid pattern encountered"),
             }
-        }
+        };
     }
 
     #[test]
@@ -992,37 +1070,65 @@ mod tests {
         let admin_key1 = AdminKey::new(
             AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "alpha",
-            Some("hello there")
+            Some("hello there"),
         );
-        let admin_key2 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
-            "name-claim",
-            None
-        );
+        let admin_key2 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()), "name-claim", None);
         let policy1 = Policy::new(
             vec![Capability::Permissive],
-            MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key1.key().clone().into()] }
+            MultisigPolicy::MOfN {
+                must_have: 1,
+                participants: vec![admin_key1.key().clone().into()],
+            },
         );
         let policy2 = Policy::new(
-            vec![
-                Capability::Transaction {
-                    body_type: vec![TransactionBodyType::MakeClaimV1],
-                    context: Context::All(vec![Context::ClaimType(ContextClaimType::Name)]),
-                },
-            ],
-            MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key2.key().clone().into()] }
+            vec![Capability::Transaction {
+                body_type: vec![TransactionBodyType::MakeClaimV1],
+                context: Context::All(vec![Context::ClaimType(ContextClaimType::Name)]),
+            }],
+            MultisigPolicy::MOfN {
+                must_have: 1,
+                participants: vec![admin_key2.key().clone().into()],
+            },
         );
         let trans = TransactionBody::CreateIdentityV1 {
             admin_keys: vec![admin_key1.clone(), admin_key2.clone()],
             policies: vec![policy1, policy2],
         };
         let ser_check = ser::serialize(&trans).unwrap();
-        let ser = [160, 130, 1, 232, 48, 130, 1, 228, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203, 142, 148, 84, 206, 16, 28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191, 181, 136, 133, 189, 166, 11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108, 108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 126, 211, 248, 125, 247, 70, 44, 106, 7, 197, 177, 121, 25, 118, 5, 100, 96, 210, 7, 49, 214, 133, 140, 43, 161, 52, 4, 50, 50, 61, 176, 253, 193, 203, 151, 105, 21, 18, 9, 43, 235, 225, 118, 44, 149, 110, 145, 115, 98, 235, 65, 219, 156, 13, 170, 216, 244, 198, 121, 156, 250, 36, 176, 190, 92, 116, 212, 140, 193, 73, 68, 13, 184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 161, 48, 129, 158, 48, 67, 160, 6, 48, 4, 160, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 48, 87, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88];
+        let ser = [
+            160, 130, 1, 232, 48, 130, 1, 228, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160,
+            34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46,
+            150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17,
+            36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203,
+            142, 148, 84, 206, 16, 28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191,
+            181, 136, 133, 189, 166, 11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108,
+            108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 151, 40, 118, 117,
+            50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88,
+            161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 126, 211, 248, 125, 247, 70, 44, 106, 7, 197, 177, 121, 25, 118, 5, 100, 96,
+            210, 7, 49, 214, 133, 140, 43, 161, 52, 4, 50, 50, 61, 176, 253, 193, 203, 151, 105, 21, 18, 9, 43, 235, 225, 118, 44, 149,
+            110, 145, 115, 98, 235, 65, 219, 156, 13, 170, 216, 244, 198, 121, 156, 250, 36, 176, 190, 92, 116, 212, 140, 193, 73, 68, 13,
+            184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 161, 48, 129, 158, 48,
+            67, 160, 6, 48, 4, 160, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36,
+            160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242,
+            46, 150, 172, 28, 121, 47, 92, 109, 48, 87, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48,
+            6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34,
+            4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209,
+            82, 131, 11, 177, 81, 88,
+        ];
         assert_eq!(ser_check, ser);
         let trans_deser: TransactionBody = ser::deserialize(&ser).unwrap();
 
         match (trans, trans_deser) {
-            (TransactionBody::CreateIdentityV1 { admin_keys: admin_keys1, policies: policies1 }, TransactionBody::CreateIdentityV1 { admin_keys: admin_keys2, policies: policies2 }) => {
+            (
+                TransactionBody::CreateIdentityV1 {
+                    admin_keys: admin_keys1,
+                    policies: policies1,
+                },
+                TransactionBody::CreateIdentityV1 {
+                    admin_keys: admin_keys2,
+                    policies: policies2,
+                },
+            ) => {
                 assert_eq!(admin_keys1.len(), 2);
                 assert_eq!(admin_keys2.len(), 2);
                 assert_sign_keys_eq!(&master_key, admin_keys1[0].key().deref(), admin_keys2[0].key().deref());
@@ -1041,25 +1147,25 @@ mod tests {
         let admin_key1 = AdminKey::new(
             AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "alpha",
-            Some("hello there")
+            Some("hello there"),
         );
-        let admin_key2 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
-            "name-claim",
-            None
-        );
+        let admin_key2 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()), "name-claim", None);
         let policy1 = Policy::new(
             vec![Capability::Permissive],
-            MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key1.key().clone().into()] }
+            MultisigPolicy::MOfN {
+                must_have: 1,
+                participants: vec![admin_key1.key().clone().into()],
+            },
         );
         let policy2 = Policy::new(
-            vec![
-                Capability::Transaction {
-                    body_type: vec![TransactionBodyType::MakeClaimV1],
-                    context: Context::All(vec![Context::ClaimType(ContextClaimType::Name)]),
-                },
-            ],
-            MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key2.key().clone().into()] }
+            vec![Capability::Transaction {
+                body_type: vec![TransactionBodyType::MakeClaimV1],
+                context: Context::All(vec![Context::ClaimType(ContextClaimType::Name)]),
+            }],
+            MultisigPolicy::MOfN {
+                must_have: 1,
+                participants: vec![admin_key2.key().clone().into()],
+            },
         );
         let trans1 = TransactionBody::ResetIdentityV1 {
             admin_keys: Some(vec![admin_key1.clone(), admin_key2.clone()]),
@@ -1071,7 +1177,26 @@ mod tests {
         };
         let ser1_check = ser::serialize(&trans1).unwrap();
         let ser2_check = ser::serialize(&trans2).unwrap();
-        let ser1 = [161, 130, 1, 232, 48, 130, 1, 228, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203, 142, 148, 84, 206, 16, 28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191, 181, 136, 133, 189, 166, 11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108, 108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 126, 211, 248, 125, 247, 70, 44, 106, 7, 197, 177, 121, 25, 118, 5, 100, 96, 210, 7, 49, 214, 133, 140, 43, 161, 52, 4, 50, 50, 61, 176, 253, 193, 203, 151, 105, 21, 18, 9, 43, 235, 225, 118, 44, 149, 110, 145, 115, 98, 235, 65, 219, 156, 13, 170, 216, 244, 198, 121, 156, 250, 36, 176, 190, 92, 116, 212, 140, 193, 73, 68, 13, 184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 161, 48, 129, 158, 48, 67, 160, 6, 48, 4, 160, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 48, 87, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88];
+        let ser1 = [
+            161, 130, 1, 232, 48, 130, 1, 228, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160,
+            34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46,
+            150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17,
+            36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203,
+            142, 148, 84, 206, 16, 28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191,
+            181, 136, 133, 189, 166, 11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108,
+            108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 151, 40, 118, 117,
+            50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88,
+            161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 126, 211, 248, 125, 247, 70, 44, 106, 7, 197, 177, 121, 25, 118, 5, 100, 96,
+            210, 7, 49, 214, 133, 140, 43, 161, 52, 4, 50, 50, 61, 176, 253, 193, 203, 151, 105, 21, 18, 9, 43, 235, 225, 118, 44, 149,
+            110, 145, 115, 98, 235, 65, 219, 156, 13, 170, 216, 244, 198, 121, 156, 250, 36, 176, 190, 92, 116, 212, 140, 193, 73, 68, 13,
+            184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 161, 48, 129, 158, 48,
+            67, 160, 6, 48, 4, 160, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36,
+            160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242,
+            46, 150, 172, 28, 121, 47, 92, 109, 48, 87, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48,
+            6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34,
+            4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209,
+            82, 131, 11, 177, 81, 88,
+        ];
         let ser2 = [161, 6, 48, 4, 160, 0, 161, 0];
         assert_eq!(ser1_check, ser1);
         assert_eq!(ser2_check, ser2);
@@ -1079,7 +1204,16 @@ mod tests {
         let trans_deser2: TransactionBody = ser::deserialize(&ser2).unwrap();
 
         match (trans1, trans_deser1) {
-            (TransactionBody::ResetIdentityV1 { admin_keys: Some(admin_keys1), policies: policies1 }, TransactionBody::ResetIdentityV1 { admin_keys: Some(admin_keys2), policies: policies2 }) => {
+            (
+                TransactionBody::ResetIdentityV1 {
+                    admin_keys: Some(admin_keys1),
+                    policies: policies1,
+                },
+                TransactionBody::ResetIdentityV1 {
+                    admin_keys: Some(admin_keys2),
+                    policies: policies2,
+                },
+            ) => {
                 assert_eq!(admin_keys1.len(), 2);
                 assert_eq!(admin_keys2.len(), 2);
                 assert_sign_keys_eq!(&master_key, admin_keys1[0].key().deref(), admin_keys2[0].key().deref());
@@ -1089,7 +1223,16 @@ mod tests {
             _ => panic!("Unmatched serialization"),
         }
         match (trans2, trans_deser2) {
-            (TransactionBody::ResetIdentityV1 { admin_keys: admin_keys1, policies: policies1 }, TransactionBody::ResetIdentityV1 { admin_keys: admin_keys2, policies: policies2 }) => {
+            (
+                TransactionBody::ResetIdentityV1 {
+                    admin_keys: admin_keys1,
+                    policies: policies1,
+                },
+                TransactionBody::ResetIdentityV1 {
+                    admin_keys: admin_keys2,
+                    policies: policies2,
+                },
+            ) => {
                 assert!(admin_keys1.is_none());
                 assert!(admin_keys2.is_none());
                 assert!(policies1.is_none());
@@ -1106,13 +1249,20 @@ mod tests {
         let admin_key1 = AdminKey::new(
             AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "alpha",
-            Some("been watching you for quite a while now")
+            Some("been watching you for quite a while now"),
         );
-        let trans1 = TransactionBody::AddAdminKeyV1 {
-            admin_key: admin_key1,
-        };
+        let trans1 = TransactionBody::AddAdminKeyV1 { admin_key: admin_key1 };
         let ser1_check = ser::serialize(&trans1).unwrap();
-        let ser1 = [162, 129, 195, 48, 129, 192, 160, 129, 189, 48, 129, 186, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203, 142, 148, 84, 206, 16, 28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191, 181, 136, 133, 189, 166, 11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 41, 12, 39, 98, 101, 101, 110, 32, 119, 97, 116, 99, 104, 105, 110, 103, 32, 121, 111, 117, 32, 102, 111, 114, 32, 113, 117, 105, 116, 101, 32, 97, 32, 119, 104, 105, 108, 101, 32, 110, 111, 119];
+        let ser1 = [
+            162, 129, 195, 48, 129, 192, 160, 129, 189, 48, 129, 186, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17,
+            113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47,
+            92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198,
+            21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203, 142, 148, 84, 206, 16,
+            28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191, 181, 136, 133, 189, 166,
+            11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 41, 12, 39, 98, 101, 101, 110, 32, 119, 97, 116,
+            99, 104, 105, 110, 103, 32, 121, 111, 117, 32, 102, 111, 114, 32, 113, 117, 105, 116, 101, 32, 97, 32, 119, 104, 105, 108, 101,
+            32, 110, 111, 119,
+        ];
         assert_eq!(ser1_check, ser1);
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
 
@@ -1131,7 +1281,7 @@ mod tests {
         let admin_key1 = AdminKey::new(
             AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "admin/edit",
-            Some("i like your hat")
+            Some("i like your hat"),
         );
         let trans1 = TransactionBody::EditAdminKeyV1 {
             id: admin_key1.key_id(),
@@ -1143,13 +1293,32 @@ mod tests {
             name: Some("admin/all".to_string()),
             description: Some(Some("fun times".to_string())),
         };
-        let ser1 = [163, 57, 48, 55, 160, 38, 160, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108, 108, 162, 0];
-        let ser2 = [163, 68, 48, 66, 160, 38, 160, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108, 108, 162, 11, 12, 9, 102, 117, 110, 32, 116, 105, 109, 101, 115];
+        let ser1 = [
+            163, 57, 48, 55, 160, 38, 160, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214,
+            213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108,
+            108, 162, 0,
+        ];
+        let ser2 = [
+            163, 68, 48, 66, 160, 38, 160, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214,
+            213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108,
+            108, 162, 11, 12, 9, 102, 117, 110, 32, 116, 105, 109, 101, 115,
+        ];
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
         let trans_deser2: TransactionBody = ser::deserialize(&ser2).unwrap();
 
         match (trans1, trans_deser1) {
-            (TransactionBody::EditAdminKeyV1 { id: id1, name: name1, description: desc1 }, TransactionBody::EditAdminKeyV1 { id: id2, name: name2, description: desc2 }) => {
+            (
+                TransactionBody::EditAdminKeyV1 {
+                    id: id1,
+                    name: name1,
+                    description: desc1,
+                },
+                TransactionBody::EditAdminKeyV1 {
+                    id: id2,
+                    name: name2,
+                    description: desc2,
+                },
+            ) => {
                 assert_eq!(id1, id2);
                 assert_eq!(name1, name2);
                 assert_eq!(desc1, desc2);
@@ -1157,7 +1326,18 @@ mod tests {
             _ => panic!("Unmatched serialization"),
         }
         match (trans2, trans_deser2) {
-            (TransactionBody::EditAdminKeyV1 { id: id1, name: name1, description: desc1 }, TransactionBody::EditAdminKeyV1 { id: id2, name: name2, description: desc2 }) => {
+            (
+                TransactionBody::EditAdminKeyV1 {
+                    id: id1,
+                    name: name1,
+                    description: desc1,
+                },
+                TransactionBody::EditAdminKeyV1 {
+                    id: id2,
+                    name: name2,
+                    description: desc2,
+                },
+            ) => {
                 assert_eq!(id1, id2);
                 assert_eq!(name1, name2);
                 assert_eq!(desc1, desc2);
@@ -1173,18 +1353,33 @@ mod tests {
         let admin_key1 = AdminKey::new(
             AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "admin/edit",
-            Some("i like your hat")
+            Some("i like your hat"),
         );
         let trans1 = TransactionBody::RevokeAdminKeyV1 {
             id: admin_key1.key_id(),
             reason: RevocationReason::Compromised,
             new_name: Some("admin/no-more".to_string()),
         };
-        let ser1 = [164, 65, 48, 63, 160, 38, 160, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 4, 162, 2, 5, 0, 162, 15, 12, 13, 97, 100, 109, 105, 110, 47, 110, 111, 45, 109, 111, 114, 101];
+        let ser1 = [
+            164, 65, 48, 63, 160, 38, 160, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214,
+            213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 4, 162, 2, 5, 0, 162, 15, 12, 13, 97, 100, 109,
+            105, 110, 47, 110, 111, 45, 109, 111, 114, 101,
+        ];
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
 
         match (trans1, trans_deser1) {
-            (TransactionBody::RevokeAdminKeyV1 { id: id1, reason: reason1, new_name: name1 }, TransactionBody::RevokeAdminKeyV1 { id: id2, reason: reason2, new_name: name2 }) => {
+            (
+                TransactionBody::RevokeAdminKeyV1 {
+                    id: id1,
+                    reason: reason1,
+                    new_name: name1,
+                },
+                TransactionBody::RevokeAdminKeyV1 {
+                    id: id2,
+                    reason: reason2,
+                    new_name: name2,
+                },
+            ) => {
                 assert_eq!(id1, id2);
                 assert_eq!(reason1, reason2);
                 assert_eq!(name1, name2);
@@ -1200,21 +1395,25 @@ mod tests {
         let admin_key1 = AdminKey::new(
             AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "admin/edit",
-            Some("i like your hat")
+            Some("i like your hat"),
         );
         let policy1 = Policy::new(
-            vec![
-                Capability::Transaction {
-                    body_type: vec![TransactionBodyType::MakeClaimV1],
-                    context: Context::All(vec![Context::ClaimType(ContextClaimType::Name)]),
-                },
-            ],
-            MultisigPolicy::MOfN { must_have: 1, participants: vec![admin_key1.key().clone().into()] }
+            vec![Capability::Transaction {
+                body_type: vec![TransactionBodyType::MakeClaimV1],
+                context: Context::All(vec![Context::ClaimType(ContextClaimType::Name)]),
+            }],
+            MultisigPolicy::MOfN {
+                must_have: 1,
+                participants: vec![admin_key1.key().clone().into()],
+            },
         );
-        let trans1 = TransactionBody::AddPolicyV1 {
-            policy: policy1,
-        };
-        let ser1 = [165, 93, 48, 91, 160, 89, 48, 87, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109];
+        let trans1 = TransactionBody::AddPolicyV1 { policy: policy1 };
+        let ser1 = [
+            165, 93, 48, 91, 160, 89, 48, 87, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169,
+            4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32,
+            226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172,
+            28, 121, 47, 92, 109,
+        ];
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
 
         match (trans1, trans_deser1) {
@@ -1228,10 +1427,11 @@ mod tests {
     #[test]
     fn trans_serde_delete_policy_v1() {
         let policy_id1 = PolicyID::from(TransactionID::from(Hash::new_blake3(&[55, 66, 42, 17, 0, 9]).unwrap()));
-        let trans1 = TransactionBody::DeletePolicyV1 {
-            id: policy_id1,
-        };
-        let ser1 = [166, 42, 48, 40, 160, 38, 48, 36, 160, 34, 4, 32, 2, 52, 247, 192, 86, 41, 53, 236, 142, 72, 7, 209, 104, 10, 19, 55, 211, 110, 35, 148, 193, 106, 201, 79, 182, 100, 227, 110, 29, 175, 128, 162];
+        let trans1 = TransactionBody::DeletePolicyV1 { id: policy_id1 };
+        let ser1 = [
+            166, 42, 48, 40, 160, 38, 48, 36, 160, 34, 4, 32, 2, 52, 247, 192, 86, 41, 53, 236, 142, 72, 7, 209, 104, 10, 19, 55, 211, 110,
+            35, 148, 193, 106, 201, 79, 182, 100, 227, 110, 29, 175, 128, 162,
+        ];
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
 
         match (trans1, trans_deser1) {
@@ -1246,7 +1446,9 @@ mod tests {
     fn trans_serde_make_claim_v1() {
         let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let claim1 = ClaimSpec::Identity(MaybePrivate::new_public(IdentityID::from(TransactionID::from(Hash::new_blake3(&[1, 2, 3, 4, 5]).unwrap()))));
+        let claim1 = ClaimSpec::Identity(MaybePrivate::new_public(IdentityID::from(TransactionID::from(
+            Hash::new_blake3(&[1, 2, 3, 4, 5]).unwrap(),
+        ))));
         let claim2 = ClaimSpec::Extension {
             key: BinaryVec::from(vec![2, 4, 6, 8]),
             value: MaybePrivate::new_private(&mut rng, &master_key, BinaryVec::from(vec![9, 9, 9])).unwrap(),
@@ -1255,12 +1457,21 @@ mod tests {
             spec: claim1,
             name: Some("my-old-id".to_string()),
         };
-        let trans2 = TransactionBody::MakeClaimV1 {
-            spec: claim2,
-            name: None,
-        };
-        let ser1 = [167, 59, 48, 57, 160, 42, 160, 40, 160, 38, 48, 36, 160, 34, 4, 32, 2, 79, 103, 192, 66, 90, 61, 192, 47, 186, 245, 140, 185, 61, 229, 19, 46, 61, 117, 197, 25, 250, 160, 186, 218, 33, 73, 29, 136, 201, 112, 87, 161, 11, 12, 9, 109, 121, 45, 111, 108, 100, 45, 105, 100];
-        let ser2 = [167, 129, 172, 48, 129, 169, 160, 129, 164, 172, 129, 161, 48, 129, 158, 160, 6, 4, 4, 2, 4, 6, 8, 161, 129, 147, 161, 129, 144, 48, 129, 141, 160, 36, 160, 34, 4, 32, 216, 38, 14, 63, 6, 105, 24, 215, 247, 128, 138, 208, 100, 48, 185, 147, 137, 79, 58, 139, 216, 1, 48, 218, 42, 87, 252, 65, 221, 233, 175, 90, 161, 101, 48, 99, 160, 97, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 65, 4, 63, 206, 128, 94, 229, 26, 112, 231, 200, 143, 126, 32, 50, 101, 242, 222, 26, 26, 215, 52, 27, 134, 11, 135, 88, 200, 251, 159, 208, 240, 39, 213, 110, 16, 84, 172, 181, 199, 215, 19, 103, 85, 216, 234, 141, 75, 132, 214, 7, 6, 83, 29, 38, 23, 15, 183, 78, 239, 100, 217, 4, 176, 122, 149, 161, 0];
+        let trans2 = TransactionBody::MakeClaimV1 { spec: claim2, name: None };
+        let ser1 = [
+            167, 59, 48, 57, 160, 42, 160, 40, 160, 38, 48, 36, 160, 34, 4, 32, 2, 79, 103, 192, 66, 90, 61, 192, 47, 186, 245, 140, 185,
+            61, 229, 19, 46, 61, 117, 197, 25, 250, 160, 186, 218, 33, 73, 29, 136, 201, 112, 87, 161, 11, 12, 9, 109, 121, 45, 111, 108,
+            100, 45, 105, 100,
+        ];
+        let ser2 = [
+            167, 129, 172, 48, 129, 169, 160, 129, 164, 172, 129, 161, 48, 129, 158, 160, 6, 4, 4, 2, 4, 6, 8, 161, 129, 147, 161, 129,
+            144, 48, 129, 141, 160, 36, 160, 34, 4, 32, 216, 38, 14, 63, 6, 105, 24, 215, 247, 128, 138, 208, 100, 48, 185, 147, 137, 79,
+            58, 139, 216, 1, 48, 218, 42, 87, 252, 65, 221, 233, 175, 90, 161, 101, 48, 99, 160, 97, 160, 28, 160, 26, 4, 24, 133, 132,
+            245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 65, 4, 63, 206, 128, 94,
+            229, 26, 112, 231, 200, 143, 126, 32, 50, 101, 242, 222, 26, 26, 215, 52, 27, 134, 11, 135, 88, 200, 251, 159, 208, 240, 39,
+            213, 110, 16, 84, 172, 181, 199, 215, 19, 103, 85, 216, 234, 141, 75, 132, 214, 7, 6, 83, 29, 38, 23, 15, 183, 78, 239, 100,
+            217, 4, 176, 122, 149, 161, 0,
+        ];
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
         let trans_deser2: TransactionBody = ser::deserialize(&ser2).unwrap();
 
@@ -1293,19 +1504,71 @@ mod tests {
         }
     }
 
-    #[ignore] #[test] fn trans_serde_edit_claim_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_delete_claim_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_make_stamp_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_revoke_stamp_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_accept_stamp_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_delete_stamp_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_add_subkey_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_edit_subkey_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_revoke_subkey_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_delete_subkey_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_publish_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_sign_v1() { todo!(); }
-    #[ignore] #[test] fn trans_serde_ext_v1() { todo!(); }
+    #[ignore]
+    #[test]
+    fn trans_serde_edit_claim_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_delete_claim_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_make_stamp_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_revoke_stamp_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_accept_stamp_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_delete_stamp_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_add_subkey_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_edit_subkey_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_revoke_subkey_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_delete_subkey_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_publish_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_sign_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn trans_serde_ext_v1() {
+        todo!();
+    }
 
     #[test]
     fn trans_deser_publish_yaml() {
@@ -1517,24 +1780,26 @@ signatures:
         match transaction.entry().body() {
             TransactionBody::PublishV1 { transactions } => {
                 let identity = transactions.build_identity().unwrap();
-                assert_eq!(
-                    format!("{}", identity.id()),
-                    "Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3AA"
-                );
-                let ids = transactions.transactions().iter()
+                assert_eq!(format!("{}", identity.id()), "Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3AA");
+                let ids = transactions
+                    .transactions()
+                    .iter()
                     .map(|x| format!("{}", x.id()))
                     .collect::<Vec<_>>();
-                assert_eq!(ids, vec![
-                    "Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3AA",
-                    "Dr4qJ88VNLMraCqXBGoNO8ILbtizognoTwOvR3o7OtYA",
-                    "yMRZQTTIsPdmCuhaJvwzCFXDsnljQk1y32VcgNn4b8oA",
-                    "13_BWJcu_HrKFQV0mSogjHpm3i-4HQGDf-6vhnarH5YA",
-                    "eG-ezU5d-LVjmVbIHy_CPDMIipkVozIAC2ym5glnUGoA",
-                    "MBngTWWon600NOBzZI2hVNetglpVJjfT5Ls807GyfqEA",
-                    "OG5wLtZuJ72SKujlp8YbOw3aQUyVTexYlKjv6L2KqVkA",
-                    "j98fNieA0pRXwKS6xBMkJYOWOuvOCBKzkOVyzG-2vXAA",
-                    "HflWay2xmCYnbqTKYP3utSo0s3v4Ne3vWOBzwHziD-oA",
-                ]);
+                assert_eq!(
+                    ids,
+                    vec![
+                        "Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3AA",
+                        "Dr4qJ88VNLMraCqXBGoNO8ILbtizognoTwOvR3o7OtYA",
+                        "yMRZQTTIsPdmCuhaJvwzCFXDsnljQk1y32VcgNn4b8oA",
+                        "13_BWJcu_HrKFQV0mSogjHpm3i-4HQGDf-6vhnarH5YA",
+                        "eG-ezU5d-LVjmVbIHy_CPDMIipkVozIAC2ym5glnUGoA",
+                        "MBngTWWon600NOBzZI2hVNetglpVJjfT5Ls807GyfqEA",
+                        "OG5wLtZuJ72SKujlp8YbOw3aQUyVTexYlKjv6L2KqVkA",
+                        "j98fNieA0pRXwKS6xBMkJYOWOuvOCBKzkOVyzG-2vXAA",
+                        "HflWay2xmCYnbqTKYP3utSo0s3v4Ne3vWOBzwHziD-oA",
+                    ]
+                );
             }
             _ => panic!("bad dates"),
         }
@@ -1557,4 +1822,3 @@ signatures:
         assert_eq!(format!("{}", trans.id()), "ilik2Qll91ayj_YAeMs8yXanIVWJ9OOdOjMuD1Lm2boA");
     }
 }
-

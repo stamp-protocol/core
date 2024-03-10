@@ -12,8 +12,8 @@
 //! and assigning them to groups of admin keys.
 
 use crate::{
-    crypto::base::{KeyID, Hash},
-    dag::{TransactionBody, TransactionID, Transaction},
+    crypto::base::{Hash, KeyID},
+    dag::{Transaction, TransactionBody, TransactionID},
     error::{Error, Result},
     identity::{
         claim::ClaimSpec,
@@ -24,8 +24,8 @@ use crate::{
 };
 use getset;
 use glob::Pattern;
-use rasn::{AsnType, Encode, Decode};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
 object_id! {
@@ -286,7 +286,7 @@ pub enum Context {
         key: BinaryVec,
         #[rasn(tag(explicit(1)))]
         val: BinaryVec,
-    }
+    },
 }
 
 impl Context {
@@ -315,7 +315,7 @@ impl Context {
                 contexts.push(Self::AdminKeyID(id.clone()));
                 contexts.push(Self::KeyID(id.clone().into()));
             }
-            TransactionBody::AddPolicyV1 { .. } => { }
+            TransactionBody::AddPolicyV1 { .. } => {}
             TransactionBody::DeletePolicyV1 { id } => {
                 contexts.push(Self::ObjectID(id.deref().clone()));
             }
@@ -390,7 +390,10 @@ impl Context {
                 }
                 if let Some(exists) = context.as_ref() {
                     for (k, v) in exists.iter() {
-                        contexts.push(Self::ExtContext { key: k.clone(), val: v.clone() });
+                        contexts.push(Self::ExtContext {
+                            key: k.clone(),
+                            val: v.clone(),
+                        });
                     }
                 }
             }
@@ -417,7 +420,7 @@ impl Context {
                         break;
                     }
                 }
-            }
+            };
         }
         let test = match (self, against) {
             (Self::All(contexts1), Self::Any(contexts2)) => {
@@ -472,12 +475,17 @@ impl Context {
             (Self::ClaimType(ty1), Self::ClaimType(ty2)) => ty1 == ty2,
             (Self::ExtType(ty1), Self::ExtType(ty2)) => ty1 == ty2,
             (Self::ExtTypePrefix(p1), Self::ExtType(ty2)) => ty2.starts_with(p1),
-            (Self::ExtContext { key: c1k, val: c1v }, Self::ExtContext { key: c2k, val: c2v }) => {
-                c1k == c2k && c1v == c2v
-            }
-            (Self::ExtContextPrefix { key: prefix_key, val: prefix_val }, Self::ExtContext { key: context_key, val: context_val }) => {
-                context_key == prefix_key && context_val.starts_with(prefix_val.deref())
-            }
+            (Self::ExtContext { key: c1k, val: c1v }, Self::ExtContext { key: c2k, val: c2v }) => c1k == c2k && c1v == c2v,
+            (
+                Self::ExtContextPrefix {
+                    key: prefix_key,
+                    val: prefix_val,
+                },
+                Self::ExtContext {
+                    key: context_key,
+                    val: context_val,
+                },
+            ) => context_key == prefix_key && context_val.starts_with(prefix_val.deref()),
             _ => false,
         };
         if test {
@@ -532,7 +540,7 @@ pub enum Capability {
         ty: BinaryVec,
         #[rasn(tag(explicit(1)))]
         context: BinaryVec,
-    }
+    },
 }
 
 impl Capability {
@@ -541,28 +549,27 @@ impl Capability {
             // allow anything
             Self::Permissive => Ok(()),
             // check transactions and their stupid context
-            Self::Transaction { body_type, context } => {
-                match against {
-                    Self::Transaction { body_type: against_body_type, context: against_context } => {
-                        if against_body_type.len() != 1 {
-                            Err(Error::PolicyCapabilityMismatch)?;
-                        }
-                        if body_type.contains(&against_body_type[0]) {
-                            context.test(against_context)
-                        } else {
-                            Err(Error::PolicyCapabilityMismatch)
-                        }
+            Self::Transaction { body_type, context } => match against {
+                Self::Transaction {
+                    body_type: against_body_type,
+                    context: against_context,
+                } => {
+                    if against_body_type.len() != 1 {
+                        Err(Error::PolicyCapabilityMismatch)?;
                     }
-                    _ => Err(Error::PolicyCapabilityMismatch),
+                    if body_type.contains(&against_body_type[0]) {
+                        context.test(against_context)
+                    } else {
+                        Err(Error::PolicyCapabilityMismatch)
+                    }
                 }
-            }
+                _ => Err(Error::PolicyCapabilityMismatch),
+            },
             // we don't validate extensions. you need to do that yourself.
-            Self::Extension { .. } => {
-                match against {
-                    Self::Extension { .. } => Ok(()),
-                    _ => Err(Error::PolicyCapabilityMismatch),
-                }
-            }
+            Self::Extension { .. } => match against {
+                Self::Extension { .. } => Ok(()),
+                _ => Err(Error::PolicyCapabilityMismatch),
+            },
         }
     }
 }
@@ -582,18 +589,24 @@ pub enum Participant {
         /// The public key
         #[rasn(tag(explicit(1)))]
         key: AdminKeypairPublic,
-    }
+    },
 }
 
 impl From<AdminKeypairPublic> for Participant {
     fn from(admin_pubkey: AdminKeypairPublic) -> Self {
-        Participant::Key { name: None, key: admin_pubkey }
+        Participant::Key {
+            name: None,
+            key: admin_pubkey,
+        }
     }
 }
 
 impl From<AdminKeypair> for Participant {
     fn from(admin_keypair: AdminKeypair) -> Self {
-        Participant::Key { name: None, key: admin_keypair.into() }
+        Participant::Key {
+            name: None,
+            key: admin_keypair.into(),
+        }
     }
 }
 
@@ -655,17 +668,17 @@ impl MultisigPolicy {
     pub(crate) fn test(&self, signatures: &[MultisigPolicySignature]) -> Result<()> {
         match self {
             Self::All(policies) => {
-                policies.iter()
-                    .map(|p| p.test(signatures))
-                    .collect::<Result<Vec<_>>>()?;
+                policies.iter().map(|p| p.test(signatures)).collect::<Result<Vec<_>>>()?;
             }
             Self::Any(policies) => {
-                policies.iter()
+                policies
+                    .iter()
                     .find(|p| p.test(signatures).is_ok())
                     .ok_or(Error::MultisigPolicyConditionMismatch)?;
             }
             Self::MOfN { must_have, participants } => {
-                let has = participants.iter()
+                let has = participants
+                    .iter()
                     .filter_map(|participant| {
                         for sig in signatures {
                             match (participant, sig) {
@@ -693,7 +706,9 @@ impl MultisigPolicy {
 
 /// Matches a set of [Capabilities][Capability] to a [multisig policy][MultisigPolicy],
 /// making it so the policy must be fulfilled in order to perform those capabilities.
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Policy {
     /// The capabilities (or actions) this policy can access. These are permissive,
@@ -709,7 +724,10 @@ pub struct Policy {
 impl Policy {
     /// Create a new `Policy`
     pub fn new(capabilities: Vec<Capability>, multisig_policy: MultisigPolicy) -> Self {
-        Self { capabilities, multisig_policy }
+        Self {
+            capabilities,
+            multisig_policy,
+        }
     }
 
     /// Determine if this particular `Policy` allows performing the
@@ -738,7 +756,9 @@ impl Policy {
 }
 
 /// A container that assigns a unique ID to a capability policy.
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct PolicyContainer {
     /// The ID of this capability policy.
@@ -766,10 +786,7 @@ impl PolicyContainer {
             idx: usize,
         }
 
-        let ser_struct = PolicyContainerSer {
-            transaction_id,
-            idx,
-        };
+        let ser_struct = PolicyContainerSer { transaction_id, idx };
         let serialized = ser::serialize(&ser_struct)?;
         let hashed = Hash::new_blake3(&serialized[..])?;
         Ok(PolicyID(TransactionID::from(hashed)))
@@ -798,7 +815,7 @@ mod tests {
             private::MaybePrivate,
         },
         identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
-        util::{self, Timestamp, Url, test::sign_and_push},
+        util::{self, test::sign_and_push, Timestamp, Url},
     };
 
     #[test]
@@ -814,18 +831,21 @@ mod tests {
             Context::ExtType(BinaryVec::from(Vec::from("order-create".as_bytes()))),
             Context::ExtContext {
                 key: BinaryVec::from(Vec::from("department".as_bytes())),
-                val: BinaryVec::from(Vec::from("inventory/receiving".as_bytes()))
-            }
+                val: BinaryVec::from(Vec::from("inventory/receiving".as_bytes())),
+            },
         ];
 
-        for round1 in combos.iter() {   // FIGHT
+        for round1 in combos.iter() {
+            // FIGHT
             for round2 in combos.iter() {
                 if matches!((round1, round2), (Context::NameGlob(_), Context::Name(_))) {
                     continue;
                 } else if round1 == round2 && !matches!(round1, Context::NameGlob(_)) {
                     match round1.test(round2) {
                         Ok(_) => {}
-                        Err(e) => panic!("Test failed comparing {:?} to {:?}: {:?}", round1, round2, e),
+                        Err(e) => {
+                            panic!("Test failed comparing {:?} to {:?}: {:?}", round1, round2, e)
+                        }
                     }
                 } else {
                     assert_eq!(round1.test(round2), Err(Error::PolicyContextMismatch));
@@ -881,18 +901,24 @@ mod tests {
             key: Vec::from("department".as_bytes()).into(),
             val: Vec::from("inventory/".as_bytes()).into(),
         };
-        conextprefix.test(&Context::ExtContext {
-            key: Vec::from("department".as_bytes()).into(),
-            val: Vec::from("inventory/".as_bytes()).into(),
-        }).unwrap();
-        conextprefix.test(&Context::ExtContext {
-            key: Vec::from("department".as_bytes()).into(),
-            val: Vec::from("inventory/orders".as_bytes()).into(),
-        }).unwrap();
-        conextprefix.test(&Context::ExtContext {
-            key: Vec::from("department".as_bytes()).into(),
-            val: Vec::from("inventory/widgets/incoming".as_bytes()).into(),
-        }).unwrap();
+        conextprefix
+            .test(&Context::ExtContext {
+                key: Vec::from("department".as_bytes()).into(),
+                val: Vec::from("inventory/".as_bytes()).into(),
+            })
+            .unwrap();
+        conextprefix
+            .test(&Context::ExtContext {
+                key: Vec::from("department".as_bytes()).into(),
+                val: Vec::from("inventory/orders".as_bytes()).into(),
+            })
+            .unwrap();
+        conextprefix
+            .test(&Context::ExtContext {
+                key: Vec::from("department".as_bytes()).into(),
+                val: Vec::from("inventory/widgets/incoming".as_bytes()).into(),
+            })
+            .unwrap();
         assert_eq!(
             conextprefix.test(&Context::ExtContextPrefix {
                 key: Vec::from("department".as_bytes()).into(),
@@ -929,131 +955,114 @@ mod tests {
         let tid2 = TransactionID::random();
 
         let con4 = Context::All(vec![
-            Context::Any(vec![
-                Context::ObjectID(tid1.clone()),
-                Context::ObjectID(tid2.clone()),
-            ]),
-            Context::Any(vec![
-                Context::Name("jerry".into()),
-                Context::Name("larry".into()),
-            ]),
+            Context::Any(vec![Context::ObjectID(tid1.clone()), Context::ObjectID(tid2.clone())]),
+            Context::Any(vec![Context::Name("jerry".into()), Context::Name("larry".into())]),
         ]);
         assert_eq!(con4.test(&con4), Err(Error::PolicyContextMismatch));
         assert_eq!(con4.test(&Context::Any(combos.clone())), Err(Error::PolicyContextMismatch));
-        con4.test(&Context::Any(vec![
-            Context::Name("jerry".into()),
-            Context::ObjectID(tid1.clone()),
-        ])).unwrap();
-        con4.test(&Context::Any(vec![
-            Context::Name("larry".into()),
-            Context::ObjectID(tid2.clone()),
-        ])).unwrap();
-        assert_eq!(con4.test(&Context::Any(vec![
-            Context::Name("larry".into()),
-            Context::ObjectID(TransactionID::random()),
-        ])), Err(Error::PolicyContextMismatch));
-        assert_eq!(con4.test(&Context::Any(vec![
-            Context::Name("larry".into()),
-            Context::Name("jerry".into()),
-        ])), Err(Error::PolicyContextMismatch));
+        con4.test(&Context::Any(vec![Context::Name("jerry".into()), Context::ObjectID(tid1.clone())]))
+            .unwrap();
+        con4.test(&Context::Any(vec![Context::Name("larry".into()), Context::ObjectID(tid2.clone())]))
+            .unwrap();
+        assert_eq!(
+            con4.test(&Context::Any(vec![Context::Name("larry".into()), Context::ObjectID(TransactionID::random()),])),
+            Err(Error::PolicyContextMismatch)
+        );
+        assert_eq!(
+            con4.test(&Context::Any(vec![Context::Name("larry".into()), Context::Name("jerry".into()),])),
+            Err(Error::PolicyContextMismatch)
+        );
 
         let con5 = Context::Any(vec![
-            Context::All(vec![
-                Context::ObjectID(tid1.clone()),
-                Context::ObjectID(tid2.clone()),
-            ]),
-            Context::All(vec![
-                Context::Name("jerry".into()),
-                Context::Name("larry".into()),
-            ]),
+            Context::All(vec![Context::ObjectID(tid1.clone()), Context::ObjectID(tid2.clone())]),
+            Context::All(vec![Context::Name("jerry".into()), Context::Name("larry".into())]),
         ]);
         assert_eq!(con4.test(&Context::Any(combos.clone())), Err(Error::PolicyContextMismatch));
         con5.test(&Context::Any(vec![
             Context::Name("larry".into()),
             Context::Name("jerry".into()),
             Context::ObjectID(TransactionID::random()),
-        ])).unwrap();
+        ]))
+        .unwrap();
         con5.test(&Context::Any(vec![
             Context::ObjectID(tid1.clone()),
             Context::ObjectID(tid2.clone()),
             Context::Name("sandra".into()),
-        ])).unwrap();
-        assert_eq!(con5.test(&Context::Any(vec![
-            Context::Name("larry".into()),
-            Context::Name("sandra".into()),
-            Context::ObjectID(tid1.clone()),
-            Context::ObjectID(TransactionID::random()),
-        ])), Err(Error::PolicyContextMismatch));
-        assert_eq!(con5.test(&Context::Any(vec![
-            Context::Name("larry".into()),
-            Context::Name("sandra".into()),
-            Context::ObjectID(tid2.clone()),
-            Context::ObjectID(TransactionID::random()),
-        ])), Err(Error::PolicyContextMismatch));
+        ]))
+        .unwrap();
+        assert_eq!(
+            con5.test(&Context::Any(vec![
+                Context::Name("larry".into()),
+                Context::Name("sandra".into()),
+                Context::ObjectID(tid1.clone()),
+                Context::ObjectID(TransactionID::random()),
+            ])),
+            Err(Error::PolicyContextMismatch)
+        );
+        assert_eq!(
+            con5.test(&Context::Any(vec![
+                Context::Name("larry".into()),
+                Context::Name("sandra".into()),
+                Context::ObjectID(tid2.clone()),
+                Context::ObjectID(TransactionID::random()),
+            ])),
+            Err(Error::PolicyContextMismatch)
+        );
 
         let con6 = Context::Name("Frodo".into());
-        assert_eq!(con6.test(&Context::Any(vec![
-            Context::Name("Sam".into()),
-            Context::Name("Gandalf".into()),
-        ])), Err(Error::PolicyContextMismatch));
+        assert_eq!(
+            con6.test(&Context::Any(vec![Context::Name("Sam".into()), Context::Name("Gandalf".into()),])),
+            Err(Error::PolicyContextMismatch)
+        );
         con6.test(&Context::Any(vec![
             Context::Name("Gandalf".into()),
             Context::Name("Sam".into()),
             Context::Name("Frodo".into()),
-        ])).unwrap();
-        con6.test(&Context::Any(vec![
-            Context::Name("Frodo".into()),
-            Context::Name("Gandalf".into()),
-        ])).unwrap();
-        con6.test(&Context::Any(vec![
-            Context::Name("Frodo".into()),
-            Context::Name("Aragorn".into()),
-        ])).unwrap();
+        ]))
+        .unwrap();
+        con6.test(&Context::Any(vec![Context::Name("Frodo".into()), Context::Name("Gandalf".into())]))
+            .unwrap();
+        con6.test(&Context::Any(vec![Context::Name("Frodo".into()), Context::Name("Aragorn".into())]))
+            .unwrap();
 
-        let con7 = Context::Not(Box::new(Context::Name("Gandalf".into())));    // sry gandalf
+        let con7 = Context::Not(Box::new(Context::Name("Gandalf".into()))); // sry gandalf
         con7.test(&Context::Any(vec![
             Context::Name("larry".into()),
             Context::Name("barry".into()),
             Context::Name("jerry".into()),
             Context::Name("darry".into()),
-        ])).unwrap();
-        assert_eq!(con7.test(&Context::Any(vec![
-            Context::Name("larry".into()),
-            Context::Name("barry".into()),
-            Context::Name("jerry".into()),
-            Context::Name("darry".into()),
-            Context::Name("Gandalf".into()),
-        ])), Err(Error::PolicyContextMismatch));
+        ]))
+        .unwrap();
+        assert_eq!(
+            con7.test(&Context::Any(vec![
+                Context::Name("larry".into()),
+                Context::Name("barry".into()),
+                Context::Name("jerry".into()),
+                Context::Name("darry".into()),
+                Context::Name("Gandalf".into()),
+            ])),
+            Err(Error::PolicyContextMismatch)
+        );
 
         let con8 = Context::All(vec![
             Context::ObjectID(tid1.clone()),
             Context::Not(Box::new(Context::ObjectID(tid2.clone()))),
         ]);
-        con8.test(&Context::Any(vec![
-            Context::ObjectID(tid1.clone()),
-            Context::ObjectID(TransactionID::random()),
-        ])).unwrap();
-        con8.test(&Context::Any(vec![
-            Context::ObjectID(tid1.clone()),
-        ])).unwrap();
-        assert_eq!(con8.test(&Context::Any(vec![
-            Context::ObjectID(tid1.clone()),
-            Context::ObjectID(tid2.clone()),
-        ])), Err(Error::PolicyContextMismatch));
+        con8.test(&Context::Any(vec![Context::ObjectID(tid1.clone()), Context::ObjectID(TransactionID::random())]))
+            .unwrap();
+        con8.test(&Context::Any(vec![Context::ObjectID(tid1.clone())])).unwrap();
+        assert_eq!(
+            con8.test(&Context::Any(vec![Context::ObjectID(tid1.clone()), Context::ObjectID(tid2.clone()),])),
+            Err(Error::PolicyContextMismatch)
+        );
 
-        let con9 = Context::All(vec![
-            Context::Not(Box::new(Context::Permissive)),
-        ]);
-        assert_eq!(con9.test(&Context::Any(vec![
-            Context::ObjectID(tid1.clone()),
-        ])), Err(Error::PolicyContextMismatch));
-        assert_eq!(con9.test(&Context::Any(vec![
-            Context::Name("Frodo".into()),
-        ])), Err(Error::PolicyContextMismatch));
-        assert_eq!(con9.test(&Context::Any(vec![
-            Context::Name("Gandalf".into()),
-            Context::ObjectID(tid2.clone()),
-        ])), Err(Error::PolicyContextMismatch));
+        let con9 = Context::All(vec![Context::Not(Box::new(Context::Permissive))]);
+        assert_eq!(con9.test(&Context::Any(vec![Context::ObjectID(tid1.clone()),])), Err(Error::PolicyContextMismatch));
+        assert_eq!(con9.test(&Context::Any(vec![Context::Name("Frodo".into()),])), Err(Error::PolicyContextMismatch));
+        assert_eq!(
+            con9.test(&Context::Any(vec![Context::Name("Gandalf".into()), Context::ObjectID(tid2.clone()),])),
+            Err(Error::PolicyContextMismatch)
+        );
     }
 
     #[test]
@@ -1067,7 +1076,8 @@ mod tests {
         cap1.test(&Capability::Transaction {
             body_type: vec![TransactionBodyType::CreateIdentityV1],
             context: Context::Any(vec![]),
-        }).unwrap();
+        })
+        .unwrap();
         cap1.test(&cap2).unwrap();
 
         assert_eq!(cap2.test(&Capability::Permissive).err(), Some(Error::PolicyCapabilityMismatch));
@@ -1104,7 +1114,8 @@ mod tests {
         cap3.test(&Capability::Transaction {
             body_type: vec![TransactionBodyType::CreateIdentityV1],
             context: Context::Any(vec![Context::Name("omglol".into())]),
-        }).unwrap();
+        })
+        .unwrap();
 
         let cap4 = Capability::Transaction {
             body_type: vec![
@@ -1117,15 +1128,18 @@ mod tests {
         cap4.test(&Capability::Transaction {
             body_type: vec![TransactionBodyType::MakeClaimV1],
             context: Context::Any(vec![Context::Name("email/default".into())]),
-        }).unwrap();
+        })
+        .unwrap();
         cap4.test(&Capability::Transaction {
             body_type: vec![TransactionBodyType::EditClaimV1],
             context: Context::Any(vec![Context::Name("email/omg".into())]),
-        }).unwrap();
+        })
+        .unwrap();
         cap4.test(&Capability::Transaction {
             body_type: vec![TransactionBodyType::DeleteClaimV1],
             context: Context::Any(vec![Context::Name("email/suckerrr".into())]),
-        }).unwrap();
+        })
+        .unwrap();
         let res4_1 = cap4.test(&Capability::Transaction {
             body_type: vec![TransactionBodyType::AddSubkeyV1],
             context: Context::Any(vec![Context::Name("email/suckerrr".into())]),
@@ -1163,61 +1177,43 @@ mod tests {
             MultisigPolicy::All(vec![
                 MultisigPolicy::MOfN {
                     must_have: 1,
-                    participants: vec![
-                        dirk.clone().into(),
-                        jackie.clone().into(),
-                    ],
+                    participants: vec![dirk.clone().into(), jackie.clone().into()],
                 },
                 MultisigPolicy::MOfN {
                     must_have: 1,
-                    participants: vec![
-                        syd.clone().into(),
-                        twinkee.clone().into(),
-                    ],
+                    participants: vec![syd.clone().into(), twinkee.clone().into()],
                 },
             ]),
             MultisigPolicy::MOfN {
                 must_have: 3,
-                participants: vec![
-                    gus.clone().into(),
-                    marty.clone().into(),
-                    jackie.clone().into(),
-                    dirk.clone().into(),
-                ],
-            }
+                participants: vec![gus.clone().into(), marty.clone().into(), jackie.clone().into(), dirk.clone().into()],
+            },
         ]);
 
-        let people = vec![
-            &gus, &marty, &jackie,
-            &rosarita, &dirk, &twinkee,
-            &syd, &scurvy, &kitty,
-        ];
-        let combinations = util::test::generate_combinations(&vec![
-            "gus", "marty", "jackie",
-            "rosarita", "dirk", "twinkee",
-            "syd", "scurvy", "kitty",
-        ]);
+        let people = vec![&gus, &marty, &jackie, &rosarita, &dirk, &twinkee, &syd, &scurvy, &kitty];
+        let combinations =
+            util::test::generate_combinations(&vec!["gus", "marty", "jackie", "rosarita", "dirk", "twinkee", "syd", "scurvy", "kitty"]);
         let obj = "Pretend entry";
-        let possible_signatures = people.into_iter()
+        let possible_signatures = people
+            .into_iter()
             .map(|key| (key, key.sign(&master_key, obj.as_bytes()).unwrap()))
             .collect::<Vec<_>>();
 
-        let kn = |name| {
-            match name {
-                "gus" => &gus,
-                "marty" => &marty,
-                "jackie" => &jackie,
-                "rosarita" => &rosarita,
-                "dirk" => &dirk,
-                "twinkee" => &twinkee,
-                "syd" => &syd,
-                "scurvy" => &scurvy,
-                "kitty" => &kitty,
-                _ => panic!("bad key name"),
-            }
+        let kn = |name| match name {
+            "gus" => &gus,
+            "marty" => &marty,
+            "jackie" => &jackie,
+            "rosarita" => &rosarita,
+            "dirk" => &dirk,
+            "twinkee" => &twinkee,
+            "syd" => &syd,
+            "scurvy" => &scurvy,
+            "kitty" => &kitty,
+            _ => panic!("bad key name"),
         };
         let fs = |key| {
-            possible_signatures.iter()
+            possible_signatures
+                .iter()
                 .find(|ent| ent.0 == key)
                 .map(|x| MultisigPolicySignature::Key {
                     key: x.0.clone().into(),
@@ -1279,10 +1275,7 @@ mod tests {
         let tid = TransactionID::random();
         let testcap = Capability::Transaction {
             body_type: vec![TransactionBodyType::MakeStampV1],
-            context: Context::Any(vec![
-                Context::ObjectID(tid.clone()),
-                Context::Name("keys/publish".into()),
-            ]),
+            context: Context::Any(vec![Context::ObjectID(tid.clone()), Context::Name("keys/publish".into())]),
         };
 
         let capabilities1 = vec![Capability::Permissive];
@@ -1305,9 +1298,7 @@ mod tests {
             },
             Capability::Transaction {
                 body_type: vec![TransactionBodyType::CreateIdentityV1],
-                context: Context::Any(vec![
-                    Context::Name("shooter mcgavin".into()),
-                ]),
+                context: Context::Any(vec![Context::Name("shooter mcgavin".into())]),
             },
         ];
         let policy2 = Policy::new(capabilities2.clone(), multisig1.clone());
@@ -1316,9 +1307,7 @@ mod tests {
         let mut capabilities3 = capabilities2.clone();
         capabilities3.push(Capability::Transaction {
             body_type: vec![TransactionBodyType::MakeStampV1],
-            context: Context::Any(vec![
-                Context::ObjectID(tid.clone()),
-            ]),
+            context: Context::Any(vec![Context::ObjectID(tid.clone())]),
         });
         let policy3 = Policy::new(capabilities3.clone(), multisig1.clone());
         assert!(policy3.can(&testcap));
@@ -1351,22 +1340,20 @@ mod tests {
                 },
             ]),
         };
-        let capabilities4 = vec![
-            Capability::Transaction {
-                body_type: vec![TransactionBodyType::ExtV1],
-                context: Context::All(vec![
-                    Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
-                    Context::ExtContext {
-                        key: Vec::from("department".as_bytes()).into(),
-                        val: Vec::from("inventory".as_bytes()).into(),
-                    },
-                    Context::ExtContextPrefix {
-                        key: Vec::from("budget".as_bytes()).into(),
-                        val: Vec::from("production/inventory/".as_bytes()).into(),
-                    },
-                ]),
-            },
-        ];
+        let capabilities4 = vec![Capability::Transaction {
+            body_type: vec![TransactionBodyType::ExtV1],
+            context: Context::All(vec![
+                Context::ExtType(Vec::from("orders-create".as_bytes()).into()),
+                Context::ExtContext {
+                    key: Vec::from("department".as_bytes()).into(),
+                    val: Vec::from("inventory".as_bytes()).into(),
+                },
+                Context::ExtContextPrefix {
+                    key: Vec::from("budget".as_bytes()).into(),
+                    val: Vec::from("production/inventory/".as_bytes()).into(),
+                },
+            ]),
+        }];
         let policy4 = Policy::new(capabilities4.clone(), multisig1.clone());
         assert!(!policy4.can(&testcap));
         assert!(policy4.can(&testcap2));
@@ -1380,61 +1367,41 @@ mod tests {
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Jack's", None);
         let identity = transactions.build_identity().unwrap();
 
-        let capabilities = vec![
-            Capability::Transaction {
-                body_type: vec![TransactionBodyType::MakeClaimV1],
-                context: Context::Any(vec![
-                    Context::ClaimType(ContextClaimType::Url),
-                ]),
-            },
-        ];
+        let capabilities = vec![Capability::Transaction {
+            body_type: vec![TransactionBodyType::MakeClaimV1],
+            context: Context::Any(vec![Context::ClaimType(ContextClaimType::Url)]),
+        }];
         let multisig = MultisigPolicy::MOfN {
             must_have: 2,
-            participants: vec![
-                admin_key.key().clone().into(),
-                admin_key2.key().clone().into(),
-            ],
+            participants: vec![admin_key.key().clone().into(), admin_key2.key().clone().into()],
         };
         let policy = Policy::new(capabilities.clone(), multisig.clone());
 
-        let transaction1 = transactions.make_claim(
-            &HashAlgo::Blake3,
-            Timestamp::now(),
-            ClaimSpec::Url(MaybePrivate::new_public(Url::parse("http://timmy.com").unwrap())),
-            Some("primary-url"),
-        ).unwrap();
+        let transaction1 = transactions
+            .make_claim(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                ClaimSpec::Url(MaybePrivate::new_public(Url::parse("http://timmy.com").unwrap())),
+                Some("primary-url"),
+            )
+            .unwrap();
         let contexts = Context::contexts_from_transaction_body(transaction1.entry().body(), &identity);
 
-        assert_eq!(
-            policy.validate_transaction(&transaction1, &contexts),
-            Err(Error::MultisigPolicyConditionMismatch)
-        );
+        assert_eq!(policy.validate_transaction(&transaction1, &contexts), Err(Error::MultisigPolicyConditionMismatch));
 
-        let transaction2 = transaction1.clone()
-            .sign(&master_key, &admin_key).unwrap();
-        assert_eq!(
-            policy.validate_transaction(&transaction2, &contexts),
-            Err(Error::MultisigPolicyConditionMismatch)
-        );
+        let transaction2 = transaction1.clone().sign(&master_key, &admin_key).unwrap();
+        assert_eq!(policy.validate_transaction(&transaction2, &contexts), Err(Error::MultisigPolicyConditionMismatch));
 
-        let transaction3 = transaction2.clone()
-            .sign(&master_key, &admin_key2).unwrap();
+        let transaction3 = transaction2.clone().sign(&master_key, &admin_key2).unwrap();
         policy.validate_transaction(&transaction3, &contexts).unwrap();
 
-        let capabilities2 = vec![
-            Capability::Transaction {
-                body_type: vec![TransactionBodyType::EditClaimV1],
-                context: Context::Any(vec![
-                    Context::ClaimType(ContextClaimType::Url),
-                ]),
-            },
-        ];
+        let capabilities2 = vec![Capability::Transaction {
+            body_type: vec![TransactionBodyType::EditClaimV1],
+            context: Context::Any(vec![Context::ClaimType(ContextClaimType::Url)]),
+        }];
         let mut policy2 = policy.clone();
         policy2.set_capabilities(capabilities2.clone());
-        assert_eq!(
-            policy2.validate_transaction(&transaction3, &contexts),
-            Err(Error::PolicyCapabilityMismatch)
-        );
+        assert_eq!(policy2.validate_transaction(&transaction3, &contexts), Err(Error::PolicyCapabilityMismatch));
     }
 
     #[test]
@@ -1443,10 +1410,7 @@ mod tests {
         let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
         let identity = transactions.build_identity().unwrap();
         assert_eq!(
-            Context::contexts_from_transaction_body(
-                transactions.transactions()[0].entry().body(),
-                &identity,
-            ),
+            Context::contexts_from_transaction_body(transactions.transactions()[0].entry().body(), &identity,),
             vec![],
         );
     }
@@ -1464,10 +1428,7 @@ mod tests {
         };
         let identity = transactions.build_identity().unwrap();
         assert_eq!(
-            Context::contexts_from_transaction_body(
-                transactions.transactions()[1].entry().body(),
-                &identity,
-            ),
+            Context::contexts_from_transaction_body(transactions.transactions()[1].entry().body(), &identity,),
             vec![],
         );
     }
@@ -1483,10 +1444,7 @@ mod tests {
         };
         let identity = transactions.build_identity().unwrap();
         assert_eq!(
-            Context::contexts_from_transaction_body(
-                transactions.transactions()[1].entry().body(),
-                &identity,
-            ),
+            Context::contexts_from_transaction_body(transactions.transactions()[1].entry().body(), &identity,),
             vec![
                 Context::AdminKeyID(admin_key2.key_id()),
                 Context::KeyID(admin_key2.key_id().into()),
@@ -1513,10 +1471,7 @@ mod tests {
         let identity2 = transactions2.build_identity().unwrap();
         let identity3 = transactions3.build_identity().unwrap();
         assert_eq!(
-            Context::contexts_from_transaction_body(
-                transactions2.transactions()[2].entry().body(),
-                &identity2,
-            ),
+            Context::contexts_from_transaction_body(transactions2.transactions()[2].entry().body(), &identity2,),
             vec![
                 Context::Name("turtl/manage".to_string()),
                 Context::AdminKeyID(admin_key2.key_id()),
@@ -1524,10 +1479,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            Context::contexts_from_transaction_body(
-                transactions3.transactions()[2].entry().body(),
-                &identity3,
-            ),
+            Context::contexts_from_transaction_body(transactions3.transactions()[2].entry().body(), &identity3,),
             vec![
                 Context::Name("turtl/manager".to_string()),
                 Context::AdminKeyID(admin_key2.key_id()),
@@ -1536,22 +1488,89 @@ mod tests {
         );
     }
 
-    #[ignore] #[test] fn contexts_from_transaction_body_revoke_admin_key_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_add_policy_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_delete_policy_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_make_claim_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_edit_claim_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_delete_claim_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_make_stamp_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_revoke_stamp_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_accept_stamp_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_delete_stamp_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_add_subkey_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_edit_subkey_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_revoke_subkey_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_delete_subkey_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_publish_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_sign_v1() { todo!(); }
-    #[ignore] #[test] fn contexts_from_transaction_body_ext_v1() { todo!(); }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_revoke_admin_key_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_add_policy_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_delete_policy_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_make_claim_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_edit_claim_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_delete_claim_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_make_stamp_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_revoke_stamp_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_accept_stamp_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_delete_stamp_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_add_subkey_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_edit_subkey_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_revoke_subkey_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_delete_subkey_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_publish_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_sign_v1() {
+        todo!();
+    }
+    #[ignore]
+    #[test]
+    fn contexts_from_transaction_body_ext_v1() {
+        todo!();
+    }
 }
-

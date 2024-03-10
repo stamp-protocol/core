@@ -7,21 +7,15 @@
 //! [stamped](crate::identity::stamp) by someone within your trust network.
 
 use crate::{
+    crypto::{base::SecretKey, private::MaybePrivate},
     error::{Error, Result},
-    identity::{
-        stamp::Stamp,
-        identity::IdentityID,
-    },
-    crypto::{
-        base::SecretKey,
-        private::MaybePrivate,
-    },
-    util::{Public, Date, Url, BinaryVec, SerText},
+    identity::{identity::IdentityID, stamp::Stamp},
+    util::{BinaryVec, Date, Public, SerText, Url},
 };
 use getset;
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Encode, Decode};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
 object_id! {
@@ -47,7 +41,9 @@ pub enum RelationshipType {
 }
 
 /// Defines a relationship.
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Relationship<T> {
     /// The type of relationship we have.
@@ -64,10 +60,7 @@ pub struct Relationship<T> {
 impl<T> Relationship<T> {
     /// Create a new relationship.
     pub fn new(ty: RelationshipType, subject: T) -> Self {
-        Self {
-            ty,
-            subject,
-        }
+        Self { ty, subject }
     }
 }
 
@@ -260,7 +253,10 @@ impl ClaimSpec {
             Self::PhoneNumber(maybe) => Self::PhoneNumber(maybe.reencrypt(rng, current_key, new_key)?),
             Self::Relation(maybe) => Self::Relation(maybe.reencrypt(rng, current_key, new_key)?),
             Self::RelationExtension(maybe) => Self::RelationExtension(maybe.reencrypt(rng, current_key, new_key)?),
-            Self::Extension { key, value } => Self::Extension { key, value: value.reencrypt(rng, current_key, new_key)? },
+            Self::Extension { key, value } => Self::Extension {
+                key,
+                value: value.reencrypt(rng, current_key, new_key)?,
+            },
         };
         Ok(spec)
     }
@@ -281,7 +277,10 @@ impl ClaimSpec {
             Self::PhoneNumber(maybe) => Self::PhoneNumber(maybe.into_public(open_key)?),
             Self::Relation(maybe) => Self::Relation(maybe.into_public(open_key)?),
             Self::RelationExtension(maybe) => Self::RelationExtension(maybe.into_public(open_key)?),
-            Self::Extension { key, value } => Self::Extension { key, value: value.into_public(open_key)? },
+            Self::Extension { key, value } => Self::Extension {
+                key,
+                value: value.into_public(open_key)?,
+            },
         };
         Ok(spec)
     }
@@ -302,7 +301,10 @@ impl Public for ClaimSpec {
             Self::PhoneNumber(val) => Self::PhoneNumber(val.strip_private()),
             Self::Relation(val) => Self::Relation(val.strip_private()),
             Self::RelationExtension(val) => Self::RelationExtension(val.strip_private()),
-            Self::Extension { key, value } => Self::Extension { key: key.clone(), value: value.strip_private() },
+            Self::Extension { key, value } => Self::Extension {
+                key: key.clone(),
+                value: value.strip_private(),
+            },
         }
     }
 
@@ -421,11 +423,7 @@ impl SerText for Claim {}
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{
-        crypto::private::PrivateWithHmac,
-        error::Error,
-        identity::{IdentityID},
-    };
+    use crate::{crypto::private::PrivateWithHmac, error::Error, identity::IdentityID};
     use std::convert::TryFrom;
     use std::str::FromStr;
 
@@ -438,7 +436,7 @@ pub(crate) mod tests {
             let spec_private = $claimmaker(maybe_private, val.clone());
             let spec_public = $claimmaker(maybe_public, val.clone());
             (master_key, spec_private, spec_public)
-        }}
+        }};
     }
 
     #[test]
@@ -475,19 +473,19 @@ pub(crate) mod tests {
             };
         }
 
-        claim_reenc!{ Identity, IdentityID::random() }
-        claim_reenc!{ Name, String::from("Marty Malt") }
-        claim_reenc!{ Birthday, Date::from_str("2010-01-03").unwrap() }
-        claim_reenc!{ Email, String::from("marty@sids.com") }
-        claim_reenc!{ Photo, BinaryVec::from(vec![1, 2, 3]) }
-        claim_reenc!{ Pgp, String::from("12345") }
-        claim_reenc!{ Domain, String::from("slappy.com") }
-        claim_reenc!{ Url, Url::parse("https://killtheradio.net/").unwrap() }
-        claim_reenc!{ Address, String::from("111 blumps ln") }
-        claim_reenc!{ PhoneNumber, String::from("+1 831-555-1237") }
-        claim_reenc!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        claim_reenc!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
-        claim_reenc!{
+        claim_reenc! { Identity, IdentityID::random() }
+        claim_reenc! { Name, String::from("Marty Malt") }
+        claim_reenc! { Birthday, Date::from_str("2010-01-03").unwrap() }
+        claim_reenc! { Email, String::from("marty@sids.com") }
+        claim_reenc! { Photo, BinaryVec::from(vec![1, 2, 3]) }
+        claim_reenc! { Pgp, String::from("12345") }
+        claim_reenc! { Domain, String::from("slappy.com") }
+        claim_reenc! { Url, Url::parse("https://killtheradio.net/").unwrap() }
+        claim_reenc! { Address, String::from("111 blumps ln") }
+        claim_reenc! { PhoneNumber, String::from("+1 831-555-1237") }
+        claim_reenc! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
+        claim_reenc! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
+        claim_reenc! {
             raw,
             |maybe, _| ClaimSpec::Extension { key: Vec::from("id:state:ca".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![7, 3, 2, 90]),
@@ -503,7 +501,7 @@ pub(crate) mod tests {
                 let (_master_key, spec, spec2) = make_specs!(&mut rng, $claimmaker, $val);
                 assert_eq!(spec.has_private(), true);
                 match $getmaybe(spec.clone()) {
-                    MaybePrivate::Private(PrivateWithHmac { data: Some(_), .. }) => {},
+                    MaybePrivate::Private(PrivateWithHmac { data: Some(_), .. }) => {}
                     _ => panic!("bad maybe val: {}", stringify!($claimtype)),
                 }
                 let claim = Claim::new(ClaimID::random(), spec, None);
@@ -514,7 +512,7 @@ pub(crate) mod tests {
                 assert_eq!(claim2.has_private(), false);
             };
             ($claimty:ident, $val:expr) => {
-                claim_pub_priv!{
+                claim_pub_priv! {
                     raw,
                     |maybe, _| ClaimSpec::$claimty(maybe),
                     $val,
@@ -523,19 +521,19 @@ pub(crate) mod tests {
             };
         }
 
-        claim_pub_priv!{ Identity, IdentityID::random() }
-        claim_pub_priv!{ Name, String::from("I LIKE FOOTBALL") }
-        claim_pub_priv!{ Birthday, Date::from_str("1990-03-04").unwrap() }
-        claim_pub_priv!{ Email, String::from("IT@IS.FUN") }
-        claim_pub_priv!{ Photo, BinaryVec::from(vec![1, 2, 3]) }
-        claim_pub_priv!{ Pgp, String::from("I LIKE FOOTBALL") }
-        claim_pub_priv!{ Domain, String::from("I-LIKE.TO.RUN") }
-        claim_pub_priv!{ Url, Url::parse("https://www.imdb.com/title/tt0101660/").unwrap() }
-        claim_pub_priv!{ Address, String::from("22334 FOOTBALL LANE, FOOTBALLSVILLE, CA 00001") }
-        claim_pub_priv!{ PhoneNumber, String::from("415-888-0001") }
-        claim_pub_priv!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        claim_pub_priv!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
-        claim_pub_priv!{
+        claim_pub_priv! { Identity, IdentityID::random() }
+        claim_pub_priv! { Name, String::from("I LIKE FOOTBALL") }
+        claim_pub_priv! { Birthday, Date::from_str("1990-03-04").unwrap() }
+        claim_pub_priv! { Email, String::from("IT@IS.FUN") }
+        claim_pub_priv! { Photo, BinaryVec::from(vec![1, 2, 3]) }
+        claim_pub_priv! { Pgp, String::from("I LIKE FOOTBALL") }
+        claim_pub_priv! { Domain, String::from("I-LIKE.TO.RUN") }
+        claim_pub_priv! { Url, Url::parse("https://www.imdb.com/title/tt0101660/").unwrap() }
+        claim_pub_priv! { Address, String::from("22334 FOOTBALL LANE, FOOTBALLSVILLE, CA 00001") }
+        claim_pub_priv! { PhoneNumber, String::from("415-888-0001") }
+        claim_pub_priv! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
+        claim_pub_priv! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
+        claim_pub_priv! {
             raw,
             |maybe, _| ClaimSpec::Extension { key: Vec::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THIS POEM IS GREAT".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![42, 22]),
@@ -562,7 +560,7 @@ pub(crate) mod tests {
                 assert_eq!(claimspec2.has_private(), false);
             };
             ($claimtype:ident, $val:expr) => {
-                thtrip!{
+                thtrip! {
                     next,
                     $val,
                     |maybe| { ClaimSpec::$claimtype(maybe) }
@@ -570,19 +568,19 @@ pub(crate) mod tests {
             };
         }
 
-        thtrip!{ Identity, IdentityID::random() }
-        thtrip!{ Name, String::from("I LIKE FOOTBALL") }
-        thtrip!{ Birthday, Date::from_str("1967-12-03").unwrap() }
-        thtrip!{ Email, String::from("IT.MAKES@ME.GLAD") }
-        thtrip!{ Photo, BinaryVec::from(vec![1, 2, 3]) }
-        thtrip!{ Pgp, String::from("I PLAY FOOTBALL") }
-        thtrip!{ Domain, String::from("WITH.MY.DAD") }
-        thtrip!{ Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap() }
-        thtrip!{ Address, String::from("445 Elite Football Sports Street, Football, KY 44666") }
-        thtrip!{ PhoneNumber, String::from("+22 222 4444 22") }
-        thtrip!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        thtrip!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
-        thtrip!{
+        thtrip! { Identity, IdentityID::random() }
+        thtrip! { Name, String::from("I LIKE FOOTBALL") }
+        thtrip! { Birthday, Date::from_str("1967-12-03").unwrap() }
+        thtrip! { Email, String::from("IT.MAKES@ME.GLAD") }
+        thtrip! { Photo, BinaryVec::from(vec![1, 2, 3]) }
+        thtrip! { Pgp, String::from("I PLAY FOOTBALL") }
+        thtrip! { Domain, String::from("WITH.MY.DAD") }
+        thtrip! { Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap() }
+        thtrip! { Address, String::from("445 Elite Football Sports Street, Football, KY 44666") }
+        thtrip! { PhoneNumber, String::from("+22 222 4444 22") }
+        thtrip! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
+        thtrip! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
+        thtrip! {
             next,
             BinaryVec::from(vec![42, 17, 86]),
             |maybe| { ClaimSpec::Extension { key: Vec::from("best poem ever".as_bytes()).into(), value: maybe } }
@@ -601,10 +599,10 @@ pub(crate) mod tests {
                 match $container.spec() {
                     ClaimSpec::Domain(..) | ClaimSpec::Url(..) => {
                         let instant_vals = $container.instant_verify_allowed_values(&identity_id).unwrap();
-                        let compare: Vec<String> = $expected.into_iter()
+                        let compare: Vec<String> = $expected
+                            .into_iter()
                             .map(|x: String| {
-                                x
-                                    .replace("{{identity_id}}", &identity_id_str)
+                                x.replace("{{identity_id}}", &identity_id_str)
                                     .replace("{{claim_id}}", &claim_id_str)
                                     .replace("{{identity_id_short}}", &identity_id_str_short)
                                     .replace("{{claim_id_short}}", &claim_id_str_short)
@@ -617,7 +615,7 @@ pub(crate) mod tests {
                         assert_eq!(res, Err(Error::IdentityClaimVerificationNotAllowed));
                     }
                 }
-            }
+            };
         }
         macro_rules! assert_instant {
             (raw, $claimmaker:expr, $val:expr, $expected:expr) => {
@@ -630,30 +628,30 @@ pub(crate) mod tests {
                 match_container! { container_private, $expected }
             };
             ($claimty:ident, $val:expr, $expected:expr) => {
-                assert_instant!{ raw, |maybe, _| ClaimSpec::$claimty(maybe), $val, $expected }
+                assert_instant! { raw, |maybe, _| ClaimSpec::$claimty(maybe), $val, $expected }
             };
         }
-        assert_instant!{ Identity, IdentityID::random(), vec![] }
-        assert_instant!{ Name, String::from("I LIKE FOOTBALL"), vec![] }
-        assert_instant!{ Birthday, Date::from_str("1967-12-03").unwrap(), vec![] }
-        assert_instant!{ Email, String::from("IT.MAKES@ME.GLAD"), vec![] }
-        assert_instant!{ Photo, BinaryVec::from(vec![1, 2, 3]), vec![] }
-        assert_instant!{ Pgp, String::from("I PLAY FOOTBALL"), vec![] }
-        assert_instant!{ Domain, String::from("WITH.MY.DAD"), vec![
+        assert_instant! { Identity, IdentityID::random(), vec![] }
+        assert_instant! { Name, String::from("I LIKE FOOTBALL"), vec![] }
+        assert_instant! { Birthday, Date::from_str("1967-12-03").unwrap(), vec![] }
+        assert_instant! { Email, String::from("IT.MAKES@ME.GLAD"), vec![] }
+        assert_instant! { Photo, BinaryVec::from(vec![1, 2, 3]), vec![] }
+        assert_instant! { Pgp, String::from("I PLAY FOOTBALL"), vec![] }
+        assert_instant! { Domain, String::from("WITH.MY.DAD"), vec![
             "stamp://{{identity_id}}/claim/{{claim_id}}".into(),
             "stamp://{{identity_id_short}}/claim/{{claim_id_short}}".into(),
         ] }
-        assert_instant!{ Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap(), vec![
+        assert_instant! { Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap(), vec![
             "stamp://{{identity_id}}/claim/{{claim_id}}".into(),
             "stamp://{{identity_id_short}}/claim/{{claim_id_short}}".into(),
             "stamp:{{identity_id}}:{{claim_id}}".into(),
             "stamp:{{identity_id_short}}:{{claim_id_short}}".into(),
         ] }
-        assert_instant!{ Address, String::from("445 Elite Football Sports Street, Football, KY 44666"), vec![] }
-        assert_instant!{ PhoneNumber, String::from("231234123"), vec![] }
-        assert_instant!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), vec![] }
-        assert_instant!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])), vec![] }
-        assert_instant!{
+        assert_instant! { Address, String::from("445 Elite Football Sports Street, Football, KY 44666"), vec![] }
+        assert_instant! { PhoneNumber, String::from("231234123"), vec![] }
+        assert_instant! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), vec![] }
+        assert_instant! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])), vec![] }
+        assert_instant! {
             raw,
             |maybe, _| { ClaimSpec::Extension { key: Vec::from("shaka gnar gnar".as_bytes()).into(), value: maybe } },
             BinaryVec::from(vec![66, 6]),
@@ -678,7 +676,7 @@ pub(crate) mod tests {
                 assert_eq!(container_private.as_public(&fake_master_key).err(), Some(Error::CryptoOpenFailed));
             };
             ($claimty:ident, $val:expr) => {
-                as_pub!{
+                as_pub! {
                     raw,
                     |maybe, _| ClaimSpec::$claimty(maybe),
                     $val,
@@ -687,19 +685,19 @@ pub(crate) mod tests {
             };
         }
 
-        as_pub!{ Identity, IdentityID::random() }
-        as_pub!{ Name, String::from("Sassafrass Stevens") }
-        as_pub!{ Birthday, Date::from_str("1990-03-04").unwrap() }
-        as_pub!{ Email, String::from("MEGATRON@nojerrystopjerry.net") }
-        as_pub!{ Photo, BinaryVec::from(vec![1, 2, 3]) }
-        as_pub!{ Pgp, String::from("0x00000000000") }
-        as_pub!{ Domain, String::from("decolonizing-decolonization.decolonize.org") }
-        as_pub!{ Url, Url::parse("https://i.gifer.com/RL4.gif").unwrap() }
-        as_pub!{ Address, String::from("22334 MECHA SHIVA LANE, GAINESVILLE, FL 00001") }
-        as_pub!{ PhoneNumber, String::from("121212") }
-        as_pub!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        as_pub!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
-        as_pub!{
+        as_pub! { Identity, IdentityID::random() }
+        as_pub! { Name, String::from("Sassafrass Stevens") }
+        as_pub! { Birthday, Date::from_str("1990-03-04").unwrap() }
+        as_pub! { Email, String::from("MEGATRON@nojerrystopjerry.net") }
+        as_pub! { Photo, BinaryVec::from(vec![1, 2, 3]) }
+        as_pub! { Pgp, String::from("0x00000000000") }
+        as_pub! { Domain, String::from("decolonizing-decolonization.decolonize.org") }
+        as_pub! { Url, Url::parse("https://i.gifer.com/RL4.gif").unwrap() }
+        as_pub! { Address, String::from("22334 MECHA SHIVA LANE, GAINESVILLE, FL 00001") }
+        as_pub! { PhoneNumber, String::from("121212") }
+        as_pub! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
+        as_pub! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
+        as_pub! {
             raw,
             |maybe, _| ClaimSpec::Extension { key: Vec::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THAT I AM NOT A CAT YOUR HONOR".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![42, 22]),
@@ -743,4 +741,3 @@ pub(crate) mod tests {
         has_priv! { raw, |maybe, _| ClaimSpec::Extension { key: Vec::from("tuna-melt-tuna-melt-TUNA-MELT-TUNA-MELT".as_bytes()).into(), value: maybe }, BinaryVec::from(vec![123, 122, 100]), true }
     }
 }
-

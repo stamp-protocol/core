@@ -9,7 +9,7 @@
 //!
 //! Stamp allows any number of claims to be created on an identity, and any of them
 //! can be individually signed ("stamped"). For instance, an
-//! identity might claim ownership of an email address, and any person or 
+//! identity might claim ownership of an email address, and any person or
 //! organization might "stamp" (verify) that claim by having the owner of the
 //! identity sign a random string sent over email and return it to the verifier.
 //! Any number of claims or types of claims can be made and signed by any other
@@ -189,10 +189,9 @@ pub mod error;
 #[macro_use]
 pub mod util;
 pub mod crypto;
-pub mod policy;
-pub mod identity;
 pub mod dag;
+pub mod identity;
+pub mod policy;
 
 pub use rand;
 pub use rasn;
-

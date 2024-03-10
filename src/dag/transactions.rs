@@ -2,42 +2,25 @@
 //! valid [Transaction] objects.
 
 use crate::{
-    error::{Error, Result},
     crypto::base::{Hash, HashAlgo, KeyID, SecretKey},
-    dag::{Dag, TransactionBody, TransactionID, TransactionEntry, Transaction},
+    dag::{Dag, Transaction, TransactionBody, TransactionEntry, TransactionID},
+    error::{Error, Result},
     identity::{
-        claim::{
-            ClaimID,
-            ClaimSpec,
-        },
-        identity::{
-            IdentityID,
-            Identity,
-        },
-        keychain::{
-            AdminKey,
-            AdminKeyID,
-            Key,
-            RevocationReason,
-        },
-        stamp::{
-            Stamp,
-            StampID,
-            StampEntry,
-            RevocationReason as StampRevocationReason,
-        },
+        claim::{ClaimID, ClaimSpec},
+        identity::{Identity, IdentityID},
+        keychain::{AdminKey, AdminKeyID, Key, RevocationReason},
+        stamp::{RevocationReason as StampRevocationReason, Stamp, StampEntry, StampID},
     },
     policy::{Policy, PolicyContainer, PolicyID},
     util::{
-        Public,
-        Timestamp,
-        ser::{BinaryVec, HashMapAsn1, SerdeBinary, SerText},
+        ser::{BinaryVec, HashMapAsn1, SerText, SerdeBinary},
+        Public, Timestamp,
     },
 };
 use getset;
 use rand::{CryptoRng, RngCore};
-use rasn::{Encode, Decode, AsnType};
-use serde_derive::{Serialize, Deserialize};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// A container that holds a set of transactions.
@@ -71,7 +54,12 @@ impl Transactions {
 
     /// Creates a new transaction that references the trailing transactions in the
     /// current set.
-    pub(crate) fn prepare_transaction<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, body: TransactionBody) -> Result<Transaction> {
+    pub(crate) fn prepare_transaction<T: Into<Timestamp> + Clone>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        body: TransactionBody,
+    ) -> Result<Transaction> {
         let leaves = Self::find_leaf_transactions(self.transactions());
         Transaction::new(TransactionEntry::new(now, leaves, body), hash_with)
     }
@@ -102,60 +90,55 @@ impl Transactions {
                 } else {
                     None
                 };
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .reset(admin_keys, policies_con)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.reset(admin_keys, policies_con)?;
                 Ok(identity_mod)
             }
             TransactionBody::AddAdminKeyV1 { admin_key } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .add_admin_key(admin_key)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.add_admin_key(admin_key)?;
                 Ok(identity_mod)
             }
             TransactionBody::EditAdminKeyV1 { id, name, description } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .edit_admin_key(&id, name, description)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.edit_admin_key(&id, name, description)?;
                 Ok(identity_mod)
             }
             TransactionBody::RevokeAdminKeyV1 { id, reason, new_name } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .revoke_admin_key(&id, reason, new_name)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.revoke_admin_key(&id, reason, new_name)?;
                 Ok(identity_mod)
             }
             TransactionBody::AddPolicyV1 { policy } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
+                let identity_mod = identity
+                    .ok_or(Error::DagMissingIdentity)?
                     .add_policy(PolicyContainer::from_policy_transaction(transaction.id(), 0, policy)?)?;
                 Ok(identity_mod)
             }
-            TransactionBody::DeletePolicyV1 { id  } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .delete_policy(&id)?;
+            TransactionBody::DeletePolicyV1 { id } => {
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.delete_policy(&id)?;
                 Ok(identity_mod)
             }
             TransactionBody::MakeClaimV1 { spec, name } => {
                 let claim_id = ClaimID::from(transaction.id().clone());
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .make_claim(claim_id, spec, name)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.make_claim(claim_id, spec, name)?;
                 Ok(identity_mod)
             }
             TransactionBody::EditClaimV1 { claim_id, name } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .edit_claim(&claim_id, name)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.edit_claim(&claim_id, name)?;
                 Ok(identity_mod)
             }
             TransactionBody::DeleteClaimV1 { claim_id } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .delete_claim(&claim_id)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.delete_claim(&claim_id)?;
                 Ok(identity_mod)
             }
             TransactionBody::MakeStampV1 { stamp: entry } => {
                 let created = transaction.entry().created().clone();
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .make_stamp(Stamp::new(StampID::from(transaction.id().clone()), entry, created))?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.make_stamp(Stamp::new(
+                    StampID::from(transaction.id().clone()),
+                    entry,
+                    created,
+                ))?;
                 Ok(identity_mod)
             }
             TransactionBody::RevokeStampV1 { stamp_id, reason } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .revoke_stamp(&stamp_id, reason)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.revoke_stamp(&stamp_id, reason)?;
                 Ok(identity_mod)
             }
             TransactionBody::AcceptStampV1 { stamp_transaction } => {
@@ -164,36 +147,30 @@ impl Transactions {
                     TransactionBody::MakeStampV1 { stamp: entry } => {
                         let created = stamp_transaction.entry().created().clone();
                         let stamp = Stamp::new(StampID::from(stamp_transaction.id().clone()), entry.clone(), created);
-                        identity.ok_or(Error::DagMissingIdentity)?
-                            .accept_stamp(stamp)?
+                        identity.ok_or(Error::DagMissingIdentity)?.accept_stamp(stamp)?
                     }
                     _ => Err(Error::TransactionMismatch)?,
                 };
                 Ok(identity_mod)
             }
             TransactionBody::DeleteStampV1 { stamp_id } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .delete_stamp(&stamp_id)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.delete_stamp(&stamp_id)?;
                 Ok(identity_mod)
             }
             TransactionBody::AddSubkeyV1 { key, name, desc } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .add_subkey(key, name, desc)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.add_subkey(key, name, desc)?;
                 Ok(identity_mod)
             }
             TransactionBody::EditSubkeyV1 { id, new_name, new_desc } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .edit_subkey(&id, new_name, new_desc)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.edit_subkey(&id, new_name, new_desc)?;
                 Ok(identity_mod)
             }
             TransactionBody::RevokeSubkeyV1 { id, reason, new_name } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .revoke_subkey(&id, reason, new_name)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.revoke_subkey(&id, reason, new_name)?;
                 Ok(identity_mod)
             }
             TransactionBody::DeleteSubkeyV1 { id } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?
-                    .delete_subkey(&id)?;
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.delete_subkey(&id)?;
                 Ok(identity_mod)
             }
             TransactionBody::PublishV1 { .. } => {
@@ -270,9 +247,12 @@ impl Transactions {
 
                 // so first, grab all the ancestors from our previous transactions, and put them
                 // into BTreeSets so they're pre-sorted for us.
-                let ancestry_sets = node.prev().iter()
+                let ancestry_sets = node
+                    .prev()
+                    .iter()
                     .map(|tid| {
-                        branch_tracker.get(tid)
+                        branch_tracker
+                            .get(tid)
                             .map(|ancestors| ancestors.iter().copied().collect::<BTreeSet<_>>())
                             .ok_or(Error::DagBuildError)
                     })
@@ -343,14 +323,9 @@ impl Transactions {
                 seen.insert(prev.clone(), true);
             }
         }
-        transaction_list.iter()
-            .filter_map(|t| {
-                if seen.get(t.id()).is_some() {
-                    None
-                } else {
-                    Some(t.id().clone())
-                }
-            })
+        transaction_list
+            .iter()
+            .filter_map(|t| if seen.get(t.id()).is_some() { None } else { Some(t.id().clone()) })
             .collect::<Vec<_>>()
     }
 
@@ -433,7 +408,12 @@ impl Transactions {
     }
 
     /// Reencrypt this transaction set with a new master key.
-    pub fn reencrypt<R: RngCore + CryptoRng>(mut self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+    pub fn reencrypt<R: RngCore + CryptoRng>(
+        mut self,
+        rng: &mut R,
+        old_master_key: &SecretKey,
+        new_master_key: &SecretKey,
+    ) -> Result<Self> {
         for trans in self.transactions_mut() {
             *trans = trans.clone().reencrypt(rng, old_master_key, new_master_key)?;
         }
@@ -443,12 +423,10 @@ impl Transactions {
     /// Determine if this identity is owned (ie, we have the private keys stored
     /// locally) or it is imported (ie, someone else's identity).
     pub fn is_owned(&self) -> bool {
-        self.transactions().iter().any(|trans| {
-            match trans.entry().body() {
-                TransactionBody::CreateIdentityV1 { .. } => trans.entry().body().has_private(),
-                TransactionBody::AddAdminKeyV1 { .. } => trans.entry().body().has_private(),
-                _ => false,
-            }
+        self.transactions().iter().any(|trans| match trans.entry().body() {
+            TransactionBody::CreateIdentityV1 { .. } => trans.entry().body().has_private(),
+            TransactionBody::AddAdminKeyV1 { .. } => trans.entry().body().has_private(),
+            _ => false,
         })
     }
 
@@ -468,11 +446,14 @@ impl Transactions {
 
     /// Create a new identity. The [ID][TransactionID] of this transaction will
     /// be the identity's public ID forever after.
-    pub fn create_identity<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, admin_keys: Vec<AdminKey>, policies: Vec<Policy>) -> Result<Transaction> {
-        let body = TransactionBody::CreateIdentityV1 {
-            admin_keys,
-            policies,
-        };
+    pub fn create_identity<T: Into<Timestamp> + Clone>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        admin_keys: Vec<AdminKey>,
+        policies: Vec<Policy>,
+    ) -> Result<Transaction> {
+        let body = TransactionBody::CreateIdentityV1 { admin_keys, policies };
         self.prepare_transaction(hash_with, now, body)
     }
 
@@ -482,26 +463,35 @@ impl Transactions {
     ///
     /// This is more or less a hailmary recovery option that allows gaining
     /// access to identity after some kind of catastrophic event.
-    pub fn reset_identity<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, admin_keys: Option<Vec<AdminKey>>, policies: Option<Vec<Policy>>) -> Result<Transaction> {
-        let body = TransactionBody::ResetIdentityV1 {
-            admin_keys,
-            policies,
-        };
+    pub fn reset_identity<T: Into<Timestamp> + Clone>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        admin_keys: Option<Vec<AdminKey>>,
+        policies: Option<Vec<Policy>>,
+    ) -> Result<Transaction> {
+        let body = TransactionBody::ResetIdentityV1 { admin_keys, policies };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Add a new [admin key][AdminKey] to the [Keychain][crate::identity::keychain::Keychain].
     pub fn add_admin_key<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, admin_key: AdminKey) -> Result<Transaction> {
-        let body = TransactionBody::AddAdminKeyV1 {
-            admin_key,
-        };
+        let body = TransactionBody::AddAdminKeyV1 { admin_key };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Edit an [admin key][AdminKey].
-    pub fn edit_admin_key<T, S>(&self, hash_with: &HashAlgo, now: T, id: AdminKeyID, name: Option<S>, description: Option<Option<S>>) -> Result<Transaction>
-        where T: Into<Timestamp> + Clone,
-              S: Into<String>,
+    pub fn edit_admin_key<T, S>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        id: AdminKeyID,
+        name: Option<S>,
+        description: Option<Option<S>>,
+    ) -> Result<Transaction>
+    where
+        T: Into<Timestamp> + Clone,
+        S: Into<String>,
     {
         let body = TransactionBody::EditAdminKeyV1 {
             id,
@@ -513,9 +503,17 @@ impl Transactions {
 
     /// Revokes an [AdminKey] key and moves it into the subkeys, optionally
     /// renaming it.
-    pub fn revoke_admin_key<T, S>(&self, hash_with: &HashAlgo, now: T, id: AdminKeyID, reason: RevocationReason, new_name: Option<S>) -> Result<Transaction>
-        where T: Into<Timestamp> + Clone,
-              S: Into<String>,
+    pub fn revoke_admin_key<T, S>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        id: AdminKeyID,
+        reason: RevocationReason,
+        new_name: Option<S>,
+    ) -> Result<Transaction>
+    where
+        T: Into<Timestamp> + Clone,
+        S: Into<String>,
     {
         let body = TransactionBody::RevokeAdminKeyV1 {
             id,
@@ -527,24 +525,21 @@ impl Transactions {
 
     /// Add a new [policy][Policy] to the identity.
     pub fn add_policy<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, policy: Policy) -> Result<Transaction> {
-        let body = TransactionBody::AddPolicyV1 {
-            policy,
-        };
+        let body = TransactionBody::AddPolicyV1 { policy };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Delete (by name) a [Policy] from the identity.
     pub fn delete_policy<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, id: PolicyID) -> Result<Transaction> {
-        let body = TransactionBody::DeletePolicyV1 {
-            id,
-        };
+        let body = TransactionBody::DeletePolicyV1 { id };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Make a new [Claim][ClaimSpec].
     pub fn make_claim<T, S>(&self, hash_with: &HashAlgo, now: T, spec: ClaimSpec, name: Option<S>) -> Result<Transaction>
-        where T: Into<Timestamp> + Clone,
-              S: Into<String>,
+    where
+        T: Into<Timestamp> + Clone,
+        S: Into<String>,
     {
         let body = TransactionBody::MakeClaimV1 {
             spec,
@@ -555,8 +550,9 @@ impl Transactions {
 
     /// Edit a claim.
     pub fn edit_claim<T, S>(&self, hash_with: &HashAlgo, now: T, claim_id: ClaimID, name: Option<S>) -> Result<Transaction>
-        where T: Into<Timestamp> + Clone,
-              S: Into<String>,
+    where
+        T: Into<Timestamp> + Clone,
+        S: Into<String>,
     {
         let body = TransactionBody::EditClaimV1 {
             claim_id,
@@ -567,9 +563,7 @@ impl Transactions {
 
     /// Delete an existing claim.
     pub fn delete_claim<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, claim_id: ClaimID) -> Result<Transaction> {
-        let body = TransactionBody::DeleteClaimV1 {
-            claim_id,
-        };
+        let body = TransactionBody::DeleteClaimV1 { claim_id };
         self.prepare_transaction(hash_with, now, body)
     }
 
@@ -579,24 +573,30 @@ impl Transactions {
     ///
     /// It can also not be added to the identity and sent directly to the stampee.
     pub fn make_stamp<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, stamp: StampEntry) -> Result<Transaction> {
-        let body = TransactionBody::MakeStampV1 {
-            stamp,
-        };
+        let body = TransactionBody::MakeStampV1 { stamp };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Revoke a stamp we previously created and store this revocation with the
     /// identity.
-    pub fn revoke_stamp<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, stamp_id: StampID, reason: StampRevocationReason) -> Result<Transaction> {
-        let body = TransactionBody::RevokeStampV1 {
-            stamp_id,
-            reason,
-        };
+    pub fn revoke_stamp<T: Into<Timestamp> + Clone>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        stamp_id: StampID,
+        reason: StampRevocationReason,
+    ) -> Result<Transaction> {
+        let body = TransactionBody::RevokeStampV1 { stamp_id, reason };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Accept a stamp someone, or some*thing*, has made on a claim of ours.
-    pub fn accept_stamp<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, stamp_transaction: Transaction) -> Result<Transaction> {
+    pub fn accept_stamp<T: Into<Timestamp> + Clone>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        stamp_transaction: Transaction,
+    ) -> Result<Transaction> {
         if !matches!(stamp_transaction.entry().body(), TransactionBody::MakeStampV1 { .. }) {
             Err(Error::TransactionMismatch)?;
         }
@@ -608,16 +608,15 @@ impl Transactions {
 
     /// Delete an existing stamp.
     pub fn delete_stamp<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, stamp_id: StampID) -> Result<Transaction> {
-        let body = TransactionBody::DeleteStampV1 {
-            stamp_id,
-        };
+        let body = TransactionBody::DeleteStampV1 { stamp_id };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Add a new subkey to our keychain.
     pub fn add_subkey<T, S>(&self, hash_with: &HashAlgo, now: T, key: Key, name: S, desc: Option<S>) -> Result<Transaction>
-        where T: Into<Timestamp> + Clone,
-              S: Into<String>,
+    where
+        T: Into<Timestamp> + Clone,
+        S: Into<String>,
     {
         let body = TransactionBody::AddSubkeyV1 {
             key,
@@ -628,9 +627,17 @@ impl Transactions {
     }
 
     /// Edit a subkey.
-    pub fn edit_subkey<T, S>(&self, hash_with: &HashAlgo, now: T, id: KeyID, new_name: Option<S>, new_desc: Option<Option<S>>) -> Result<Transaction>
-        where T: Into<Timestamp> + Clone,
-              S: Into<String>,
+    pub fn edit_subkey<T, S>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        id: KeyID,
+        new_name: Option<S>,
+        new_desc: Option<Option<S>>,
+    ) -> Result<Transaction>
+    where
+        T: Into<Timestamp> + Clone,
+        S: Into<String>,
     {
         let body = TransactionBody::EditSubkeyV1 {
             id,
@@ -641,9 +648,17 @@ impl Transactions {
     }
 
     /// Revoke a subkey.
-    pub fn revoke_subkey<T, S>(&self, hash_with: &HashAlgo, now: T, id: KeyID, reason: RevocationReason, new_name: Option<S>) -> Result<Transaction>
-        where T: Into<Timestamp> + Clone,
-              S: Into<String>,
+    pub fn revoke_subkey<T, S>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        id: KeyID,
+        reason: RevocationReason,
+        new_name: Option<S>,
+    ) -> Result<Transaction>
+    where
+        T: Into<Timestamp> + Clone,
+        S: Into<String>,
     {
         let body = TransactionBody::RevokeSubkeyV1 {
             id,
@@ -655,9 +670,7 @@ impl Transactions {
 
     /// Delete a subkey.
     pub fn delete_subkey<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, id: KeyID) -> Result<Transaction> {
-        let body = TransactionBody::DeleteSubkeyV1 {
-            id,
-        };
+        let body = TransactionBody::DeleteSubkeyV1 { id };
         self.prepare_transaction(hash_with, now, body)
     }
 
@@ -670,20 +683,31 @@ impl Transactions {
     }
 
     /// Sign a message
-    pub fn sign<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, body_hash_with: &HashAlgo, body: &[u8]) -> Result<Transaction> {
+    pub fn sign<T: Into<Timestamp> + Clone>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        body_hash_with: &HashAlgo,
+        body: &[u8],
+    ) -> Result<Transaction> {
         let creator = self.identity_id().ok_or(Error::DagEmpty)?;
         let body_hash = match body_hash_with {
             HashAlgo::Blake3 => Hash::new_blake3(body)?,
         };
-        let body = TransactionBody::SignV1 {
-            creator,
-            body_hash,
-        };
+        let body = TransactionBody::SignV1 { creator, body_hash };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Create a transaction for use in an external system.
-    pub fn ext<T: Into<Timestamp> + Clone, K: Into<HashMapAsn1<BinaryVec, BinaryVec>>>(&self, hash_with: &HashAlgo, now: T, previous_transactions: Vec<TransactionID>, ty: Option<BinaryVec>, context: Option<K>, payload: BinaryVec) -> Result<Transaction> {
+    pub fn ext<T: Into<Timestamp> + Clone, K: Into<HashMapAsn1<BinaryVec, BinaryVec>>>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        previous_transactions: Vec<TransactionID>,
+        ty: Option<BinaryVec>,
+        context: Option<K>,
+        payload: BinaryVec,
+    ) -> Result<Transaction> {
         let creator = self.identity_id().ok_or(Error::DagEmpty)?;
         let body = TransactionBody::ExtV1 {
             creator,
@@ -727,8 +751,8 @@ mod tests {
     use super::*;
     use crate::{
         crypto::{
-            base::{SignKeypair, CryptoKeypair},
-            private::{PrivateWithHmac, MaybePrivate},
+            base::{CryptoKeypair, SignKeypair},
+            private::{MaybePrivate, PrivateWithHmac},
         },
         identity::{
             claim::{Relationship, RelationshipType},
@@ -736,7 +760,11 @@ mod tests {
             stamp::Confidence,
         },
         policy::{Capability, Context, MultisigPolicy, MultisigPolicySignature, Policy, PolicyContainer, TransactionBodyType},
-        util::{Date, Url, ser::BinaryVec, test::{self, sign_and_push}},
+        util::{
+            ser::BinaryVec,
+            test::{self, sign_and_push},
+            Date, Url,
+        },
     };
     use std::str::FromStr;
 
@@ -755,20 +783,32 @@ mod tests {
         let (master_key_1, transactions_1, admin_key_1) = test::create_fake_identity(&mut rng, now.clone());
         let (_master_key_2, mut transactions_2, _admin_key_2) = test::create_fake_identity(&mut rng, now.clone());
         let trans_claim_signed = transactions_1
-            .make_claim(&HashAlgo::Blake3, now.clone(), ClaimSpec::Name(MaybePrivate::new_public("Hooty McOwl".to_string())), None::<String>).unwrap()
-            .sign(&master_key_1, &admin_key_1).unwrap();
+            .make_claim(
+                &HashAlgo::Blake3,
+                now.clone(),
+                ClaimSpec::Name(MaybePrivate::new_public("Hooty McOwl".to_string())),
+                None::<String>,
+            )
+            .unwrap()
+            .sign(&master_key_1, &admin_key_1)
+            .unwrap();
         transactions_1.push_transaction(trans_claim_signed.clone()).unwrap();
         transactions_2.build_identity().unwrap();
         match transactions_2.push_transaction_raw(trans_claim_signed.clone()) {
-            Ok(_) => panic!("pushed a bad raw transaction: {}", trans_claim_signed.id().as_string()),
-            Err(e) => assert_eq!(e, Error::DagOrphanedTransaction(trans_claim_signed.id().as_string())),
+            Ok(_) => {
+                panic!("pushed a bad raw transaction: {}", trans_claim_signed.id().as_string())
+            }
+            Err(e) => {
+                assert_eq!(e, Error::DagOrphanedTransaction(trans_claim_signed.id().as_string()))
+            }
         }
     }
 
     #[test]
     fn transactions_merge_reset() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::from_str("2021-04-20T00:00:00Z").unwrap());
+        let (master_key, transactions, admin_key) =
+            test::create_fake_identity(&mut rng, Timestamp::from_str("2021-04-20T00:00:00Z").unwrap());
         // make some claims on my smart refrigerator
         let admin_key_2 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()), "Alpha", None);
         let admin_key_3 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()), "Alpha", None);
@@ -792,7 +832,9 @@ mod tests {
         assert_eq!(identity1.keychain().subkeys().len(), 0);
         assert_eq!(identity1.claims().len(), 2);
         match identity1.find_claim_by_name("primary").unwrap().spec() {
-            ClaimSpec::Address(val) => assert_eq!(val.open_public().unwrap().as_str(), "1112 Dirk Delta Ln."),
+            ClaimSpec::Address(val) => {
+                assert_eq!(val.open_public().unwrap().as_str(), "1112 Dirk Delta Ln.")
+            }
             _ => panic!("wrong"),
         }
 
@@ -801,7 +843,9 @@ mod tests {
         assert_eq!(identity2.keychain().admin_keys().len(), 2);
         assert_eq!(identity2.claims().len(), 3);
         match identity2.find_claim_by_name("primary").unwrap().spec() {
-            ClaimSpec::Address(val) => assert_eq!(val.open_public().unwrap().as_str(), "1112 Liberal Hokes ave."),
+            ClaimSpec::Address(val) => {
+                assert_eq!(val.open_public().unwrap().as_str(), "1112 Liberal Hokes ave.")
+            }
             _ => panic!("wrong"),
         }
         let transactions2 = Transactions::merge(branch1.clone(), branch2.clone()).unwrap();
@@ -814,7 +858,9 @@ mod tests {
         assert_eq!(transactions3.transactions().len(), 10);
         let identity3 = transactions3.build_identity().unwrap();
         match identity3.find_claim_by_name("primary").unwrap().spec() {
-            ClaimSpec::Address(val) => assert_eq!(val.open_public().unwrap().as_str(), "1112 Liberal Hokes ave."),
+            ClaimSpec::Address(val) => {
+                assert_eq!(val.open_public().unwrap().as_str(), "1112 Liberal Hokes ave.")
+            }
             _ => panic!("wrong"),
         }
         assert_eq!(identity3.claims().len(), 6);
@@ -832,16 +878,25 @@ mod tests {
         let policies = identity.policies().iter().map(|x| x.policy().clone()).collect::<Vec<_>>();
         let res = transactions.clone().push_transaction(
             transactions
-                .create_identity(&HashAlgo::Blake3, Timestamp::now(), identity.keychain().admin_keys().clone(), policies).unwrap()
-                .sign(&master_key, &admin_key).unwrap()
+                .create_identity(&HashAlgo::Blake3, Timestamp::now(), identity.keychain().admin_keys().clone(), policies)
+                .unwrap()
+                .sign(&master_key, &admin_key)
+                .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::DagCreateIdentityOnExistingChain));
 
         let transactions2 = Transactions::new();
         let res = transactions2.clone().push_transaction(
             transactions2
-                .make_claim(&HashAlgo::Blake3, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Stinky Wizzleteets".into())), None::<String>).unwrap()
-                .sign(&master_key, &admin_key).unwrap()
+                .make_claim(
+                    &HashAlgo::Blake3,
+                    Timestamp::now(),
+                    ClaimSpec::Name(MaybePrivate::new_public("Stinky Wizzleteets".into())),
+                    None::<String>,
+                )
+                .unwrap()
+                .sign(&master_key, &admin_key)
+                .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::DagMissingIdentity));
     }
@@ -857,8 +912,10 @@ mod tests {
 
         let res = transactions.clone().push_transaction(
             transactions
-                .create_identity(&HashAlgo::Blake3, Timestamp::now(), vec![], vec![]).unwrap()
-                .sign(&master_key, &admin_key).unwrap()
+                .create_identity(&HashAlgo::Blake3, Timestamp::now(), vec![], vec![])
+                .unwrap()
+                .sign(&master_key, &admin_key)
+                .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::DagCreateIdentityOnExistingChain));
     }
@@ -869,21 +926,36 @@ mod tests {
         let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Alpha", None);
         let admin_key3 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Zing", None);
-        let capability2 = Capability::Transaction { body_type: vec![TransactionBodyType::ResetIdentityV1], context: Context::Permissive };
-        let capability3 = Capability::Transaction { body_type: vec![TransactionBodyType::AcceptStampV1], context: Context::IdentityID(IdentityID::random()) };
+        let capability2 = Capability::Transaction {
+            body_type: vec![TransactionBodyType::ResetIdentityV1],
+            context: Context::Permissive,
+        };
+        let capability3 = Capability::Transaction {
+            body_type: vec![TransactionBodyType::AcceptStampV1],
+            context: Context::IdentityID(IdentityID::random()),
+        };
         let policy2 = Policy::new(
             vec![capability2],
-            MultisigPolicy::MOfN { must_have: 0, participants: vec![] }
+            MultisigPolicy::MOfN {
+                must_have: 0,
+                participants: vec![],
+            },
         );
         let policy3 = Policy::new(
             vec![capability3],
-            MultisigPolicy::MOfN { must_have: 1, participants: vec![] }
+            MultisigPolicy::MOfN {
+                must_have: 1,
+                participants: vec![],
+            },
         );
         let identity1 = transactions.build_identity().unwrap();
         assert_eq!(identity1.keychain().admin_keys().len(), 1);
         assert!(identity1.keychain().admin_key_by_name("Alpha").is_some());
         assert_eq!(identity1.policies().len(), 1);
-        assert_eq!(identity1.policies()[0].id(), &PolicyContainer::gen_id(transactions.transactions()[0].id(), 0).unwrap());
+        assert_eq!(
+            identity1.policies()[0].id(),
+            &PolicyContainer::gen_id(transactions.transactions()[0].id(), 0).unwrap()
+        );
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ reset_identity, Timestamp::now(), Some(vec![admin_key2.clone(), admin_key3.clone()]), Some(vec![policy2.clone(), policy3.clone()]) ]
         };
@@ -892,8 +964,14 @@ mod tests {
         assert_eq!(identity2.keychain().admin_key_by_name("Alpha").unwrap().key(), admin_key2.key());
         assert!(identity2.keychain().admin_key_by_name("Zing").is_some());
         assert_eq!(identity2.policies().len(), 2);
-        assert_eq!(identity2.policies()[0].id(), &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 0).unwrap());
-        assert_eq!(identity2.policies()[1].id(), &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 1).unwrap());
+        assert_eq!(
+            identity2.policies()[0].id(),
+            &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 0).unwrap()
+        );
+        assert_eq!(
+            identity2.policies()[1].id(),
+            &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 1).unwrap()
+        );
     }
 
     #[test]
@@ -935,14 +1013,20 @@ mod tests {
         };
         let identity2 = transactions2.build_identity().unwrap();
         assert_eq!(identity2.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Alpha");
-        assert_eq!(identity2.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(), &Some("get a job".into()));
+        assert_eq!(
+            identity2.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(),
+            &Some("get a job".into())
+        );
 
         let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
             [ edit_admin_key, Timestamp::now(), admin_key.key_id(), Some("Jerkface"), None ]
         };
         let identity3 = transactions3.build_identity().unwrap();
         assert_eq!(identity3.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Jerkface");
-        assert_eq!(identity3.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(), &Some("get a job".into()));
+        assert_eq!(
+            identity3.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(),
+            &Some("get a job".into())
+        );
 
         let transactions4 = sign_and_push! { &master_key, &admin_key, transactions3.clone(),
             [ edit_admin_key, Timestamp::now(), admin_key.key_id(), None::<String>, Some(None) ]
@@ -971,7 +1055,10 @@ mod tests {
         let identity2 = transactions2.build_identity().unwrap();
         assert_eq!(identity2.keychain().admin_keys().len(), 1);
         assert!(identity2.keychain().admin_key_by_name("Alpha").is_none());
-        assert_eq!(identity2.keychain().admin_key_by_keyid(&key_id).unwrap().revocation(), &Some(RevocationReason::Compromised));
+        assert_eq!(
+            identity2.keychain().admin_key_by_keyid(&key_id).unwrap().revocation(),
+            &Some(RevocationReason::Compromised)
+        );
         assert_eq!(identity2.keychain().admin_key_by_keyid(&key_id).unwrap().name(), "rotten");
         assert_eq!(identity2.keychain().subkeys().len(), 0);
         assert!(identity2.keychain().subkey_by_name("Alpha").is_none());
@@ -984,7 +1071,10 @@ mod tests {
         let identity3 = transactions3.build_identity().unwrap();
         assert_eq!(identity3.keychain().admin_keys().len(), 1);
         assert!(identity3.keychain().admin_key_by_name("Alpha").is_none());
-        assert_eq!(identity3.keychain().admin_key_by_keyid(&key_id).unwrap().revocation(), &Some(RevocationReason::Compromised));
+        assert_eq!(
+            identity3.keychain().admin_key_by_keyid(&key_id).unwrap().revocation(),
+            &Some(RevocationReason::Compromised)
+        );
         assert_eq!(identity3.keychain().admin_key_by_keyid(&key_id).unwrap().name(), "toast");
         assert_eq!(identity3.keychain().subkeys().len(), 0);
         assert!(identity3.keychain().subkey_by_name("Alpha").is_none());
@@ -996,32 +1086,56 @@ mod tests {
     fn transactions_add_policy() {
         let mut rng = crate::util::test::rng();
         let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let capability2 = Capability::Transaction { body_type: vec![TransactionBodyType::ResetIdentityV1], context: Context::Permissive };
+        let capability2 = Capability::Transaction {
+            body_type: vec![TransactionBodyType::ResetIdentityV1],
+            context: Context::Permissive,
+        };
         let policy2 = Policy::new(
             vec![capability2],
-            MultisigPolicy::MOfN { must_have: 0, participants: vec![] }
+            MultisigPolicy::MOfN {
+                must_have: 0,
+                participants: vec![],
+            },
         );
 
         let identity1 = transactions.build_identity().unwrap();
         assert_eq!(identity1.policies().len(), 1);
-        assert_eq!(identity1.policies()[0].id(), &PolicyContainer::gen_id(transactions.transactions()[0].id(), 0).unwrap());
+        assert_eq!(
+            identity1.policies()[0].id(),
+            &PolicyContainer::gen_id(transactions.transactions()[0].id(), 0).unwrap()
+        );
 
         let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
             [ add_policy, Timestamp::now(), policy2.clone() ]
         };
         let identity2 = transactions2.build_identity().unwrap();
         assert_eq!(identity2.policies().len(), 2);
-        assert_eq!(identity2.policies()[0].id(), &PolicyContainer::gen_id(transactions2.transactions()[0].id(), 0).unwrap());
-        assert_eq!(identity2.policies()[1].id(), &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 0).unwrap());
+        assert_eq!(
+            identity2.policies()[0].id(),
+            &PolicyContainer::gen_id(transactions2.transactions()[0].id(), 0).unwrap()
+        );
+        assert_eq!(
+            identity2.policies()[1].id(),
+            &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 0).unwrap()
+        );
 
         let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
             [ add_policy, Timestamp::now(), policy2.clone() ]
         };
         let identity3 = transactions3.build_identity().unwrap();
         assert_eq!(identity3.policies().len(), 3);
-        assert_eq!(identity3.policies()[0].id(), &PolicyContainer::gen_id(transactions3.transactions()[0].id(), 0).unwrap());
-        assert_eq!(identity3.policies()[1].id(), &PolicyContainer::gen_id(transactions3.transactions()[1].id(), 0).unwrap());
-        assert_eq!(identity3.policies()[2].id(), &PolicyContainer::gen_id(transactions3.transactions()[2].id(), 0).unwrap());
+        assert_eq!(
+            identity3.policies()[0].id(),
+            &PolicyContainer::gen_id(transactions3.transactions()[0].id(), 0).unwrap()
+        );
+        assert_eq!(
+            identity3.policies()[1].id(),
+            &PolicyContainer::gen_id(transactions3.transactions()[1].id(), 0).unwrap()
+        );
+        assert_eq!(
+            identity3.policies()[2].id(),
+            &PolicyContainer::gen_id(transactions3.transactions()[2].id(), 0).unwrap()
+        );
     }
 
     #[test]
@@ -1038,8 +1152,10 @@ mod tests {
 
         let res = transactions2.clone().push_transaction(
             transactions2
-                .delete_policy(&HashAlgo::Blake3, Timestamp::now(), policy_id.clone()).unwrap()
-                .sign(&master_key, &admin_key).unwrap()
+                .delete_policy(&HashAlgo::Blake3, Timestamp::now(), policy_id.clone())
+                .unwrap()
+                .sign(&master_key, &admin_key)
+                .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::PolicyNotFound));
     }
@@ -1057,7 +1173,7 @@ mod tests {
                 let spec_private = $claimmaker(maybe_private, val.clone());
                 let spec_public = $claimmaker(maybe_public, val.clone());
                 (spec_private, spec_public)
-            }}
+            }};
         }
 
         macro_rules! assert_claim {
@@ -1099,18 +1215,18 @@ mod tests {
         assert_eq!(identity.claims().len(), 0);
         assert_eq!(transactions.transactions().len(), 1);
 
-        assert_claim!{ Identity, identity.id().clone() }
-        assert_claim!{ Name, String::from("Marty Malt") }
-        assert_claim!{ Birthday, Date::from_str("2010-01-03").unwrap() }
-        assert_claim!{ Email, String::from("marty@sids.com") }
-        assert_claim!{ Photo, BinaryVec::from(vec![1, 2, 3]) }
-        assert_claim!{ Pgp, String::from("12345") }
-        assert_claim!{ Domain, String::from("slappy.com") }
-        assert_claim!{ Url, Url::parse("https://killtheradio.net/").unwrap() }
-        assert_claim!{ Address, String::from("111 blumps ln") }
-        assert_claim!{ Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        assert_claim!{ RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
-        assert_claim!{
+        assert_claim! { Identity, identity.id().clone() }
+        assert_claim! { Name, String::from("Marty Malt") }
+        assert_claim! { Birthday, Date::from_str("2010-01-03").unwrap() }
+        assert_claim! { Email, String::from("marty@sids.com") }
+        assert_claim! { Photo, BinaryVec::from(vec![1, 2, 3]) }
+        assert_claim! { Pgp, String::from("12345") }
+        assert_claim! { Domain, String::from("slappy.com") }
+        assert_claim! { Url, Url::parse("https://killtheradio.net/").unwrap() }
+        assert_claim! { Address, String::from("111 blumps ln") }
+        assert_claim! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
+        assert_claim! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
+        assert_claim! {
             raw,
             |maybe, _| ClaimSpec::Extension { key: Vec::from("id:state:ca".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![7, 3, 2, 90]),
@@ -1192,16 +1308,16 @@ mod tests {
             IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
             identity.id().clone(),
             claim.id().clone(),
-            Confidence::Low, 
-            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap())
+            Confidence::Low,
+            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
         );
 
         let make_stamp_trans = transactions_stamper
-            .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry).unwrap()
-            .sign(&master_key_stamper, &admin_key_stamper).unwrap();
-        let transactions_stamper2 = transactions_stamper
-            .push_transaction(make_stamp_trans.clone())
+            .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry)
+            .unwrap()
+            .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();
+        let transactions_stamper2 = transactions_stamper.push_transaction(make_stamp_trans.clone()).unwrap();
         let identity_stamper2 = transactions_stamper2.build_identity().unwrap();
         assert_eq!(identity_stamper2.stamps().len(), 1);
         assert_eq!(identity_stamper2.stamps()[0].revocation(), &None);
@@ -1226,26 +1342,27 @@ mod tests {
             IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
             identity_stampee2.id().clone(),
             claim.id().clone(),
-            Confidence::Low, 
-            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap())
+            Confidence::Low,
+            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
         );
 
         let make_stamp_trans = transactions_stamper
-            .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry).unwrap()
-            .sign(&master_key_stamper, &admin_key_stamper).unwrap();
-        let transactions_stamper2 = transactions_stamper
-            .push_transaction(make_stamp_trans.clone())
+            .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry)
+            .unwrap()
+            .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();
+        let transactions_stamper2 = transactions_stamper.push_transaction(make_stamp_trans.clone()).unwrap();
         let identity_stamper2 = transactions_stamper2.build_identity().unwrap();
         assert_eq!(identity_stamper2.stamps().len(), 1);
         assert_eq!(identity_stamper2.stamps()[0].revocation(), &None);
 
         let stamp_id = identity_stamper2.stamps()[0].id();
         let revoke_trans = transactions_stamper2
-            .revoke_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_id.clone(), StampRevocationReason::Compromised).unwrap()
-            .sign(&master_key_stamper, &admin_key_stamper).unwrap();
-        let transactions_stamper3 = transactions_stamper2.clone()
-            .push_transaction(revoke_trans.clone()).unwrap();
+            .revoke_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_id.clone(), StampRevocationReason::Compromised)
+            .unwrap()
+            .sign(&master_key_stamper, &admin_key_stamper)
+            .unwrap();
+        let transactions_stamper3 = transactions_stamper2.clone().push_transaction(revoke_trans.clone()).unwrap();
         let identity_stamper3 = transactions_stamper3.build_identity().unwrap();
         assert_eq!(identity_stamper3.stamps().len(), 1);
         assert_eq!(identity_stamper3.stamps()[0].revocation().as_ref().unwrap(), &StampRevocationReason::Compromised);
@@ -1276,16 +1393,24 @@ mod tests {
             IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
             identity.id().clone(),
             claim.id().clone(),
-            Confidence::Low, 
-            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap())
+            Confidence::Low,
+            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
         );
-        let stamp_transaction_unsigned = transactions_stamper
-            .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry).unwrap();
-        let stamp_transaction = stamp_transaction_unsigned.clone()
-            .sign(&master_key_stamper, &admin_key_stamper).unwrap();
+        let stamp_transaction_unsigned = transactions_stamper.make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry).unwrap();
+        let stamp_transaction = stamp_transaction_unsigned
+            .clone()
+            .sign(&master_key_stamper, &admin_key_stamper)
+            .unwrap();
         let not_stamp_transaction = transactions_stamper
-            .make_claim(&HashAlgo::Blake3, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Butch".into())), None::<String>).unwrap()
-            .sign(&master_key_stamper, &admin_key_stamper).unwrap();
+            .make_claim(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                ClaimSpec::Name(MaybePrivate::new_public("Butch".into())),
+                None::<String>,
+            )
+            .unwrap()
+            .sign(&master_key_stamper, &admin_key_stamper)
+            .unwrap();
 
         let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2,
             [ accept_stamp, Timestamp::now(), stamp_transaction.clone() ]
@@ -1296,19 +1421,22 @@ mod tests {
 
         let res = transactions3.clone().push_transaction(
             transactions3
-                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction_unsigned.clone()).unwrap()
-                .sign(&master_key, &admin_key).unwrap()
+                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction_unsigned.clone())
+                .unwrap()
+                .sign(&master_key, &admin_key)
+                .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::TransactionNoSignatures));
 
-        let res = transactions3
-            .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), not_stamp_transaction.clone());
+        let res = transactions3.accept_stamp(&HashAlgo::Blake3, Timestamp::now(), not_stamp_transaction.clone());
         assert_eq!(res.err(), Some(Error::TransactionMismatch));
 
         let res = transactions3.clone().push_transaction(
             transactions3
-                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction.clone()).unwrap()
-                .sign(&master_key, &admin_key).unwrap()
+                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction.clone())
+                .unwrap()
+                .sign(&master_key, &admin_key)
+                .unwrap(),
         );
         assert_eq!(res.err(), None);
 
@@ -1317,8 +1445,10 @@ mod tests {
         };
         let res = transactions4.clone().push_transaction(
             transactions4
-                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction.clone()).unwrap()
-                .sign(&master_key, &admin_key).unwrap()
+                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction.clone())
+                .unwrap()
+                .sign(&master_key, &admin_key)
+                .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::IdentityClaimNotFound));
     }
@@ -1340,12 +1470,14 @@ mod tests {
             IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
             identity.id().clone(),
             claim.id().clone(),
-            Confidence::Low, 
-            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap())
+            Confidence::Low,
+            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
         );
         let stamp_transaction = transactions_stamper
-            .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry).unwrap()
-            .sign(&master_key_stamper, &admin_key_stamper).unwrap();
+            .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry)
+            .unwrap()
+            .sign(&master_key_stamper, &admin_key_stamper)
+            .unwrap();
 
         let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2,
             [ accept_stamp, Timestamp::now(), stamp_transaction.clone() ]
@@ -1362,8 +1494,10 @@ mod tests {
 
         let res = transactions4.clone().push_transaction(
             transactions4
-                .delete_stamp(&HashAlgo::Blake3, Timestamp::now(), StampID::from(stamp_transaction.id().clone())).unwrap()
-                .sign(&master_key, &admin_key).unwrap()
+                .delete_stamp(&HashAlgo::Blake3, Timestamp::now(), StampID::from(stamp_transaction.id().clone()))
+                .unwrap()
+                .sign(&master_key, &admin_key)
+                .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::IdentityStampNotFound));
     }
@@ -1428,14 +1562,28 @@ mod tests {
         assert!(identity3.keychain().subkey_by_name("default:sign").is_some());
         assert!(identity3.keychain().subkey_by_name("default:MYLITTLEPONY").is_some());
         assert!(identity3.keychain().subkey_by_name("default:crypto").is_none());
-        assert_eq!(identity3.keychain().subkey_by_name("default:MYLITTLEPONY").unwrap().description(), &Some("Tonga".into()));
-        assert_eq!(identity3.keychain().subkey_by_name("default:secret").unwrap().description(), &Some("Encrypt/decrypt things locally with this key".into()));
+        assert_eq!(
+            identity3.keychain().subkey_by_name("default:MYLITTLEPONY").unwrap().description(),
+            &Some("Tonga".into())
+        );
+        assert_eq!(
+            identity3.keychain().subkey_by_name("default:secret").unwrap().description(),
+            &Some("Encrypt/decrypt things locally with this key".into())
+        );
 
         let randkey = KeyID::random_secret();
         let res = transactions3.clone().push_transaction(
             transactions3
-                .edit_subkey(&HashAlgo::Blake3, Timestamp::now(), randkey.clone(), Some("you want a push i'll show you a push"), None).unwrap()
-                .sign(&master_key, &admin_key).unwrap()
+                .edit_subkey(
+                    &HashAlgo::Blake3,
+                    Timestamp::now(),
+                    randkey.clone(),
+                    Some("you want a push i'll show you a push"),
+                    None,
+                )
+                .unwrap()
+                .sign(&master_key, &admin_key)
+                .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::KeychainKeyNotFound(randkey.clone())));
     }
@@ -1516,10 +1664,15 @@ mod tests {
             [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Miner 49er".into())), None::<String> ]
             [ make_claim, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public("miner@49ers.net".into())), Some(String::from("primary")) ]
         };
-        let published = transactions2.publish(&HashAlgo::Blake3, Timestamp::now()).unwrap()
-            .sign(&master_key, &admin_key).unwrap();
+        let published = transactions2
+            .publish(&HashAlgo::Blake3, Timestamp::now())
+            .unwrap()
+            .sign(&master_key, &admin_key)
+            .unwrap();
         match published.entry().body() {
-            TransactionBody::PublishV1 { transactions: published_trans } => {
+            TransactionBody::PublishV1 {
+                transactions: published_trans,
+            } => {
                 assert!(!published_trans.has_private());
                 assert_eq!(published_trans.transactions().len(), 3);
                 assert_eq!(published_trans.transactions()[0].id(), transactions2.transactions()[0].id());
@@ -1534,8 +1687,12 @@ mod tests {
 
         let mut published2 = published.clone();
         match published2.entry_mut().body_mut() {
-            TransactionBody::PublishV1 { transactions: ref mut published_trans2 } => {
-                published_trans2.transactions_mut().retain(|x| x.id() != transactions2.transactions()[1].id());
+            TransactionBody::PublishV1 {
+                transactions: ref mut published_trans2,
+            } => {
+                published_trans2
+                    .transactions_mut()
+                    .retain(|x| x.id() != transactions2.transactions()[1].id());
                 assert_eq!(published_trans2.transactions().len(), 2);
             }
             _ => panic!("Unexpected transaction: {:?}", published2),
@@ -1548,8 +1705,11 @@ mod tests {
     fn transactions_sign() {
         let mut rng = crate::util::test::rng();
         let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let sig = transactions.sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from(b"get a job").as_slice()).unwrap()
-            .sign(&master_key, &admin_key).unwrap();
+        let sig = transactions
+            .sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from(b"get a job").as_slice())
+            .unwrap()
+            .sign(&master_key, &admin_key)
+            .unwrap();
         let identity = transactions.build_identity().unwrap();
         sig.verify(Some(&identity)).unwrap();
 
@@ -1559,7 +1719,10 @@ mod tests {
 
         let mut sig_mod = sig.clone();
         match sig_mod.entry_mut().body_mut() {
-            TransactionBody::SignV1 { creator: _creator, ref mut body_hash } => {
+            TransactionBody::SignV1 {
+                creator: _creator,
+                ref mut body_hash,
+            } => {
                 *body_hash = Hash::new_blake3(b"hold on...").unwrap();
             }
             _ => panic!("Unexpected transaction: {:?}", sig_mod),
@@ -1571,8 +1734,18 @@ mod tests {
     fn transactions_ext() {
         let mut rng = crate::util::test::rng();
         let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let ext = transactions.ext(&HashAlgo::Blake3, Timestamp::now(), vec![], None, Some([("type", "payment")]), BinaryVec::from(Vec::from("SEND $5 TO SALLY".as_bytes()))).unwrap()
-            .sign(&master_key, &admin_key).unwrap();
+        let ext = transactions
+            .ext(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                vec![],
+                None,
+                Some([("type", "payment")]),
+                BinaryVec::from(Vec::from("SEND $5 TO SALLY".as_bytes())),
+            )
+            .unwrap()
+            .sign(&master_key, &admin_key)
+            .unwrap();
         let identity = transactions.build_identity().unwrap();
         ext.verify(Some(&identity)).unwrap();
 
@@ -1595,9 +1768,19 @@ mod tests {
     fn transactions_push_invalid_sig() {
         let mut rng = crate::util::test::rng();
         let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let mut claim_trans = transactions.make_claim(&HashAlgo::Blake3, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Mr. Larry Johnson".into())), None::<String>).unwrap();
+        let mut claim_trans = transactions
+            .make_claim(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                ClaimSpec::Name(MaybePrivate::new_public("Mr. Larry Johnson".into())),
+                None::<String>,
+            )
+            .unwrap();
         let sig = admin_key.key().sign(&master_key, b"haha lol").unwrap();
-        let policy_sig = MultisigPolicySignature::Key { key: admin_key.key().clone().into(), signature: sig };
+        let policy_sig = MultisigPolicySignature::Key {
+            key: admin_key.key().clone().into(),
+            signature: sig,
+        };
         claim_trans.signatures_mut().push(policy_sig);
         let res = transactions.clone().push_transaction(claim_trans);
         assert!(matches!(res.err(), Some(Error::TransactionSignatureInvalid(_))));
@@ -1632,18 +1815,14 @@ mod tests {
         };
         let policy1 = Policy::new(cap1, multisig1);
 
-        let cap2 = vec![
-            Capability::Transaction {
-                body_type: vec![TransactionBodyType::PublishV1],
-                context: Context::Permissive,
-            },
-        ];
+        let cap2 = vec![Capability::Transaction {
+            body_type: vec![TransactionBodyType::PublishV1],
+            context: Context::Permissive,
+        }];
         let multisig2 = MultisigPolicy::All(vec![
             MultisigPolicy::MOfN {
                 must_have: 1,
-                participants: vec![
-                    admin_key4.key().clone().into(),
-                ],
+                participants: vec![admin_key4.key().clone().into()],
             },
             MultisigPolicy::MOfN {
                 must_have: 2,
@@ -1661,155 +1840,245 @@ mod tests {
             [ add_policy, Timestamp::now(), policy2 ]
         };
 
-        let trans1 = transactions2.make_claim(&HashAlgo::Blake3, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Larry".into())), None::<String>).unwrap();
+        let trans1 = transactions2
+            .make_claim(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                ClaimSpec::Name(MaybePrivate::new_public("Larry".into())),
+                None::<String>,
+            )
+            .unwrap();
+        assert_eq!(transactions2.clone().push_transaction(trans1.clone()).err(), Some(Error::TransactionNoSignatures));
         assert_eq!(
-            transactions2.clone().push_transaction(trans1.clone()).err(),
-            Some(Error::TransactionNoSignatures)
-        );
-        assert_eq!(
-            transactions2.clone().push_transaction(
-                trans1.clone()
-                    .sign(&master_key, &admin_key1).unwrap()
-            ).err(),
+            transactions2
+                .clone()
+                .push_transaction(trans1.clone().sign(&master_key, &admin_key1).unwrap())
+                .err(),
             Some(Error::PolicyNotFound)
         );
-        transactions2.clone().push_transaction(
-            trans1.clone()
-                .sign(&master_key, &admin_key1).unwrap()
-                .sign(&master_key, &admin_key2).unwrap()
-        ).unwrap();
-        transactions2.clone().push_transaction(
-            trans1.clone()
-                .sign(&master_key, &admin_key2).unwrap()
-                .sign(&master_key, &admin_key3).unwrap()
-        ).unwrap();
-        transactions2.clone().push_transaction(
-            trans1.clone()
-                .sign(&master_key, &admin_key2).unwrap()
-                .sign(&master_key, &admin_key1).unwrap()
-        ).unwrap();
-        transactions2.clone().push_transaction(
-            trans1.clone()
-                .sign(&master_key, &admin_key1).unwrap()
-                .sign(&master_key, &admin_key2).unwrap()
-                .sign(&master_key, &admin_key3).unwrap()
-        ).unwrap();
+        transactions2
+            .clone()
+            .push_transaction(
+                trans1
+                    .clone()
+                    .sign(&master_key, &admin_key1)
+                    .unwrap()
+                    .sign(&master_key, &admin_key2)
+                    .unwrap(),
+            )
+            .unwrap();
+        transactions2
+            .clone()
+            .push_transaction(
+                trans1
+                    .clone()
+                    .sign(&master_key, &admin_key2)
+                    .unwrap()
+                    .sign(&master_key, &admin_key3)
+                    .unwrap(),
+            )
+            .unwrap();
+        transactions2
+            .clone()
+            .push_transaction(
+                trans1
+                    .clone()
+                    .sign(&master_key, &admin_key2)
+                    .unwrap()
+                    .sign(&master_key, &admin_key1)
+                    .unwrap(),
+            )
+            .unwrap();
+        transactions2
+            .clone()
+            .push_transaction(
+                trans1
+                    .clone()
+                    .sign(&master_key, &admin_key1)
+                    .unwrap()
+                    .sign(&master_key, &admin_key2)
+                    .unwrap()
+                    .sign(&master_key, &admin_key3)
+                    .unwrap(),
+            )
+            .unwrap();
 
         let subkey = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
-        let trans2 = transactions2.add_subkey(&HashAlgo::Blake3, Timestamp::now(), subkey.clone(), "logins/websites/booots.com", None).unwrap();
+        let trans2 = transactions2
+            .add_subkey(&HashAlgo::Blake3, Timestamp::now(), subkey.clone(), "logins/websites/booots.com", None)
+            .unwrap();
         assert_eq!(
-            transactions2.clone().push_transaction(
-                trans2.clone()
-                    .sign(&master_key, &admin_key1).unwrap()
-            ).err(),
+            transactions2
+                .clone()
+                .push_transaction(trans2.clone().sign(&master_key, &admin_key1).unwrap())
+                .err(),
             Some(Error::PolicyNotFound)
         );
         assert_eq!(
-            transactions2.clone().push_transaction(
-                trans2.clone()
-                    .sign(&master_key, &admin_key1).unwrap()
-                    .sign(&master_key, &admin_key2).unwrap()
-                    .sign(&master_key, &admin_key3).unwrap()
-            ).err(),
+            transactions2
+                .clone()
+                .push_transaction(
+                    trans2
+                        .clone()
+                        .sign(&master_key, &admin_key1)
+                        .unwrap()
+                        .sign(&master_key, &admin_key2)
+                        .unwrap()
+                        .sign(&master_key, &admin_key3)
+                        .unwrap()
+                )
+                .err(),
             Some(Error::PolicyNotFound)
         );
 
-        let trans3 = transactions2.add_subkey(&HashAlgo::Blake3, Timestamp::now(), subkey.clone(), "logins/websites/beeets.com", None).unwrap();
+        let trans3 = transactions2
+            .add_subkey(&HashAlgo::Blake3, Timestamp::now(), subkey.clone(), "logins/websites/beeets.com", None)
+            .unwrap();
         assert_eq!(
-            transactions2.clone().push_transaction(
-                trans3.clone()
-                    .sign(&master_key, &admin_key1).unwrap()
-            ).err(),
+            transactions2
+                .clone()
+                .push_transaction(trans3.clone().sign(&master_key, &admin_key1).unwrap())
+                .err(),
             Some(Error::PolicyNotFound)
         );
-        transactions2.clone().push_transaction(
-            trans3.clone()
-                .sign(&master_key, &admin_key1).unwrap()
-                .sign(&master_key, &admin_key2).unwrap()
-        ).unwrap();
-        transactions2.clone().push_transaction(
-            trans3.clone()
-                .sign(&master_key, &admin_key3).unwrap()
-                .sign(&master_key, &admin_key2).unwrap()
-        ).unwrap();
-        transactions2.clone().push_transaction(
-            trans3.clone()
-                .sign(&master_key, &admin_key1).unwrap()
-                .sign(&master_key, &admin_key3).unwrap()
-        ).unwrap();
-        transactions2.clone().push_transaction(
-            trans3.clone()
-                .sign(&master_key, &admin_key1).unwrap()
-                .sign(&master_key, &admin_key2).unwrap()
-                .sign(&master_key, &admin_key3).unwrap()
-        ).unwrap();
+        transactions2
+            .clone()
+            .push_transaction(
+                trans3
+                    .clone()
+                    .sign(&master_key, &admin_key1)
+                    .unwrap()
+                    .sign(&master_key, &admin_key2)
+                    .unwrap(),
+            )
+            .unwrap();
+        transactions2
+            .clone()
+            .push_transaction(
+                trans3
+                    .clone()
+                    .sign(&master_key, &admin_key3)
+                    .unwrap()
+                    .sign(&master_key, &admin_key2)
+                    .unwrap(),
+            )
+            .unwrap();
+        transactions2
+            .clone()
+            .push_transaction(
+                trans3
+                    .clone()
+                    .sign(&master_key, &admin_key1)
+                    .unwrap()
+                    .sign(&master_key, &admin_key3)
+                    .unwrap(),
+            )
+            .unwrap();
+        transactions2
+            .clone()
+            .push_transaction(
+                trans3
+                    .clone()
+                    .sign(&master_key, &admin_key1)
+                    .unwrap()
+                    .sign(&master_key, &admin_key2)
+                    .unwrap()
+                    .sign(&master_key, &admin_key3)
+                    .unwrap(),
+            )
+            .unwrap();
 
         let trans4 = transactions2.publish(&HashAlgo::Blake3, Timestamp::now()).unwrap();
         let identity2 = transactions2.build_identity().unwrap();
         assert_eq!(
-            trans4.clone()
-                .sign(&master_key, &admin_key1).unwrap()
+            trans4
+                .clone()
+                .sign(&master_key, &admin_key1)
+                .unwrap()
                 .verify(Some(&identity2))
                 .err(),
             Some(Error::PolicyNotFound)
         );
         assert_eq!(
-            trans4.clone()
-                .sign(&master_key, &admin_key1).unwrap()
-                .sign(&master_key, &admin_key2).unwrap()
+            trans4
+                .clone()
+                .sign(&master_key, &admin_key1)
+                .unwrap()
+                .sign(&master_key, &admin_key2)
+                .unwrap()
                 .verify(Some(&identity2))
                 .err(),
             Some(Error::PolicyNotFound)
         );
         assert_eq!(
-            trans4.clone()
-                .sign(&master_key, &admin_key1).unwrap()
-                .sign(&master_key, &admin_key2).unwrap()
-                .sign(&master_key, &admin_key3).unwrap()
+            trans4
+                .clone()
+                .sign(&master_key, &admin_key1)
+                .unwrap()
+                .sign(&master_key, &admin_key2)
+                .unwrap()
+                .sign(&master_key, &admin_key3)
+                .unwrap()
                 .verify(Some(&identity2))
                 .err(),
             Some(Error::PolicyNotFound)
         );
         assert_eq!(
-            trans4.clone()
-                .sign(&master_key, &admin_key4).unwrap()
-                .sign(&master_key, &admin_key3).unwrap()
+            trans4
+                .clone()
+                .sign(&master_key, &admin_key4)
+                .unwrap()
+                .sign(&master_key, &admin_key3)
+                .unwrap()
                 .verify(Some(&identity2))
                 .err(),
             Some(Error::PolicyNotFound)
         );
-        trans4.clone()
-            .sign(&master_key, &admin_key4).unwrap()
-            .sign(&master_key, &admin_key1).unwrap()
-            .sign(&master_key, &admin_key2).unwrap()
+        trans4
+            .clone()
+            .sign(&master_key, &admin_key4)
+            .unwrap()
+            .sign(&master_key, &admin_key1)
+            .unwrap()
+            .sign(&master_key, &admin_key2)
+            .unwrap()
             .verify(Some(&identity2))
             .unwrap();
-        trans4.clone()
-            .sign(&master_key, &admin_key4).unwrap()
-            .sign(&master_key, &admin_key1).unwrap()
-            .sign(&master_key, &admin_key3).unwrap()
+        trans4
+            .clone()
+            .sign(&master_key, &admin_key4)
+            .unwrap()
+            .sign(&master_key, &admin_key1)
+            .unwrap()
+            .sign(&master_key, &admin_key3)
+            .unwrap()
             .verify(Some(&identity2))
             .unwrap();
-        trans4.clone()
-            .sign(&master_key, &admin_key4).unwrap()
-            .sign(&master_key, &admin_key1).unwrap()
-            .sign(&master_key, &admin_key2).unwrap()
-            .sign(&master_key, &admin_key3).unwrap()
+        trans4
+            .clone()
+            .sign(&master_key, &admin_key4)
+            .unwrap()
+            .sign(&master_key, &admin_key1)
+            .unwrap()
+            .sign(&master_key, &admin_key2)
+            .unwrap()
+            .sign(&master_key, &admin_key3)
+            .unwrap()
             .verify(Some(&identity2))
             .unwrap();
 
-        let mut trans5 = trans4.clone()
-            .sign(&master_key, &admin_key1).unwrap()
-            .sign(&master_key, &admin_key3).unwrap();
+        let mut trans5 = trans4
+            .clone()
+            .sign(&master_key, &admin_key1)
+            .unwrap()
+            .sign(&master_key, &admin_key3)
+            .unwrap();
         let fakesig = MultisigPolicySignature::Key {
             key: admin_key4.key().clone().into(),
             signature: admin_key4.sign(&master_key, b"GET A JOB").unwrap(),
         };
         trans5.signatures_mut().push(fakesig);
-        assert!(matches!(
-            trans5.verify(Some(&identity2)),
-            Err(Error::TransactionSignatureInvalid(_))
-        ));
+        assert!(matches!(trans5.verify(Some(&identity2)), Err(Error::TransactionSignatureInvalid(_))));
     }
 
     #[test]
@@ -1844,7 +2113,10 @@ mod tests {
             }
             _ => panic!("bad claim type"),
         }
-        let sig = identity.keychain().admin_keys()[0].key().sign(&master_key, b"KILL...ME....").unwrap();
+        let sig = identity.keychain().admin_keys()[0]
+            .key()
+            .sign(&master_key, b"KILL...ME....")
+            .unwrap();
 
         let master_key_new = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let transactions2 = transactions.reencrypt(&mut rng, &master_key, &master_key_new).unwrap();
@@ -1852,7 +2124,10 @@ mod tests {
         let res = transactions2.test_master_key(&master_key);
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
         let identity2 = transactions2.build_identity().unwrap();
-        let sig2 = identity2.keychain().admin_keys()[0].key().sign(&master_key_new, b"KILL...ME....").unwrap();
+        let sig2 = identity2.keychain().admin_keys()[0]
+            .key()
+            .sign(&master_key_new, b"KILL...ME....")
+            .unwrap();
         assert_eq!(sig, sig2);
         match identity2.claims()[0].spec() {
             ClaimSpec::Name(maybe) => {
@@ -1969,4 +2244,3 @@ mod tests {
         assert_eq!(identity.id(), identity2.id());
     }
 }
-
