@@ -1,4 +1,4 @@
-.PHONY: all clean lint release doc build run test test-panic test-st macros
+.PHONY: all clean lint fmt release doc build run test test-panic test-st macros
 
 # non-versioned include
 VARS ?= vars.mk
