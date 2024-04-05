@@ -518,29 +518,6 @@ pub enum Capability {
         #[rasn(tag(explicit(1)))]
         context: Context,
     },
-    /// Allows creating any kind of custom actions/contexts outside the scope of
-    /// the Stamp protocol.
-    ///
-    /// For instance, an identity might have the ability to publish transactions
-    /// in other protocols, and the `Extension` capability allows that protocol
-    /// to define its own action types and contexts in serialized binary form.
-    ///
-    /// This allows harnessing the identity and its policy system for participating
-    /// in protocols outside of Stamp.
-    ///
-    /// There is some overlap between `Capability::Extension` and [`TransactionBody::ExtV1`],
-    /// however capability extensions allow setting very fine-grained permissions (by
-    /// externalizing them to the caller, which also means just speaking Stamp doesn't
-    /// mean you can validate capability extensions) and transaction extensions allow
-    /// a very quick and easy way to leverage Stamp's transactional system that might
-    /// be somewhat crude but allows built-in transaction creation and verification.
-    #[rasn(tag(explicit(2)))]
-    Extension {
-        #[rasn(tag(explicit(0)))]
-        ty: BinaryVec,
-        #[rasn(tag(explicit(1)))]
-        context: BinaryVec,
-    },
 }
 
 impl Capability {
@@ -563,11 +540,6 @@ impl Capability {
                         Err(Error::PolicyCapabilityMismatch)
                     }
                 }
-                _ => Err(Error::PolicyCapabilityMismatch),
-            },
-            // we don't validate extensions. you need to do that yourself.
-            Self::Extension { .. } => match against {
-                Self::Extension { .. } => Ok(()),
                 _ => Err(Error::PolicyCapabilityMismatch),
             },
         }
@@ -1068,29 +1040,12 @@ mod tests {
     #[test]
     fn capability_test() {
         let cap1 = Capability::Permissive;
-        let cap2 = Capability::Extension {
-            ty: BinaryVec::from(Vec::from(b"omg".as_ref())),
-            context: BinaryVec::from(Vec::from(b"lol".as_ref())),
-        };
         cap1.test(&Capability::Permissive).unwrap();
         cap1.test(&Capability::Transaction {
             body_type: vec![TransactionBodyType::CreateIdentityV1],
             context: Context::Any(vec![]),
         })
         .unwrap();
-        cap1.test(&cap2).unwrap();
-
-        assert_eq!(cap2.test(&Capability::Permissive).err(), Some(Error::PolicyCapabilityMismatch));
-        let res2_1 = cap2.test(&Capability::Transaction {
-            body_type: vec![TransactionBodyType::CreateIdentityV1],
-            context: Context::Any(vec![]),
-        });
-        let res2_2 = cap2.test(&Capability::Transaction {
-            body_type: vec![TransactionBodyType::MakeStampV1],
-            context: Context::Name("lalala".into()),
-        });
-        assert_eq!(res2_1.err(), Some(Error::PolicyCapabilityMismatch));
-        assert_eq!(res2_2.err(), Some(Error::PolicyCapabilityMismatch));
 
         // alright, now the tricky stuff
         let cap3 = Capability::Transaction {
@@ -1098,7 +1053,6 @@ mod tests {
             context: Context::Any(vec![Context::Name("omglol".into())]),
         };
         assert_eq!(cap3.test(&cap1).err(), Some(Error::PolicyCapabilityMismatch));
-        assert_eq!(cap3.test(&cap2).err(), Some(Error::PolicyCapabilityMismatch));
         let res3_1 = cap3.test(&Capability::Transaction {
             body_type: vec![TransactionBodyType::SignV1],
             context: Context::Any(vec![]),
@@ -1286,21 +1240,11 @@ mod tests {
         let policy1 = Policy::new(capabilities1, multisig1.clone());
         assert!(policy1.can(&testcap));
         assert!(policy1.can(&Capability::Permissive));
-        assert!(policy1.can(&Capability::Extension {
-            ty: Vec::from(b"basis/transaction".as_ref()).into(),
-            context: Vec::from(r#"{"action":"order","department":"inventory"}"#.as_bytes()).into(),
-        }));
 
-        let capabilities2 = vec![
-            Capability::Extension {
-                ty: Vec::from("12".as_bytes()).into(),
-                context: Vec::from("34".as_bytes()).into(),
-            },
-            Capability::Transaction {
-                body_type: vec![TransactionBodyType::CreateIdentityV1],
-                context: Context::Any(vec![Context::Name("shooter mcgavin".into())]),
-            },
-        ];
+        let capabilities2 = vec![Capability::Transaction {
+            body_type: vec![TransactionBodyType::CreateIdentityV1],
+            context: Context::Any(vec![Context::Name("shooter mcgavin".into())]),
+        }];
         let policy2 = Policy::new(capabilities2.clone(), multisig1.clone());
         assert!(!policy2.can(&testcap));
 
