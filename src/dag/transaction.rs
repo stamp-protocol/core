@@ -721,6 +721,35 @@ impl Transaction {
         self.entry_mut().set_body(new_body);
         Ok(self)
     }
+
+    /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
+    /// [`Transaction::verify`], and returns the contained [`crate::dag::Transactions`] and
+    /// [`crate::identity::Identity`].
+    pub fn validate_publish_transaction(self) -> Result<(Transactions, Identity)> {
+        // first, do a borrowed verification of the full published identity. this lets us verify
+        // without cloning.
+        let identity = match self.entry().body() {
+            TransactionBody::PublishV1 { transactions } => {
+                let identity = transactions.build_identity()?;
+                self.verify(Some(&identity))?;
+                identity
+            }
+            _ => Err(Error::TransactionMismatch)?,
+        };
+
+        // now we can fully deconstuct the transaction, get the inner identity, and return it
+        match self {
+            Transaction {
+                entry:
+                    TransactionEntry {
+                        body: TransactionBody::PublishV1 { transactions },
+                        ..
+                    },
+                ..
+            } => Ok((*transactions, identity)),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
 }
 
 impl Public for Transaction {
@@ -1005,6 +1034,12 @@ mod tests {
         let admin_key2 = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         assert!(transactions.transactions()[0].is_signed_by(&admin_key.key().clone().into()));
         assert!(!transactions.transactions()[0].is_signed_by(&admin_key2.clone().into()));
+    }
+
+    #[ignore]
+    #[test]
+    fn trans_validate_publish_transaction() {
+        todo!();
     }
 
     #[test]
