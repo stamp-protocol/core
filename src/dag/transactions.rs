@@ -217,7 +217,8 @@ impl Transactions {
             Err(Error::DagEmpty)?;
         }
 
-        let dag = Dag::from_transactions(&self.transactions().iter().collect::<Vec<_>>());
+        let trans_borrowed = self.transactions().iter().collect::<Vec<_>>();
+        let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&trans_borrowed);
 
         if dag.head().len() != 1 {
             Err(Error::DagGenesisError)?;
@@ -232,9 +233,9 @@ impl Transactions {
         }
 
         let first_trans = dag.index().get(&dag.head()[0]).ok_or(Error::DagBuildError)?;
-        first_trans.transaction().verify(None)?;
+        first_trans.node().verify(None)?;
         let mut branch_identities: HashMap<u32, Identity> = HashMap::new();
-        branch_identities.insert(0, Transactions::apply_transaction(None, first_trans.transaction())?);
+        branch_identities.insert(0, Transactions::apply_transaction(None, first_trans.node())?);
         let root_identity = branch_identities.get(&0).ok_or(Error::DagMissingIdentity)?.clone();
         dag.walk(|node, ancestry, branch_tracker| {
             // check if this is a merge transaction or not.
@@ -269,7 +270,7 @@ impl Transactions {
                 let most_recent_common_branch = intersected.last().ok_or(Error::DagBuildError)?;
                 // now grab the identity associated with this common branch and verify...
                 let most_recent_common_ancestor_identity = branch_identities.get(most_recent_common_branch).ok_or(Error::DagBuildError)?;
-                node.transaction().verify(Some(most_recent_common_ancestor_identity))?;
+                node.node().verify(Some(most_recent_common_ancestor_identity))?;
 
                 // verified!
                 //
@@ -284,7 +285,7 @@ impl Transactions {
                             continue;
                         }
                         let branch_identity = branch_identities.entry(*branch).or_insert(root_identity.clone());
-                        (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), node.transaction())?;
+                        (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), node.node())?;
                         seen_branch.insert(*branch);
                     }
                 }
@@ -294,11 +295,11 @@ impl Transactions {
                 // identities.
                 let current_branch_identity = branch_identities.entry(*ancestry.last().unwrap()).or_insert(root_identity.clone());
                 // first verify the transaction is valid against the CURRENT branch identity.
-                node.transaction().verify(Some(current_branch_identity))?;
+                node.node().verify(Some(current_branch_identity))?;
                 // now apply this transaction to all of its ancestor branches
                 for branch in ancestry {
                     let branch_identity = branch_identities.entry(*branch).or_insert(root_identity.clone());
-                    (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), node.transaction())?;
+                    (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), node.node())?;
                 }
             } else {
                 // if we're here, it means we're processing our genesis transaction. it should be
