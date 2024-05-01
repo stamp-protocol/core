@@ -15,5 +15,6 @@ pub mod claim;
 pub mod identity;
 pub mod keychain;
 pub mod stamp;
+pub mod trust;
 
 pub use identity::*;
