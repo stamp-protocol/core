@@ -77,6 +77,8 @@ pub enum ClaimSpec {
     /// A claim that this identity is mine.
     ///
     /// This claim should be made *publicly* any time a new identity is created.
+    /// Stamps on this claim validate that the person holding the identity is the one
+    /// the Stamper expects.
     ///
     /// This can also be used to claim ownership of another identity, for instance
     /// if you lost your keys and need to move to a new identity.
