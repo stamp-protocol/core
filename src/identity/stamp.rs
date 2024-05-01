@@ -77,7 +77,7 @@ pub enum Confidence {
     /// This should really only be used between people who have known each other
     /// for years (like family).
     #[rasn(tag(explicit(4)))]
-    Extreme,
+    Ultimate,
 }
 
 /// An inner struct type created when making a stamp. This is what is wrapped in a
