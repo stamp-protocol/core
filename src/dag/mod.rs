@@ -112,8 +112,8 @@ where
         let mut dag = Dag::new();
 
         // index our nodes into the DAG.
-        for trans in nodes {
-            dag.index_mut().insert(trans.node_id().clone(), DagNode::new_from_node(trans));
+        for node in nodes {
+            dag.index_mut().insert(node.node_id().clone(), DagNode::new_from_node(node));
         }
 
         // holds locations at which our chain breaks, ie we reference a node that cannot be
