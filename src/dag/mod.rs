@@ -163,10 +163,12 @@ where
                 let created = trans_created_idx.get(tid).copied().unwrap_or(i64::MAX);
                 (created, *tid)
             });
+            node.prev_mut().dedup();
             node.next_mut().sort_unstable_by_key(|tid| {
                 let created = trans_created_idx.get(tid).copied().unwrap_or(i64::MAX);
                 (created, *tid)
             });
+            node.next_mut().dedup();
         }
 
         // sort our head nodes by create time ASC, node id ASC, then store the sorted
@@ -752,6 +754,50 @@ mod tests {
                 ("P", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12], true),
                 ("Q", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12], true),
             ],
+        )
+    }
+
+    #[test]
+    fn dag_from_nodes_duplicate_links() {
+        let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
+        let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
+        #[allow(non_snake_case, unused_mut)]
+        let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
+           transactions,
+           [A(0), B(10), C(20)],
+           [
+               [A] <- [B],
+               [A] <- [B],
+               [B] <- [C],
+           ],
+           []
+        };
+        let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
+        assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A"],);
+        assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["C"],);
+        assert_eq!(dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B", "C"],);
+        assert_eq!(
+            dag.unvisited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
+            Vec::<&'static str>::new(),
+        );
+        assert_eq!(dag.missing.len(), 0);
+        let mut visited = Vec::new();
+        dag.walk(|node, ancestry, idx| {
+            visited.push((
+                node.transaction().id().clone(),
+                Vec::from(ancestry),
+                idx.get(node.transaction().id()).map(|x| x.as_slice()) == Some(ancestry),
+            ));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            visited
+                .into_iter()
+                .map(|(tid, ancestry, eq)| (*tid_to_name.get(&tid).unwrap(), ancestry, eq))
+                .collect::<Vec<_>>(),
+            vec![("A", vec![0], true), ("B", vec![0], true), ("C", vec![0], true),],
         )
     }
 }
