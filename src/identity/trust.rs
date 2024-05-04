@@ -12,7 +12,7 @@ use crate::{
     util::Timestamp,
 };
 use getset::{Getters, MutGetters};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Deref;
 use std::str::FromStr;
 
@@ -114,8 +114,10 @@ impl TrustAlgo for TrustAlgoDefault {
     }
 }
 
+/// Represents a network of identities, linked via stamps
 #[derive(Clone, Default)]
 struct Network<'a> {
+    /// maps IdentityID -> Vec<outgoing stamps>
     links: HashMap<&'a TransactionID, Vec<&'a StampEntry>>,
 }
 
@@ -145,18 +147,26 @@ impl<'a> Network<'a> {
         }
     }
 
-    fn find_paths(&'a self, from: &'a IdentityID, to: &'a IdentityID, max_distance: Option<usize>) -> Vec<Vec<&'a StampEntry>> {
+    fn find_paths(&'a self, from: &'a IdentityID, to: &'a IdentityID, max_distance: Option<usize>) -> Vec<Vec<Vec<&'a StampEntry>>> {
         #[derive(Debug, Default)]
         struct PathWalker<'a> {
-            matches: Vec<Vec<&'a StampEntry>>,
+            /// Sorry this is three layers deep, but hear me out.
+            ///
+            /// Layer 1 (outer) is the set of unique paths between the `from` not and the `to` node
+            /// in the given network.
+            ///
+            /// Layer 2 (middle) represents a full path and has one entry *per identity*.
+            ///
+            /// Layer 3 (inner) has all of the stamps shared by any given prev/next identity.
+            matches: Vec<Vec<Vec<&'a StampEntry>>>,
         }
 
         impl<'a> PathWalker<'a> {
-            fn push(&mut self, path: Vec<&'a StampEntry>) {
+            fn push(&mut self, path: Vec<Vec<&'a StampEntry>>) {
                 self.matches.push(path);
             }
 
-            fn to_matches(self) -> Vec<Vec<&'a StampEntry>> {
+            fn to_matches(self) -> Vec<Vec<Vec<&'a StampEntry>>> {
                 let Self { matches, .. } = self;
                 matches
             }
@@ -169,7 +179,7 @@ impl<'a> Network<'a> {
             current_identity: &'a IdentityID,
             start_identity: &'a IdentityID,
             target_identity: &'a IdentityID,
-            current_path: Vec<&'a StampEntry>,
+            current_path: Vec<Vec<&'a StampEntry>>,
             max_distance: usize,
         ) {
             if current_path.len() > max_distance {
@@ -189,20 +199,35 @@ impl<'a> Network<'a> {
                     }
                     None => return,
                 };
-                'recurse: for stamp in stamps {
+
+                // group our stamps by previous/next pairs. BTree for consistent sorting
+                let mut stamps_grouped: BTreeMap<(&TransactionID, &TransactionID), Vec<&StampEntry>> =
+                    stamps.into_iter().fold(BTreeMap::new(), |mut acc, x| {
+                        let entry = acc.entry((x.stamper(), x.stampee())).or_insert_with(|| Vec::new());
+                        (*entry).push(x);
+                        acc
+                    });
+
+                'recurse: for stamps in stamps_grouped.into_values() {
+                    let this_node = match stamps.get(0) {
+                        Some(x) => x.stampee(),
+                        None => continue 'recurse,
+                    };
                     // check if the stamp we're recursing on has already been visited, and if so
                     // then skip it.
-                    if stamp.stampee() == start_identity {
+                    if this_node == start_identity {
                         continue 'recurse;
                     }
                     for path_stamp in &current_path {
-                        if path_stamp.stampee() == stamp.stampee() {
+                        if path_stamp.get(0).map(|x| x.stampee()) == Some(this_node) {
                             continue 'recurse;
                         }
                     }
+
+                    // ok we're off the beaten path, keep walking
                     let mut next_path = current_path.clone();
-                    next_path.push(stamp);
-                    walk(links, walker, stamp.stampee(), start_identity, target_identity, next_path, max_distance);
+                    next_path.push(stamps);
+                    walk(links, walker, this_node, start_identity, target_identity, next_path, max_distance);
                 }
             }
         }
@@ -214,7 +239,7 @@ impl<'a> Network<'a> {
 /// A report that shows how much trust was generated for a single claim.
 ///
 /// This report is mostly for debugging/visualization because the values may or may not be
-/// indicative of the final `trust_stamps` value in [`TrustReportFromEntry`].
+/// indicative of the final `trust_stamps` value in [`TrustReportPathEntry`].
 #[derive(Clone, Debug, Getters, MutGetters)]
 #[getset(get = "pub", get_mut = "pub(crate)")]
 pub struct TrustReportStamp {
@@ -239,10 +264,11 @@ impl TrustReportStamp {
 /// A report that gives details on the transfer of trust from a single identity to a given node.
 #[derive(Clone, Debug, Getters, MutGetters)]
 #[getset(get = "pub", get_mut = "pub(crate)")]
-pub struct TrustReportFromEntry {
-    /// The identity that assigned this trust. Keep in mind that an identity can have multiple
-    /// incoming `from` entries.
+pub struct TrustReportPathEntry {
+    /// The identity that assigned this trust.
     from: IdentityID,
+    /// The identity that trust is being assigned to.
+    to: IdentityID,
     /// Sheds some light on how a particular claim is scored. This is mainly useful for debugging,
     /// as the real result of stamp trust is held in `trust_stamps`.
     stamp_trust_details: Vec<TrustReportStamp>,
@@ -266,9 +292,10 @@ pub struct TrustReportFromEntry {
     trust_decayed: i8,
 }
 
-impl TrustReportFromEntry {
+impl TrustReportPathEntry {
     fn new(
         from: IdentityID,
+        to: IdentityID,
         stamp_trust_details: Vec<TrustReportStamp>,
         trust_previous_node: i8,
         distance_from_originator: usize,
@@ -278,6 +305,7 @@ impl TrustReportFromEntry {
     ) -> Self {
         Self {
             from,
+            to,
             stamp_trust_details,
             trust_previous_node,
             distance_from_originator,
@@ -291,22 +319,14 @@ impl TrustReportFromEntry {
 /// The full trust report for a node.
 #[derive(Clone, Debug, Getters, MutGetters)]
 #[getset(get = "pub", get_mut = "pub(crate)")]
-pub struct NodeTrustReport {
-    /// This node's [`IdentityID`]
-    identity_id: IdentityID,
-    /// The final trust value for this node
-    trust: i8,
-    /// The reports on incoming identity trust for this node.
-    from_entries: Vec<TrustReportFromEntry>,
+pub struct TrustReport {
+    /// The different paths that trust took in our calculations
+    paths: Vec<Vec<TrustReportPathEntry>>,
 }
 
-impl NodeTrustReport {
-    fn new(identity_id: IdentityID, trust: i8, from_entries: Vec<TrustReportFromEntry>) -> Self {
-        Self {
-            identity_id,
-            trust,
-            from_entries,
-        }
+impl TrustReport {
+    fn new() -> Self {
+        Self { paths: Vec::new() }
     }
 }
 
@@ -318,135 +338,62 @@ pub fn trust_score<T: TrustAlgo>(
     theirs: &IdentityID,
     trust_network: &[&Identity],
     trust_algo: &T,
-) -> Result<Option<(i8, Vec<NodeTrustReport>)>> {
+) -> Result<Option<(i8, TrustReport)>> {
     let mut network = Network::new();
     for id in trust_network {
         network.add_node(id);
     }
-    let paths = network.find_paths(ours, theirs, trust_algo.max_distance());
+    let mut paths = network.find_paths(ours, theirs, trust_algo.max_distance());
 
     if paths.len() == 0 {
         return Ok(None);
     }
 
-    #[derive(Debug)]
-    struct TrustNode<'a> {
-        id: &'a TransactionID, // ie, IdentityID
-        prev: Vec<&'a TransactionID>,
-        stamps: Vec<&'a StampEntry>,
-        timestamp: Timestamp,
-    }
-
-    impl<'a> TrustNode<'a> {
-        fn new(id: &'a TransactionID) -> Self {
-            // sorry to unwrap...
-            let timestamp = Timestamp::from_str("1999-12-31T23:59:59.999Z").unwrap();
-            Self {
-                id,
-                prev: Vec::new(),
-                stamps: Vec::new(),
-                timestamp,
+    // we're going to calculate the trust for each path independently, and merge the trust values
+    // only at the end of the line when we get to our target node ("theirs")
+    let mut report = TrustReport::new();
+    let mut trust_values: Vec<i8> = Vec::new();
+    for path in paths {
+        let mut prev_node_trust = 127;
+        let mut last_node_trust = None;
+        let mut path_report: Vec<TrustReportPathEntry> = Vec::with_capacity(path.len());
+        for (dist, stamps) in path.into_iter().enumerate() {
+            let trust_stamps = trust_algo.trust_from_stamps(&stamps);
+            let trust_ratio = ((trust_stamps as i64 * prev_node_trust as i64) / i8::MAX as i64) as i8;
+            let trust_decayed = trust_algo.decay(trust_ratio, dist);
+            let report_stamps = stamps
+                .iter()
+                .map(|s| {
+                    let trust_single = trust_algo.trust_from_stamps(&[s]);
+                    TrustReportStamp::new(s.claim_id().clone(), trust_single)
+                })
+                .collect::<Vec<_>>();
+            let trust_report_entry = TrustReportPathEntry::new(
+                IdentityID::from(stamps[0].stamper().clone()),
+                IdentityID::from(stamps[0].stampee().clone()),
+                report_stamps,
+                prev_node_trust,
+                dist,
+                trust_stamps,
+                trust_ratio,
+                trust_decayed,
+            );
+            path_report.push(trust_report_entry);
+            if trust_decayed == 0 {
+                break;
             }
+            prev_node_trust = trust_decayed;
+            last_node_trust = Some(trust_decayed);
+        }
+        report.paths_mut().push(path_report);
+        if let Some(trustval) = last_node_trust {
+            trust_values.push(trustval);
         }
     }
 
-    impl<'a> From<&'a TrustNode<'a>> for DagNode<'a, TransactionID, TrustNode<'a>> {
-        fn from(n: &'a TrustNode) -> Self {
-            DagNode::new(&n.id, n, n.prev.clone(), &n.timestamp)
-        }
-    }
+    let trust = trust_algo.merge(&trust_values);
 
-    // for each of our paths, update a series of nodes that point to previous nodes that also store
-    // the stamps (with the stamper). this gives us a structure we can use to "walk" our path
-    // iteratively, creating a trust score as we move along
-    //
-    // along the way, we also store the shortest distance from any given node to the genesis node.
-    // this gives us a distance value we can use in our calculations later.
-    let mut nodes: HashMap<&TransactionID, TrustNode> = HashMap::new();
-    // maps a (node, prev node) -> distance value. this lets us look up how far a given node is
-    // from the genesis node when we're doing our calculations
-    let mut dist_map: HashMap<(&TransactionID, &TransactionID), usize> = HashMap::new();
-    let timestamp = Timestamp::from_str("1999-12-31T23:59:59.999Z").unwrap();
-    for path in &paths {
-        for (dist, edge) in path.iter().enumerate() {
-            let entry_stamper = nodes.entry(edge.stamper()).or_insert_with(|| TrustNode::new(edge.stamper()));
-            (*entry_stamper).stamps.push(edge);
-            let entry_stampee = nodes.entry(edge.stampee()).or_insert_with(|| TrustNode::new(edge.stampee()));
-            (*entry_stampee).prev.push(edge.stamper());
-            // map our (this node, prev node) -> distance. if we already have an entry, use the
-            // lowest of the two values.
-            let entry_dist = dist_map.entry((edge.stampee(), edge.stamper())).or_insert(usize::MAX);
-            (*entry_dist) = std::cmp::min(*entry_dist, dist);
-        }
-    }
-
-    println!("--- dist ---");
-    for ((to, from), dist) in dist_map.iter() {
-        println!("  {} -> {}    {}", from, to, dist);
-    }
-
-    if nodes.len() == 0 {
-        return Ok(None);
-    }
-
-    let dag_nodes = nodes.values().map(|n| n.into()).collect::<Vec<_>>();
-    let mut dag: Dag<TransactionID, TrustNode> = Dag::from_nodes(&dag_nodes);
-    let mut trust_scores: HashMap<&TransactionID, i8> = HashMap::new();
-    let mut trust_report: Vec<NodeTrustReport> = Vec::with_capacity(dag_nodes.len());
-    dag.walk(|node, ancestry, branch_tracker| {
-        if node.prev().len() == 0 {
-            trust_scores.insert(node.id(), 127);
-            return Ok(());
-        }
-
-        let trust_values = node
-            .prev()
-            .iter()
-            .map(|prev_id| {
-                let stamps = nodes
-                    .get(prev_id)
-                    .ok_or(Error::TrustMissingValue)?
-                    .stamps
-                    .iter()
-                    .filter(|s| &s.stampee().deref() == node.id())
-                    .map(|x| *x)
-                    .collect::<Vec<_>>();
-                let report_stamps = stamps
-                    .iter()
-                    .map(|s| {
-                        let trust_single = trust_algo.trust_from_stamps(&[s]);
-                        TrustReportStamp::new(s.claim_id().clone(), trust_single)
-                    })
-                    .collect::<Vec<_>>();
-                let prev_node_trust = *trust_scores.get(prev_id).ok_or(Error::TrustMissingValue)?;
-                let dist = *dist_map.get(&(node.id(), prev_id)).ok_or(Error::TrustMissingValue)?;
-                let raw_trust = trust_algo.trust_from_stamps(&stamps);
-                let trust_ratio = ((raw_trust as i64 * prev_node_trust as i64) / i8::MAX as i64) as i8;
-                let trust = trust_algo.decay(trust_ratio, dist);
-                let report_from_entry = TrustReportFromEntry::new(
-                    IdentityID::from(prev_id.clone().clone()),
-                    report_stamps,
-                    prev_node_trust,
-                    dist,
-                    raw_trust,
-                    trust_ratio,
-                    trust,
-                );
-                Ok((trust, report_from_entry))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let trust = trust_algo.merge(&trust_values.iter().map(|x| x.0).collect::<Vec<_>>());
-        let report = NodeTrustReport::new(
-            IdentityID::from(node.id().clone().clone()),
-            trust,
-            trust_values.into_iter().map(|(_, fr)| fr).collect::<Vec<_>>(),
-        );
-        trust_report.push(report);
-        trust_scores.insert(node.id(), trust);
-        Ok(())
-    })?;
-    let final_trust = trust_report.get(trust_report.len() - 1).ok_or(Error::TrustMissingValue)?.trust;
-    Ok(Some((final_trust, trust_report)))
+    Ok(Some((trust, report)))
 }
 
 #[cfg(test)]
@@ -575,12 +522,12 @@ mod tests {
         }};
     }
 
-    fn paths_named(lookup: &HashMap<TransactionID, &'static str>, paths: &Vec<Vec<&StampEntry>>) -> Vec<Vec<&'static str>> {
+    fn paths_named(lookup: &HashMap<TransactionID, &'static str>, paths: &Vec<Vec<Vec<&StampEntry>>>) -> Vec<Vec<&'static str>> {
         paths
             .iter()
             .map(|path| {
                 path.iter()
-                    .map(|p| *lookup.get(p.stampee().deref()).expect("missing identity in lookup"))
+                    .map(|p| *lookup.get(p[0].stampee().deref()).expect("missing identity in lookup"))
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>()
@@ -858,7 +805,7 @@ mod tests {
                 A -> B (id, Confidence::High),
                 A -> B (name, Confidence::Medium),
                 B -> C (id, Confidence::High),
-                //A -> C (id, Confidence::Low),
+                A -> C (id, Confidence::Low),
                 C -> D (id, Confidence::High),
             ],
         };
@@ -874,15 +821,15 @@ mod tests {
         let trust_algo = TrustAlgoDefault::new();
         let (score, report) = trust_score(&id_a, &id_d, ids_borrow.as_slice(), &trust_algo).unwrap().unwrap();
         println!(">> trust score: {}", score);
-        for node_report in report {
-            println!("-- node {} == {}", node_report.identity_id().deref(), node_report.trust());
-            for from in node_report.from_entries() {
-                println!("   from: {}", from.from().deref());
-                println!("   trust (prev node):   {}", from.trust_previous_node());
-                println!("   distance:            {}", from.distance_from_originator());
-                println!("   stamp trust:         {}", from.trust_stamps());
-                println!("   trust tx:            {}", from.trust_transferred());
-                println!("   trust decayed:       {}", from.trust_decayed());
+        for (i, path_report) in report.paths().iter().enumerate() {
+            println!("-- path {}", i);
+            for entry in path_report {
+                println!("   {} -> {}", entry.from().deref(), entry.to().deref());
+                println!("     trust (prev node):   {}", entry.trust_previous_node());
+                println!("     stamp trust:         {}", entry.trust_stamps());
+                println!("     trust tx:            {}", entry.trust_transferred());
+                println!("     distance:            {}", entry.distance_from_originator());
+                println!("     trust decayed:       {}", entry.trust_decayed());
             }
         }
     }
