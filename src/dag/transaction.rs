@@ -8,7 +8,7 @@
 
 use crate::{
     crypto::base::{Hash, HashAlgo, KeyID, SecretKey},
-    dag::{Node, Transactions},
+    dag::{DagNode, Transactions},
     error::{Error, Result},
     identity::{
         claim::{ClaimID, ClaimSpec},
@@ -752,31 +752,9 @@ impl Transaction {
     }
 }
 
-impl Node<TransactionID> for Transaction {
-    fn node_id<'a>(&'a self) -> &'a TransactionID {
-        self.id()
-    }
-
-    fn previous_nodes<'a>(&'a self) -> Vec<&'a TransactionID> {
-        self.entry().previous_transactions().iter().collect::<Vec<_>>()
-    }
-
-    fn created<'a>(&'a self) -> &'a Timestamp {
-        self.entry().created()
-    }
-}
-
-impl Node<TransactionID> for &Transaction {
-    fn node_id<'a>(&'a self) -> &'a TransactionID {
-        self.id()
-    }
-
-    fn previous_nodes<'a>(&'a self) -> Vec<&'a TransactionID> {
-        self.entry().previous_transactions().iter().collect::<Vec<_>>()
-    }
-
-    fn created<'a>(&'a self) -> &'a Timestamp {
-        self.entry().created()
+impl<'a> From<&'a Transaction> for DagNode<'a, TransactionID, Transaction> {
+    fn from(t: &'a Transaction) -> Self {
+        DagNode::new(t.id(), t, t.entry().previous_transactions().iter().collect::<Vec<_>>(), t.entry().created())
     }
 }
 

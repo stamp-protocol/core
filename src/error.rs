@@ -191,6 +191,10 @@ pub enum Error {
     #[error("transaction signature invalid: {0:?}")]
     TransactionSignatureInvalid(crate::identity::keychain::AdminKeypairPublic),
 
+    /// A missing value was encountered when calculating trust
+    #[error("trust calculation had a missing value")]
+    TrustMissingValue,
+
     /// Error parsing a URL
     #[error("URL parse error")]
     Url(#[from] url::ParseError),

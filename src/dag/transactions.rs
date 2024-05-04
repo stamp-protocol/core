@@ -217,8 +217,9 @@ impl Transactions {
             Err(Error::DagEmpty)?;
         }
 
-        let trans_borrowed = self.transactions().iter().collect::<Vec<_>>();
-        let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&trans_borrowed);
+        let nodes = self.transactions().iter().map(|x| x.into()).collect::<Vec<_>>();
+        //let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&trans_borrowed);
+        let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&nodes);
 
         if dag.head().len() != 1 {
             Err(Error::DagGenesisError)?;

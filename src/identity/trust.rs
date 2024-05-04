@@ -2,13 +2,16 @@
 //! identities.
 
 use crate::{
-    dag::{Dag, Node, TransactionID},
+    dag::{Dag, DagNode, TransactionID},
+    error::{Error, Result},
     identity::{
+        claim::ClaimID,
         stamp::{Confidence, Stamp, StampEntry},
         Identity, IdentityID,
     },
     util::Timestamp,
 };
+use getset::{Getters, MutGetters};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::str::FromStr;
@@ -87,8 +90,10 @@ impl TrustAlgo for TrustAlgoDefault {
         let sum = trust_values.iter().fold(0i64, |acc, &x| {
             let cast = x as i64;
             // detect overflows
-            if i64::MAX - acc < cast {
+            if acc >= 0 && i64::MAX - acc < cast {
                 i64::MAX
+            } else if acc < 0 && i64::MIN - acc > -cast {
+                i64::MIN
             } else {
                 acc + cast
             }
@@ -206,24 +211,133 @@ impl<'a> Network<'a> {
     }
 }
 
+/// A report that shows how much trust was generated for a single claim.
+///
+/// This report is mostly for debugging/visualization because the values may or may not be
+/// indicative of the final `trust_stamps` value in [`TrustReportFromEntry`].
+#[derive(Clone, Debug, Getters, MutGetters)]
+#[getset(get = "pub", get_mut = "pub(crate)")]
+pub struct TrustReportStamp {
+    /// The claim this trust value is for
+    claim_id: ClaimID,
+    /// The raw trust value assigned to this claim, with no other processing added. This is
+    /// basically the output of [`TrustAlgo.trust_from_stamps`][TrustAlgo::trust_from_stamps] if it
+    /// was fed only a single claim.
+    ///
+    /// Keep in mind, this trust value isn't necessarily used in the final calculation:
+    /// `trust_from_stamps()` calculates a single trust value for *all* stamps between two
+    /// identities, not just a single one.
+    trust: i8,
+}
+
+impl TrustReportStamp {
+    fn new(claim_id: ClaimID, trust: i8) -> Self {
+        Self { claim_id, trust }
+    }
+}
+
+/// A report that gives details on the transfer of trust from a single identity to a given node.
+#[derive(Clone, Debug, Getters, MutGetters)]
+#[getset(get = "pub", get_mut = "pub(crate)")]
+pub struct TrustReportFromEntry {
+    /// The identity that assigned this trust. Keep in mind that an identity can have multiple
+    /// incoming `from` entries.
+    from: IdentityID,
+    /// Sheds some light on how a particular claim is scored. This is mainly useful for debugging,
+    /// as the real result of stamp trust is held in `trust_stamps`.
+    stamp_trust_details: Vec<TrustReportStamp>,
+    /// The trust value of the previous node (aka, `from`)
+    trust_previous_node: i8,
+    /// How far this node is from the trust originator
+    distance_from_originator: usize,
+    /// The trust we calculated from all of the incoming stamps from `from`. This value supersedes
+    /// any trust values in `stamp_trust_details`.
+    trust_stamps: i8,
+    /// Given the `trust_previous_node / TRUST_MAX` as a ratio, multiply it by our `trust_stamps`
+    /// value to get the total amount of trust transferred from the previous node (`from`) to this
+    /// node.
+    trust_transferred: i8,
+    /// This value represents `trust_transferred` after it is run through
+    /// [`TrustAlgo.decay`][TrustAlgo::decay], with the distance in `distance_from_originator`.
+    /// This gives us our *final* trust value between the previous identity (`from`) and the
+    /// current node. If the current node has multiple incoming previous identities, the values of
+    /// all of them will be merged via [`TrustAlgo.merge`][TrustAlgo::merge] in order to determine
+    /// a single trust value.
+    trust_decayed: i8,
+}
+
+impl TrustReportFromEntry {
+    fn new(
+        from: IdentityID,
+        stamp_trust_details: Vec<TrustReportStamp>,
+        trust_previous_node: i8,
+        distance_from_originator: usize,
+        trust_stamps: i8,
+        trust_transferred: i8,
+        trust_decayed: i8,
+    ) -> Self {
+        Self {
+            from,
+            stamp_trust_details,
+            trust_previous_node,
+            distance_from_originator,
+            trust_stamps,
+            trust_transferred,
+            trust_decayed,
+        }
+    }
+}
+
+/// The full trust report for a node.
+#[derive(Clone, Debug, Getters, MutGetters)]
+#[getset(get = "pub", get_mut = "pub(crate)")]
+pub struct NodeTrustReport {
+    /// This node's [`IdentityID`]
+    identity_id: IdentityID,
+    /// The final trust value for this node
+    trust: i8,
+    /// The reports on incoming identity trust for this node.
+    from_entries: Vec<TrustReportFromEntry>,
+}
+
+impl NodeTrustReport {
+    fn new(identity_id: IdentityID, trust: i8, from_entries: Vec<TrustReportFromEntry>) -> Self {
+        Self {
+            identity_id,
+            trust,
+            from_entries,
+        }
+    }
+}
+
 /// Determine the trust between our identity and a subject identity, given a network of
 /// identities linking the two via stamps. This walks the network, scoring each identity,
 /// transferring trust as it goes.
-pub fn trust_score<T: TrustAlgo>(ours: &IdentityID, theirs: &IdentityID, trust_network: &[&Identity], trust_algo: &T) -> i8 {
+pub fn trust_score<T: TrustAlgo>(
+    ours: &IdentityID,
+    theirs: &IdentityID,
+    trust_network: &[&Identity],
+    trust_algo: &T,
+) -> Result<Option<(i8, Vec<NodeTrustReport>)>> {
     let mut network = Network::new();
     for id in trust_network {
         network.add_node(id);
     }
     let paths = network.find_paths(ours, theirs, trust_algo.max_distance());
 
-    struct DagNode<'a> {
+    if paths.len() == 0 {
+        return Ok(None);
+    }
+
+    #[derive(Debug)]
+    struct TrustNode<'a> {
         id: &'a TransactionID, // ie, IdentityID
         prev: Vec<&'a TransactionID>,
         stamps: Vec<&'a StampEntry>,
         timestamp: Timestamp,
     }
 
-    impl<'a> DagNode<'a> {
+    impl<'a> TrustNode<'a> {
         fn new(id: &'a TransactionID) -> Self {
             // sorry to unwrap...
             let timestamp = Timestamp::from_str("1999-12-31T23:59:59.999Z").unwrap();
@@ -236,71 +350,103 @@ pub fn trust_score<T: TrustAlgo>(ours: &IdentityID, theirs: &IdentityID, trust_n
         }
     }
 
-    impl<'a> Node<TransactionID> for DagNode<'a> {
-        fn node_id(&self) -> &TransactionID {
-            &self.id
-        }
-
-        fn previous_nodes(&self) -> Vec<&TransactionID> {
-            self.prev.clone()
-        }
-
-        fn created(&self) -> &Timestamp {
-            &self.timestamp
+    impl<'a> From<&'a TrustNode<'a>> for DagNode<'a, TransactionID, TrustNode<'a>> {
+        fn from(n: &'a TrustNode) -> Self {
+            DagNode::new(&n.id, n, n.prev.clone(), &n.timestamp)
         }
     }
 
-    impl<'a> Node<TransactionID> for &DagNode<'a> {
-        fn node_id(&self) -> &TransactionID {
-            &self.id
-        }
-
-        fn previous_nodes(&self) -> Vec<&TransactionID> {
-            self.prev.clone()
-        }
-
-        fn created(&self) -> &Timestamp {
-            &self.timestamp
-        }
-    }
-
-    let mut nodes: HashMap<&TransactionID, DagNode> = HashMap::new();
+    // for each of our paths, update a series of nodes that point to previous nodes that also store
+    // the stamps (with the stamper). this gives us a structure we can use to "walk" our path
+    // iteratively, creating a trust score as we move along
+    //
+    // along the way, we also store the shortest distance from any given node to the genesis node.
+    // this gives us a distance value we can use in our calculations later.
+    let mut nodes: HashMap<&TransactionID, TrustNode> = HashMap::new();
+    // maps a (node, prev node) -> distance value. this lets us look up how far a given node is
+    // from the genesis node when we're doing our calculations
+    let mut dist_map: HashMap<(&TransactionID, &TransactionID), usize> = HashMap::new();
+    let timestamp = Timestamp::from_str("1999-12-31T23:59:59.999Z").unwrap();
     for path in &paths {
-        for edge in path {
-            let entry_stamper = nodes.entry(edge.stamper()).or_insert_with(|| DagNode::new(edge.stamper()));
+        for (dist, edge) in path.iter().enumerate() {
+            let entry_stamper = nodes.entry(edge.stamper()).or_insert_with(|| TrustNode::new(edge.stamper()));
             (*entry_stamper).stamps.push(edge);
-            let entry_stampee = nodes.entry(edge.stampee()).or_insert_with(|| DagNode::new(edge.stampee()));
+            let entry_stampee = nodes.entry(edge.stampee()).or_insert_with(|| TrustNode::new(edge.stampee()));
             (*entry_stampee).prev.push(edge.stamper());
+            // map our (this node, prev node) -> distance. if we already have an entry, use the
+            // lowest of the two values.
+            let entry_dist = dist_map.entry((edge.stampee(), edge.stamper())).or_insert(usize::MAX);
+            (*entry_dist) = std::cmp::min(*entry_dist, dist);
         }
     }
 
-    let mut dag: Dag<TransactionID, DagNode> = Dag::from_nodes(&nodes.values().collect::<Vec<_>>());
-
-    /*
-    // traverse the paths, and group them by from/to buckets.
-    // Map<From, Map<To, Stamps>>
-    let mut path_tracker: HashMap<&TransactionID, HashMap<&TransactionID, Vec<&StampEntry>>> = HashMap::new();
-    for path in &paths {
-        for edge in path {
-            let entry_from = path_tracker.entry(edge.stamper()).or_insert(HashMap::new());
-            let entry_to = entry_from.entry(edge.stampee()).or_insert(Vec::new());
-            (*entry_to).push(edge);
-        }
+    println!("--- dist ---");
+    for ((to, from), dist) in dist_map.iter() {
+        println!("  {} -> {}    {}", from, to, dist);
     }
 
-    // now iterate our path tracker, actually scoring our stamp entries
-    let mut node_score: HashMap<&TransactionID, i8> = HashMap::new();
-    for (_, inner) in path_tracker.iter() {
-        for (to, stamps) in inner.iter() {
-            let trust = trust_algo.trust_from_stamps(stamps);
-            node_score.insert(to, trust);
-        }
+    if nodes.len() == 0 {
+        return Ok(None);
     }
 
-    println!("thcore: ---\n{:?}", node_score);
-    */
+    let dag_nodes = nodes.values().map(|n| n.into()).collect::<Vec<_>>();
+    let mut dag: Dag<TransactionID, TrustNode> = Dag::from_nodes(&dag_nodes);
+    let mut trust_scores: HashMap<&TransactionID, i8> = HashMap::new();
+    let mut trust_report: Vec<NodeTrustReport> = Vec::with_capacity(dag_nodes.len());
+    dag.walk(|node, ancestry, branch_tracker| {
+        if node.prev().len() == 0 {
+            trust_scores.insert(node.id(), 127);
+            return Ok(());
+        }
 
-    0
+        let trust_values = node
+            .prev()
+            .iter()
+            .map(|prev_id| {
+                let stamps = nodes
+                    .get(prev_id)
+                    .ok_or(Error::TrustMissingValue)?
+                    .stamps
+                    .iter()
+                    .filter(|s| &s.stampee().deref() == node.id())
+                    .map(|x| *x)
+                    .collect::<Vec<_>>();
+                let report_stamps = stamps
+                    .iter()
+                    .map(|s| {
+                        let trust_single = trust_algo.trust_from_stamps(&[s]);
+                        TrustReportStamp::new(s.claim_id().clone(), trust_single)
+                    })
+                    .collect::<Vec<_>>();
+                let prev_node_trust = *trust_scores.get(prev_id).ok_or(Error::TrustMissingValue)?;
+                let dist = *dist_map.get(&(node.id(), prev_id)).ok_or(Error::TrustMissingValue)?;
+                let raw_trust = trust_algo.trust_from_stamps(&stamps);
+                let trust_ratio = ((raw_trust as i64 * prev_node_trust as i64) / i8::MAX as i64) as i8;
+                let trust = trust_algo.decay(trust_ratio, dist);
+                let report_from_entry = TrustReportFromEntry::new(
+                    IdentityID::from(prev_id.clone().clone()),
+                    report_stamps,
+                    prev_node_trust,
+                    dist,
+                    raw_trust,
+                    trust_ratio,
+                    trust,
+                );
+                Ok((trust, report_from_entry))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let trust = trust_algo.merge(&trust_values.iter().map(|x| x.0).collect::<Vec<_>>());
+        let report = NodeTrustReport::new(
+            IdentityID::from(node.id().clone().clone()),
+            trust,
+            trust_values.into_iter().map(|(_, fr)| fr).collect::<Vec<_>>(),
+        );
+        trust_report.push(report);
+        trust_scores.insert(node.id(), trust);
+        Ok(())
+    })?;
+    let final_trust = trust_report.get(trust_report.len() - 1).ok_or(Error::TrustMissingValue)?.trust;
+    Ok(Some((final_trust, trust_report)))
 }
 
 #[cfg(test)]
@@ -706,19 +852,38 @@ mod tests {
                 A(),
                 B(name),
                 C(),
+                D(),
             ],
             [
-                A -> B (id, Confidence::Medium),
-                A -> B (name, Confidence::High),
-                B -> C (id, Confidence::Low),
-                A -> C (id, Confidence::Medium),
+                A -> B (id, Confidence::High),
+                A -> B (name, Confidence::Medium),
+                B -> C (id, Confidence::High),
+                //A -> C (id, Confidence::Low),
+                C -> D (id, Confidence::High),
             ],
         };
         let id_a = trustnet1.get("A").unwrap().identity_id().unwrap();
         let id_c = trustnet1.get("C").unwrap().identity_id().unwrap();
+        let id_d = trustnet1.get("D").unwrap().identity_id().unwrap();
+        for node in trustnet1.values() {
+            let id = node.identity_id().unwrap();
+            println!("- node {} -- {}", lookup1.get(&id).unwrap(), id);
+        }
         let ids = trustnet1.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
         let ids_borrow = ids.iter().collect::<Vec<_>>();
         let trust_algo = TrustAlgoDefault::new();
-        let score = trust_score(&id_a, &id_c, ids_borrow.as_slice(), &trust_algo);
+        let (score, report) = trust_score(&id_a, &id_d, ids_borrow.as_slice(), &trust_algo).unwrap().unwrap();
+        println!(">> trust score: {}", score);
+        for node_report in report {
+            println!("-- node {} == {}", node_report.identity_id().deref(), node_report.trust());
+            for from in node_report.from_entries() {
+                println!("   from: {}", from.from().deref());
+                println!("   trust (prev node):   {}", from.trust_previous_node());
+                println!("   distance:            {}", from.distance_from_originator());
+                println!("   stamp trust:         {}", from.trust_stamps());
+                println!("   trust tx:            {}", from.trust_transferred());
+                println!("   trust decayed:       {}", from.trust_decayed());
+            }
+        }
     }
 }

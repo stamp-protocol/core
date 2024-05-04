@@ -20,37 +20,44 @@ use getset::{Getters, MutGetters};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::Hash;
 
-/// A trait that allows generic access to the id and previous ids of nodes in a DAG.
-pub trait Node<I> {
-    /// Get this node's id
-    fn node_id<'a>(&'a self) -> &'a I;
-
-    /// Get the previous nodes from this node.
-    fn previous_nodes<'a>(&'a self) -> Vec<&'a I>;
-
-    /// When this node was created (used for sorting)
-    fn created<'a>(&'a self) -> &'a Timestamp;
-}
-
 /// Defines a node in a DAG. Each node can have multiple previous nodes and multiple next nodes.
 /// It's crazy out here.
-#[derive(Clone, Debug, Getters, MutGetters)]
+#[derive(Debug, Getters, MutGetters)]
 #[getset(get = "pub", get_mut = "pub(crate)")]
 pub struct DagNode<'a, I, T> {
+    /// This node's ID
+    id: &'a I,
     /// The nodes that came before this one
     prev: Vec<&'a I>,
     /// The nodes that come after this one
     next: Vec<&'a I>,
     /// The node this points to.
     node: &'a T,
+    /// Timestamp of this node, used for ordering
+    timestamp: &'a Timestamp,
 }
 
-impl<'a, I, T: Node<I>> DagNode<'a, I, T> {
-    fn new_from_node(node: &'a T) -> Self {
+impl<'a, I, T> DagNode<'a, I, T> {
+    /// Create a new DagNode
+    pub fn new(id: &'a I, node: &'a T, prev: Vec<&'a I>, timestamp: &'a Timestamp) -> Self {
         Self {
-            prev: node.previous_nodes(),
+            id,
+            prev: prev,
             next: Vec::new(),
             node,
+            timestamp,
+        }
+    }
+}
+
+impl<'a, I, T> Clone for DagNode<'a, I, T> {
+    fn clone(&self) -> Self {
+        DagNode {
+            id: self.id,
+            prev: self.prev.clone(),
+            next: self.next.clone(),
+            node: self.node,
+            timestamp: self.timestamp,
         }
     }
 }
@@ -65,34 +72,32 @@ pub struct Dag<'a, I, T> {
     /// single start node* (the genesis) and this will be enforced. However, for other DAGs
     /// that might use Stamp as a medium, we cannot assume they will always start out with only one
     /// single node that all others branch from.
-    head: Vec<I>,
+    head: Vec<&'a I>,
     /// The tail/end of our DAG. This is any nodes that are not listed in some known
     /// node's `previous_nodes` list.
-    tail: Vec<I>,
+    tail: Vec<&'a I>,
     /// Holds an index of node IDs to internal DAG nodes. This is useful because instead of
     /// DAG nodes referencing each other directly and having to have `Box<Blah>` everywhere, we just
     /// store the IDs and put the nodes in one single lookup table.
-    index: HashMap<I, DagNode<'a, I, T>>,
+    index: HashMap<&'a I, DagNode<'a, I, T>>,
     /// Nodes that we processed while walking the DAG, in the order they were processed.
     /// If this has less nodes in it than the `index` then it means we have a broken chain
     /// and/or a circular reference somewhere. In a healthy DAG, `visited` and `index` will have
     /// the same number of entries.
-    visited: Vec<I>,
+    visited: Vec<&'a I>,
     /// Nodes that were not processed while creating the DAG. This is generally because of
     /// missing links or missing nodes in the chain. This will be mutually exclusive from
     /// `missing`, so to get *all unprocessed nodes* you would combine the sets.
-    unvisited: HashSet<I>,
+    unvisited: HashSet<&'a I>,
     /// Nodes that we don't have in our `index` but were referenced while building the DAG.
     /// These generally represent nodes that we are waiting to sync on and are "breaking the
     /// chain" so to speak.
-    missing: HashSet<I>,
+    missing: HashSet<&'a I>,
 }
 
 impl<'a, I, T> Dag<'a, I, T>
 where
     I: Clone + Eq + Hash + Ord,
-    T: Node<I>,
-    &'a T: Node<I>,
 {
     /// Create a new, empty DAG
     pub fn new() -> Self {
@@ -107,18 +112,18 @@ where
     }
 
     /// Takes a flat list of nodes and returns a of DAG that models those nodes.
-    pub fn from_nodes(nodes: &'a [&'a T]) -> Dag<'a, I, T> {
+    pub fn from_nodes(nodes: &'a [DagNode<'a, I, T>]) -> Dag<'a, I, T> {
         // create our DAG object.
         let mut dag = Dag::new();
 
         // index our nodes into the DAG.
         for node in nodes {
-            dag.index_mut().insert(node.node_id().clone(), DagNode::new_from_node(node));
+            dag.index_mut().insert(*node.id(), node.clone());
         }
 
         // holds locations at which our chain breaks, ie we reference a node that cannot be
         // found. this helps us split up our DAGs later on.
-        let mut missing_nodes = HashSet::new();
+        let mut missing_nodes: HashSet<&'a I> = HashSet::new();
 
         // stores nodes we encounter that have no previous nodes (ie, they start the
         // DAG). we make a separate container instead of pushing directly into `dag.head` because
@@ -135,21 +140,21 @@ where
         // now loop over our nodes again and update our .next[] references.
         // after this, we'll have both forward and backward links for all available nodes.
         for node in nodes {
-            trans_created_idx.insert(node.node_id(), node.created().timestamp_millis());
-            let prev = node.previous_nodes();
+            trans_created_idx.insert(node.id(), node.timestamp().timestamp_millis());
+            let prev = node.prev();
             if prev.is_empty() {
                 // cool, we found a head node. track it.
-                head_nodes.push((node.created(), node.node_id().clone()));
+                head_nodes.push((node.timestamp(), node.id()));
             } else {
                 for prev_id in prev {
                     match dag.index_mut().get_mut(prev_id) {
                         Some(previous_node) => {
-                            previous_node.next_mut().push(node.node_id());
+                            previous_node.next_mut().push(node.id());
                         }
                         None => {
                             // we're referencing a node we cannot find. this means we have a break in
                             // our DAG chain
-                            missing_nodes.insert(prev_id.clone());
+                            missing_nodes.insert(prev_id);
                         }
                     }
                 }
@@ -174,7 +179,7 @@ where
         // sort our head nodes by create time ASC, node id ASC, then store the sorted
         // node IDs into `dag.head`. this makes walking the DAG deterministic.
         head_nodes.sort_unstable();
-        *dag.head_mut() = head_nodes.into_iter().map(|(_, tid)| tid).collect::<Vec<_>>();
+        *dag.head_mut() = head_nodes.into_iter().map(|(_, tid)| *tid).collect::<Vec<_>>();
 
         // walk our dag and look for tail nodes and problems (missing nodes, circular links, etc)
         let mut tail_nodes = Vec::new();
@@ -184,13 +189,13 @@ where
         let (visited, missing) = dag
             .walk(|node, _ancestry, _ancestry_idx| {
                 if node.next().is_empty() {
-                    tail_nodes.push(node.node().node_id().clone());
+                    tail_nodes.push(*node.id());
                 }
                 Ok(())
             })
             .unwrap();
         for entry in missing {
-            missing_nodes.insert(entry);
+            missing_nodes.insert(&entry);
         }
         dag.visited = visited;
         dag.unvisited = dag.find_unvisited();
@@ -230,9 +235,9 @@ where
     /// - Nodes referenced by some visited node that don't exist in the DAG (missing nodes)
     ///
     /// And so these are the things we return. In that order. As a tuple.
-    pub fn walk<F>(&self, mut opfn: F) -> Result<(Vec<I>, HashSet<I>)>
+    pub fn walk<F>(&self, mut opfn: F) -> Result<(Vec<&'a I>, HashSet<&'a I>)>
     where
-        F: FnMut(&DagNode<'a, I, T>, &[u32], &HashMap<I, Vec<u32>>) -> Result<()>,
+        F: FnMut(&DagNode<'a, I, T>, &[u32], &HashMap<&'a I, Vec<u32>>) -> Result<()>,
     {
         /// stored with the `pending_nodes` as a way to instruct nodes whether they should
         /// use the given ancestry as-is or whether they should grab a new branch and append it to
@@ -265,12 +270,12 @@ where
         }
 
         // the nodes we have visited *in the order we visited them*
-        let mut visited = Vec::with_capacity(self.index().len());
+        let mut visited: Vec<&'a I> = Vec::with_capacity(self.index().len());
         // the nodes we have visited in a format that allows for quick lookups
-        let mut visited_set: HashSet<I> = HashSet::with_capacity(self.index().len());
+        let mut visited_set: HashSet<&'a I> = HashSet::with_capacity(self.index().len());
         // nodes we've come across that were referenced by id but could not be found in the
         // index
-        let mut missing_nodes: HashSet<I> = Default::default();
+        let mut missing_nodes: HashSet<&'a I> = Default::default();
         // our main ordering mechanism. when processing a node, we push the next
         // nodes into this ordered set. when done, we pop the first node off the set
         // and loop again. this effectively allows sorting by causal order BUT with the benefit
@@ -279,16 +284,16 @@ where
         // the key is the node's timestamp, the node's ID, and the node that
         // created this entry (if any). the value is a struct that stores ancestry and determines
         // if we need to create a new branch for this node when it runs.
-        let mut pending_nodes: BTreeMap<(Timestamp, I, Option<I>), AncestryGrabber> = Default::default();
+        let mut pending_nodes: BTreeMap<(&'a Timestamp, &'a I, Option<&'a I>), AncestryGrabber> = Default::default();
         // this tracks the current branch number, user to catalog branches/merges and ancestry.
         let mut cur_branch: u32 = 0;
         // Stores the ancestry of each node as they are being processed. This allows ancestry
         // lookups of nodes that have been previously seen.
-        let mut branch_tracker: HashMap<I, Vec<u32>> = HashMap::with_capacity(self.index().len());
+        let mut branch_tracker: HashMap<&'a I, Vec<u32>> = HashMap::with_capacity(self.index().len());
         // this is used by merging nodes (ie, has prev_nodes.len() > 1) to store the
         // ancestry of the previous nodes so they can all be merged together when the merge is
         // ready.
-        let mut branch_merge_tracker: HashMap<I, Vec<Vec<u32>>> = HashMap::new();
+        let mut branch_merge_tracker: HashMap<&'a I, Vec<Vec<u32>>> = HashMap::new();
 
         // a helper function to grab the current branch id and increment the counter.
         let mut next_branch = || {
@@ -305,7 +310,7 @@ where
                 match self.index().get($id) {
                     Some($node) => $run,
                     None => {
-                        missing_nodes.insert($id.clone());
+                        missing_nodes.insert($id);
                     }
                 }
             }};
@@ -319,7 +324,7 @@ where
                 // sorted before this function is ever called. therefor, the head nodes are going
                 // to be in the same position in the btree that they are when we loop over them.
                 pending_nodes.insert(
-                    (node.node().created().clone(), tid.clone(), None),
+                    (node.timestamp(), tid, None),
                     AncestryGrabber::new(vec![], true),
                 );
             }}
@@ -345,7 +350,7 @@ where
                 if node.prev().len() > 1 {
                     // push the ancestors we were given for the previous node into our merge
                     // tracker for THIS node.
-                    let entry = branch_merge_tracker.entry(tid.clone()).or_default();
+                    let entry = branch_merge_tracker.entry(&tid).or_default();
                     (*entry).push(ancestry.clone());
 
                     if entry.len() < node.prev().len() {
@@ -364,7 +369,7 @@ where
                             }
                         }
                         None => {
-                            missing_nodes.insert(tid.clone());
+                            missing_nodes.insert(&tid);
                             continue;
                         }
                     }
@@ -375,11 +380,11 @@ where
                     ancestry.push(next_branch());
                 }
 
-                branch_tracker.insert(tid.clone(), ancestry.clone());
+                branch_tracker.insert(&tid, ancestry.clone());
 
                 // track that we've seen this node
-                visited.push(tid.clone());
-                visited_set.insert(tid.clone());
+                visited.push(&tid);
+                visited_set.insert(&tid);
 
                 // run our user-supplied operation
                 opfn(node, &ancestry, &branch_tracker)?;
@@ -393,7 +398,7 @@ where
                     let ntid = node.next()[0];
                     with_trans! { ntid, node_next, {
                         pending_nodes.insert(
-                            (node_next.node().created().clone(), ntid.clone(), Some(tid.clone())),
+                            (node_next.timestamp(), ntid, Some(tid)),
                             AncestryGrabber::new(ancestry, false),
                         );
                     }}
@@ -403,7 +408,7 @@ where
                     for &ntid in node.next() {
                         with_trans! { ntid, next_node, {
                             pending_nodes.insert(
-                                (next_node.node().created().clone(), ntid.clone(), Some(tid.clone())),
+                                (next_node.timestamp(), ntid, Some(tid)),
                                 AncestryGrabber::new(ancestry.clone(), true),
                             );
                         }}
@@ -418,11 +423,11 @@ where
 
     /// Given a set of nodes visited from [`Dag::walk()`], find the nodes that are unvisited from
     /// that walk (ie, any known nodes we didn't walk to).
-    pub fn find_unvisited(&self) -> HashSet<I> {
+    pub fn find_unvisited(&self) -> HashSet<&'a I> {
         let mut unvisited = HashSet::new();
         for trans_id in self.index().keys() {
             if !self.visited().contains(trans_id) {
-                unvisited.insert(trans_id.clone());
+                unvisited.insert(*trans_id);
             }
         }
         unvisited
@@ -455,8 +460,8 @@ mod tests {
            ],
            []
         };
-        let trans_borrowed = transaction_list.iter().collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&trans_borrowed);
+        let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
+        let dag = Dag::from_nodes(&nodes);
         assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
         assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["G"],);
         assert_eq!(
@@ -489,7 +494,7 @@ mod tests {
 
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, _| {
-            visited.push((*tid_to_name.get(node.node().id()).unwrap(), Vec::from(ancestry)));
+            visited.push((*tid_to_name.get(node.id()).unwrap(), Vec::from(ancestry)));
             Ok(())
         })
         .unwrap();
@@ -527,8 +532,8 @@ mod tests {
            []
         };
         transaction_list.sort_by_key(|x| x.id().clone());
-        let trans_borrowed = transaction_list.iter().collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&trans_borrowed);
+        let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
+        let dag = Dag::from_nodes(&nodes);
         assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
         assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["G"],);
         assert_eq!(
@@ -561,7 +566,7 @@ mod tests {
 
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, _| {
-            visited.push((*tid_to_name.get(node.node().id()).unwrap(), Vec::from(ancestry)));
+            visited.push((*tid_to_name.get(node.id()).unwrap(), Vec::from(ancestry)));
             Ok(())
         })
         .unwrap();
@@ -597,8 +602,8 @@ mod tests {
            [C]  // remove C
         };
         transaction_list.sort_by_key(|x| x.id().clone());
-        let trans_borrowed = transaction_list.iter().collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&trans_borrowed);
+        let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
+        let dag = Dag::from_nodes(&nodes);
         assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
         assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
         assert_eq!(dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
@@ -631,7 +636,7 @@ mod tests {
 
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, _| {
-            visited.push((*tid_to_name.get(node.node().id()).unwrap(), Vec::from(ancestry)));
+            visited.push((*tid_to_name.get(node.id()).unwrap(), Vec::from(ancestry)));
             Ok(())
         })
         .unwrap();
@@ -664,15 +669,15 @@ mod tests {
            ],
            []
         };
-        let trans_borrowed = transaction_list.iter().collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&trans_borrowed);
+        let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
+        let dag = Dag::from_nodes(&nodes);
         assert_eq!(
             dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["E", "A", "F", "G", "B", "C", "D", "H"],
         );
         let mut visited = Vec::new();
         dag.walk(|node, _ancestry, _anc_idx| {
-            visited.push(node.node().id().clone());
+            visited.push(*node.id());
             Ok(())
         })
         .unwrap();
@@ -707,8 +712,8 @@ mod tests {
            ],
            []
         };
-        let trans_borrowed = transaction_list.iter().collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&trans_borrowed);
+        let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
+        let dag = Dag::from_nodes(&nodes);
         assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A"],);
         assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["O", "Q"],);
         assert_eq!(
@@ -722,11 +727,7 @@ mod tests {
         assert_eq!(dag.missing.len(), 0);
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, idx| {
-            visited.push((
-                node.node().id().clone(),
-                Vec::from(ancestry),
-                idx.get(node.node().id()).map(|x| x.as_slice()) == Some(ancestry),
-            ));
+            visited.push((*node.id(), Vec::from(ancestry), idx.get(node.id()).map(|x| x.as_slice()) == Some(ancestry)));
             Ok(())
         })
         .unwrap();
@@ -773,7 +774,8 @@ mod tests {
            ],
            []
         };
-        let dag = Dag::from_transactions(&transaction_list.iter().collect::<Vec<_>>());
+        let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
+        let dag = Dag::from_nodes(&nodes);
         assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A"],);
         assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["C"],);
         assert_eq!(dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B", "C"],);
@@ -784,11 +786,7 @@ mod tests {
         assert_eq!(dag.missing.len(), 0);
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, idx| {
-            visited.push((
-                node.transaction().id().clone(),
-                Vec::from(ancestry),
-                idx.get(node.transaction().id()).map(|x| x.as_slice()) == Some(ancestry),
-            ));
+            visited.push((*node.id(), Vec::from(ancestry), idx.get(node.id()).map(|x| x.as_slice()) == Some(ancestry)));
             Ok(())
         })
         .unwrap();
