@@ -2,19 +2,79 @@
 //! identities.
 
 use crate::{
-    dag::{Dag, DagNode, TransactionID},
-    error::{Error, Result},
+    dag::TransactionID,
     identity::{
         claim::ClaimID,
         stamp::{Confidence, Stamp, StampEntry},
         Identity, IdentityID,
     },
-    util::Timestamp,
 };
 use getset::{Getters, MutGetters};
+use rasn::{AsnType, Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Deref;
-use std::str::FromStr;
+
+pub trait TrustValue {
+    /// Given an object, return a value between -128 and 127 signifying how much trust or
+    /// confidence it has (-128 being the least amount (ie, negative and horrible...complete
+    /// distrust), and 127 being absolute trust. Zero is "no opinion."
+    fn trust_value(&self) -> i8;
+}
+
+/// Defines levels of trust one identity can have in another's ability to validate claims. In other
+/// words, if an identity is known to issue high confidence in claims known to be invalid, one
+/// might mark that identity as having low or nagative trust. If an identity is known to perform
+/// rigorous verification of claims, trust might be set to a high level.
+///
+/// `Trust` is separate from [`Confidence`] because where confidence signifies the validity of a
+/// particular claim, trust signifies how much one trusts the stamper of that claim to perform the
+/// validation in the first place. `Confidence` is public, `Trust` is personal.
+#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(choice)]
+pub enum Trust {
+    /// You do not trust an identity at all, or you know that it knowingly validates incorrect
+    /// claims.
+    #[rasn(tag(explicit(0)))]
+    Negative,
+    /// You place a low amount of trust into an identity. It does the bare minimum when validating
+    /// claims.
+    #[rasn(tag(explicit(1)))]
+    Low,
+    /// You trust an identity to do a decent job of claim verification, but nothing spectacular.
+    #[rasn(tag(explicit(2)))]
+    Medium,
+    /// You trust this identity to be rigorous in its validations.
+    #[rasn(tag(explicit(3)))]
+    High,
+    /// You trust this identity as if it was you.
+    #[rasn(tag(explicit(4)))]
+    Ultimate,
+}
+
+impl TrustValue for Trust {
+    fn trust_value(&self) -> i8 {
+        match self {
+            Self::Negative => i8::MIN,
+            Self::Low => 10,
+            Self::Medium => 50,
+            Self::High => 100,
+            Self::Ultimate => i8::MAX,
+        }
+    }
+}
+
+impl TrustValue for Confidence {
+    fn trust_value(&self) -> i8 {
+        match self {
+            Self::Negative => i8::MIN,
+            Self::Low => 10,
+            Self::Medium => 50,
+            Self::High => 100,
+            Self::Ultimate => i8::MAX,
+        }
+    }
+}
 
 /// Allows creating custom trust algorithms.
 ///
@@ -57,37 +117,24 @@ pub trait TrustAlgo {
     fn max_distance(&self) -> Option<usize>;
 }
 
-/// A default trust algorithm. Create it via `TrustAlgoDefault::new()`;
-pub struct TrustAlgoDefault {}
+/// A default trust algorithm. Create it via `TrustAlgoDefault::new()` or
+/// `TrustAlgoDefault::default()`;
+#[derive(Clone, Debug, Getters, MutGetters)]
+#[getset(get = "pub", get_mut = "pub(crate)")]
+pub struct TrustAlgoDefault {
+    /// How many hops away from us we can assign trust.
+    #[getset(skip)]
+    max_distance: Option<usize>,
+}
 
 impl TrustAlgoDefault {
     /// Create a new default trust algorithm.
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl TrustAlgo for TrustAlgoDefault {
-    fn trust_from_stamps(&self, stamps: &[&StampEntry]) -> i8 {
-        fn confidence_trust(c: &Confidence) -> i8 {
-            match c {
-                &Confidence::Negative => -128,
-                &Confidence::Low => 10,
-                &Confidence::Medium => 40,
-                &Confidence::High => 80,
-                &Confidence::Ultimate => 127,
-            }
-        }
-        // ignore the claim spec and just tally confidence for now lol
-        let confidence_vals = stamps.iter().map(|x| x.confidence()).map(confidence_trust).collect::<Vec<_>>();
-
-        // merge the trust values
-        self.merge(&confidence_vals)
+    pub fn new(max_distance: Option<usize>) -> Self {
+        Self { max_distance }
     }
 
-    fn merge(&self, trust_values: &[i8]) -> i8 {
-        // do an average, without floats because they suck
-        let sum = trust_values.iter().fold(0i64, |acc, &x| {
+    fn sum(trust_values: &[i8]) -> i64 {
+        trust_values.iter().fold(0i64, |acc, &x| {
             let cast = x as i64;
             // detect overflows
             if acc >= 0 && i64::MAX - acc < cast {
@@ -97,20 +144,56 @@ impl TrustAlgo for TrustAlgoDefault {
             } else {
                 acc + cast
             }
-        });
+        })
+    }
+
+    fn average(trust_values: &[i8]) -> i8 {
+        if trust_values.len() == 0 {
+            return 0;
+        }
+
+        // do an average, without floats because they suck
+        let sum = Self::sum(trust_values);
         (sum / (trust_values.len() as i64)) as i8
+    }
+}
+
+impl Default for TrustAlgoDefault {
+    fn default() -> Self {
+        Self { max_distance: Some(5) }
+    }
+}
+
+impl TrustAlgo for TrustAlgoDefault {
+    fn trust_from_stamps(&self, stamps: &[&StampEntry]) -> i8 {
+        // ignore the claim spec and just tally confidence for now lol
+        let confidence_vals = stamps.iter().map(|x| x.confidence()).map(|c| c.trust_value()).collect::<Vec<_>>();
+
+        // average the trust values
+        Self::average(&confidence_vals)
+    }
+
+    fn merge(&self, trust_values: &[i8]) -> i8 {
+        Self::average(trust_values)
     }
 
     fn decay(&self, trust: i8, distance_from_me: usize) -> i8 {
-        if distance_from_me < 5 {
-            ((trust as i64) / (2i64.pow(distance_from_me as u32))) as i8
-        } else {
-            0
-        }
+        self.max_distance()
+            .map(|max_dist| {
+                if distance_from_me < max_dist {
+                    let dist = distance_from_me as i64;
+                    let max_dist = max_dist as i64;
+                    let trust64 = trust as i64;
+                    ((trust64 * (max_dist - dist)) / max_dist) as i8
+                } else {
+                    0
+                }
+            })
+            .unwrap_or(trust)
     }
 
     fn max_distance(&self) -> Option<usize> {
-        Some(5)
+        self.max_distance.clone()
     }
 }
 
@@ -201,7 +284,7 @@ impl<'a> Network<'a> {
                 };
 
                 // group our stamps by previous/next pairs. BTree for consistent sorting
-                let mut stamps_grouped: BTreeMap<(&TransactionID, &TransactionID), Vec<&StampEntry>> =
+                let stamps_grouped: BTreeMap<(&TransactionID, &TransactionID), Vec<&StampEntry>> =
                     stamps.into_iter().fold(BTreeMap::new(), |mut acc, x| {
                         let entry = acc.entry((x.stamper(), x.stampee())).or_insert_with(|| Vec::new());
                         (*entry).push(x);
@@ -272,6 +355,8 @@ pub struct TrustReportPathEntry {
     /// Sheds some light on how a particular claim is scored. This is mainly useful for debugging,
     /// as the real result of stamp trust is held in `trust_stamps`.
     stamp_trust_details: Vec<TrustReportStamp>,
+    /// The trust value (if any) assigned to this node from our trust mapping
+    trust_direct: i8,
     /// The trust value of the previous node (aka, `from`)
     trust_previous_node: i8,
     /// How far this node is from the trust originator
@@ -290,6 +375,8 @@ pub struct TrustReportPathEntry {
     /// all of them will be merged via [`TrustAlgo.merge`][TrustAlgo::merge] in order to determine
     /// a single trust value.
     trust_decayed: i8,
+    /// The final/total calculated trust.
+    trust_total: i8,
 }
 
 impl TrustReportPathEntry {
@@ -297,21 +384,25 @@ impl TrustReportPathEntry {
         from: IdentityID,
         to: IdentityID,
         stamp_trust_details: Vec<TrustReportStamp>,
+        trust_direct: i8,
         trust_previous_node: i8,
         distance_from_originator: usize,
         trust_stamps: i8,
         trust_transferred: i8,
         trust_decayed: i8,
+        trust_total: i8,
     ) -> Self {
         Self {
             from,
             to,
             stamp_trust_details,
+            trust_direct,
             trust_previous_node,
             distance_from_originator,
             trust_stamps,
             trust_transferred,
             trust_decayed,
+            trust_total,
         }
     }
 }
@@ -320,7 +411,7 @@ impl TrustReportPathEntry {
 #[derive(Clone, Debug, Getters, MutGetters)]
 #[getset(get = "pub", get_mut = "pub(crate)")]
 pub struct TrustReport {
-    /// The different paths that trust took in our calculations
+    /// The different paths that trust took in our network
     paths: Vec<Vec<TrustReportPathEntry>>,
 }
 
@@ -330,37 +421,75 @@ impl TrustReport {
     }
 }
 
+impl std::fmt::Display for TrustReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, ">> Trust report")?;
+        for (i, path_report) in self.paths().iter().enumerate() {
+            writeln!(f, "  -- path {}", i)?;
+            for entry in path_report {
+                writeln!(f, "    ID {} -> ID {}", entry.from().deref(), entry.to().deref())?;
+                writeln!(f, "      trust direct:        {}", entry.trust_direct())?;
+                writeln!(f, "      trust incoming:      {}", entry.trust_previous_node())?;
+                writeln!(f, "      stamp trust:         {}", entry.trust_stamps())?;
+                for report_stamp in entry.stamp_trust_details() {
+                    let claim_id = format!("{}", report_stamp.claim_id().deref());
+                    writeln!(f, "        claim {}:  {}", &claim_id[0..16], report_stamp.trust())?;
+                }
+                writeln!(f, "      trust tx:            {}", entry.trust_transferred())?;
+                writeln!(f, "      distance:            {}", entry.distance_from_originator())?;
+                writeln!(f, "      trust decayed:       {}", entry.trust_decayed())?;
+                writeln!(f, "      trust total:         {}", entry.trust_total())?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Determine the trust between our identity and a subject identity, given a network of
 /// identities linking the two via stamps. This walks the network, scoring each identity,
 /// transferring trust as it goes.
 pub fn trust_score<T: TrustAlgo>(
-    ours: &IdentityID,
-    theirs: &IdentityID,
+    from: &IdentityID,
+    to: &IdentityID,
+    trust_mapping: &HashMap<TransactionID, Trust>,
     trust_network: &[&Identity],
     trust_algo: &T,
-) -> Result<Option<(i8, TrustReport)>> {
+) -> Option<(i8, TrustReport)> {
     let mut network = Network::new();
     for id in trust_network {
         network.add_node(id);
     }
-    let mut paths = network.find_paths(ours, theirs, trust_algo.max_distance());
+    let paths = network.find_paths(from, to, trust_algo.max_distance());
 
     if paths.len() == 0 {
-        return Ok(None);
+        return None;
     }
 
     // we're going to calculate the trust for each path independently, and merge the trust values
-    // only at the end of the line when we get to our target node ("theirs")
+    // only at the end of the line when we get to our target node ("to")
     let mut report = TrustReport::new();
     let mut trust_values: Vec<i8> = Vec::new();
     for path in paths {
-        let mut prev_node_trust = 127;
+        if path.len() == 0 || path[0].len() == 0 {
+            continue;
+        }
+        let mut prev_node_trust = trust_mapping
+            .get(path[0][0].stamper().deref())
+            .map(|x| x.trust_value())
+            .unwrap_or(0);
         let mut last_node_trust = None;
         let mut path_report: Vec<TrustReportPathEntry> = Vec::with_capacity(path.len());
         for (dist, stamps) in path.into_iter().enumerate() {
+            let trust_direct = stamps
+                .get(0)
+                .and_then(|stamp| trust_mapping.get(stamp.stampee()))
+                .map(|t| t.trust_value())
+                .unwrap_or(0);
             let trust_stamps = trust_algo.trust_from_stamps(&stamps);
             let trust_ratio = ((trust_stamps as i64 * prev_node_trust as i64) / i8::MAX as i64) as i8;
             let trust_decayed = trust_algo.decay(trust_ratio, dist);
+            let trust_total =
+                std::cmp::max(i8::MIN as i32, std::cmp::min(i8::MAX as i32, trust_direct as i32 + trust_decayed as i32)) as i8;
             let report_stamps = stamps
                 .iter()
                 .map(|s| {
@@ -372,18 +501,21 @@ pub fn trust_score<T: TrustAlgo>(
                 IdentityID::from(stamps[0].stamper().clone()),
                 IdentityID::from(stamps[0].stampee().clone()),
                 report_stamps,
+                trust_direct,
                 prev_node_trust,
                 dist,
                 trust_stamps,
                 trust_ratio,
                 trust_decayed,
+                trust_total,
             );
             path_report.push(trust_report_entry);
-            if trust_decayed == 0 {
+            if trust_total == 0 {
+                last_node_trust = None;
                 break;
             }
-            prev_node_trust = trust_decayed;
-            last_node_trust = Some(trust_decayed);
+            prev_node_trust = trust_total;
+            last_node_trust = Some(trust_total);
         }
         report.paths_mut().push(path_report);
         if let Some(trustval) = last_node_trust {
@@ -393,7 +525,7 @@ pub fn trust_score<T: TrustAlgo>(
 
     let trust = trust_algo.merge(&trust_values);
 
-    Ok(Some((trust, report)))
+    Some((trust, report))
 }
 
 #[cfg(test)]
@@ -419,6 +551,7 @@ mod tests {
     macro_rules! make_trust_network {
         (
             [$($names:ident($($claimtype:ident),*),)*],
+            [$($names2:ident($trust:expr),)*],
             [$(
                 $from:ident -> $to:ident ($claimtype2:ident, $confidence:expr),
             )*],
@@ -467,6 +600,8 @@ mod tests {
             }
             let now = Timestamp::from_str("2016-04-04T02:00:00-0700").unwrap();
             let mut identities: HashMap<&'static str, IdentityKeys> = Default::default();
+            #[allow(unused_mut)]
+            let mut trust_mapping: HashMap<TransactionID, Trust> = HashMap::new();
             $({
                 let name = stringify!($names);
                 let seed = format!("i had a baby {}! and he was perfect in every way!!", name);
@@ -478,6 +613,14 @@ mod tests {
                 ik.add_claim(stringify!($claimtype));
                 )*
                 identities.insert(name, ik);
+            })*
+
+            $({
+                let name = stringify!($names2);
+                let trust: Trust = $trust;
+                let ik = identities.get(name).expect("missing id");
+                let identity_id = ik.transactions.identity_id().unwrap().deref().clone();
+                trust_mapping.insert(identity_id, trust);
             })*
 
             $({
@@ -518,11 +661,11 @@ mod tests {
                 .into_iter()
                 .map(|(k, IdentityKeys { transactions, .. })| (k, transactions))
                 .collect::<HashMap<_, _>>();
-            (id_map, lookup)
+            (id_map, trust_mapping, lookup)
         }};
     }
 
-    fn paths_named(lookup: &HashMap<TransactionID, &'static str>, paths: &Vec<Vec<Vec<&StampEntry>>>) -> Vec<Vec<&'static str>> {
+    fn paths_named(lookup: &HashMap<TransactionID, &'static str>, paths: &Vec<Vec<Vec<StampEntry>>>) -> Vec<Vec<&'static str>> {
         paths
             .iter()
             .map(|path| {
@@ -533,13 +676,19 @@ mod tests {
             .collect::<Vec<_>>()
     }
 
+    fn path_counts(paths: &Vec<Vec<Vec<StampEntry>>>) -> Vec<Vec<usize>> {
+        paths
+            .iter()
+            .map(|path| path.iter().map(|stamps| stamps.len()).collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    }
+
     fn trustnet_to_paths(
         trust_network: &HashMap<&'static str, Transactions>,
-        lookup: &HashMap<TransactionID, &'static str>,
         from: &'static str,
         to: &'static str,
         max_dist: Option<usize>,
-    ) -> Vec<Vec<&'static str>> {
+    ) -> Vec<Vec<Vec<StampEntry>>> {
         let mut network = Network::new();
         let identities = trust_network.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
         for id in &identities {
@@ -547,254 +696,408 @@ mod tests {
         }
         let from = trust_network.get(from).unwrap().identity_id().unwrap();
         let to = trust_network.get(to).unwrap().identity_id().unwrap();
-        let paths = network.find_paths(&from, &to, max_dist);
-        paths_named(&lookup, &paths)
+        network
+            .find_paths(&from, &to, max_dist)
+            .into_iter()
+            .map(|path| {
+                path.into_iter()
+                    .map(|stamps| stamps.into_iter().map(|stamp| stamp.clone()).collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    }
+
+    fn report_to_vals(report: &TrustReport) -> Vec<Vec<[i64; 7]>> {
+        report
+            .paths()
+            .iter()
+            .map(|path| {
+                path.iter()
+                    .map(|entry| {
+                        [
+                            *entry.trust_direct() as i64,
+                            *entry.trust_previous_node() as i64,
+                            *entry.distance_from_originator() as i64,
+                            *entry.trust_stamps() as i64,
+                            *entry.trust_transferred() as i64,
+                            *entry.trust_decayed() as i64,
+                            *entry.trust_total() as i64,
+                        ]
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
     }
 
     #[test]
     fn network_find_paths() {
-        let (trustnet1, lookup1) = make_trust_network! {
-            [ A(name), B(), ],
-            [ A -> B (id, Confidence::High), ],
-        };
-        let paths_named1 = trustnet_to_paths(&trustnet1, &lookup1, "A", "B", None);
-        assert_eq!(paths_named1, vec![vec!["B"]]);
+        {
+            let (trustnet, _trustmap, lookup) = make_trust_network! {
+                [ A(name), B(), ],
+                [],
+                [ A -> B (id, Confidence::High), ],
+            };
+            let paths = trustnet_to_paths(&trustnet, "A", "B", None);
+            let named = paths_named(&lookup, &paths);
+            let counts = path_counts(&paths);
+            assert_eq!(counts, vec![vec![1]]);
+            assert_eq!(paths.len(), 1);
+            assert_eq!(paths[0].len(), 1);
+            assert_eq!(paths[0][0].len(), 1);
+            assert_eq!(named, vec![vec!["B"]]);
+        }
 
-        let (trustnet2, lookup2) = make_trust_network! {
-            [
-                A(),
-                B(name, email),
-                C(email),
-            ],
-            [
-                A -> B (id, Confidence::Medium),
-                A -> B (name, Confidence::Medium),
-                A -> B (email, Confidence::Medium),
-                B -> C (id, Confidence::Low),
-                B -> C (email, Confidence::Low),
-                B -> A (id, Confidence::Ultimate),
-            ],
-        };
-        let paths_named2 = trustnet_to_paths(&trustnet2, &lookup2, "A", "C", None);
-        assert_eq!(
-            paths_named2,
-            vec![
-                vec!["B", "C"],
-                vec!["B", "C"],
-                vec!["B", "C"],
-                vec!["B", "C"],
-                vec!["B", "C"],
-                vec!["B", "C"],
-            ]
-        );
+        {
+            let (trustnet, _trustmap, lookup) = make_trust_network! {
+                [
+                    A(),
+                    B(name, email),
+                    C(email),
+                ],
+                [],
+                [
+                    A -> B (id, Confidence::Medium),
+                    A -> B (name, Confidence::Medium),
+                    A -> B (email, Confidence::Medium),
+                    B -> C (id, Confidence::Low),
+                    B -> C (email, Confidence::Low),
+                    B -> A (id, Confidence::Ultimate),
+                ],
+            };
+            let paths = trustnet_to_paths(&trustnet, "A", "C", None);
+            let named = paths_named(&lookup, &paths);
+            let counts = path_counts(&paths);
+            assert_eq!(counts, vec![vec![3, 2]]);
+            assert_eq!(named, vec![vec!["B", "C"]]);
+        }
 
-        let (trustnet3, lookup3) = make_trust_network! {
-            [
-                A(),
-                B(),
-                C(),
-                D(),
-                E(),
-            ],
-            [
-                A -> B (id, Confidence::Low),
-                A -> C (id, Confidence::Low),
-                C -> B (id, Confidence::Low),
-                B -> A (id, Confidence::Low),
-                A -> B (id, Confidence::Low),
-                D -> E (id, Confidence::Low),
-            ],
-        };
-        let paths_named3 = trustnet_to_paths(&trustnet3, &lookup3, "A", "D", None);
-        assert_eq!(paths_named3.len(), 0);
-        let paths_named3_2 = trustnet_to_paths(&trustnet3, &lookup3, "A", "E", None);
-        assert_eq!(paths_named3_2.len(), 0);
+        {
+            let (trustnet, _trustmap, lookup) = make_trust_network! {
+                [
+                    A(),
+                    B(),
+                    C(),
+                    D(),
+                    E(),
+                ],
+                [],
+                [
+                    A -> B (id, Confidence::Low),
+                    A -> C (id, Confidence::Low),
+                    C -> B (id, Confidence::Low),
+                    B -> A (id, Confidence::Low),
+                    A -> B (id, Confidence::Low),
+                    D -> E (id, Confidence::Low),
+                ],
+            };
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "D", None);
+                let named = paths_named(&lookup, &paths);
+                assert_eq!(paths.len(), 0);
+                assert_eq!(named.len(), 0);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "E", None);
+                let named = paths_named(&lookup, &paths);
+                assert_eq!(paths.len(), 0);
+                assert_eq!(named.len(), 0);
+            }
+        }
 
-        let (trustnet4, lookup4) = make_trust_network! {
-            [
-                A(),
-                B(),
-                C(),
-                D(),
-                E(),
-            ],
-            [
-                A -> B (id, Confidence::Low),
-                B -> C (id, Confidence::Low),
-                C -> D (id, Confidence::Low),
-                D -> A (id, Confidence::Low),
-                A -> E (id, Confidence::Low),
-            ],
-        };
-        let paths_named4 = trustnet_to_paths(&trustnet4, &lookup4, "A", "E", None);
-        assert_eq!(paths_named4, vec![vec!["E"]]);
+        {
+            let (trustnet, _trustmap, lookup) = make_trust_network! {
+                [
+                    A(),
+                    B(),
+                    C(),
+                    D(),
+                    E(),
+                ],
+                [],
+                [
+                    A -> B (id, Confidence::Low),
+                    B -> C (id, Confidence::Low),
+                    C -> D (id, Confidence::Low),
+                    D -> A (id, Confidence::Low),
+                    A -> E (id, Confidence::Low),
+                ],
+            };
+            let paths = trustnet_to_paths(&trustnet, "A", "E", None);
+            let named = paths_named(&lookup, &paths);
+            let counts = path_counts(&paths);
+            assert_eq!(counts, vec![vec![1]]);
+            assert_eq!(named, vec![vec!["E"]]);
+        }
     }
 
     #[test]
     fn network_find_paths_stable_order() {
-        let (trustnet1, lookup1) = make_trust_network! {
-            [
-                A(name),
-                B(),
-                C(name, email),
-                D(),
-                E(),
-                F(),
-                G(name),
-            ],
-            [
-                A -> B (id, Confidence::High),
-                B -> C (id, Confidence::High),
-                B -> C (name, Confidence::Medium),
-                A -> D (id, Confidence::Ultimate),
-                C -> E (id, Confidence::Medium),
-                D -> E (id, Confidence::Negative),
-                E -> F (id, Confidence::High),
-                D -> G (id, Confidence::Medium),
-                F -> G (name, Confidence::Low),
-                D -> B (id, Confidence::Low),
-                E -> D (id, Confidence::Negative),
-            ],
+        let (counts1, named1) = {
+            let (trustnet, _trustmap, lookup) = make_trust_network! {
+                [
+                    A(name),
+                    B(),
+                    C(name, email),
+                    D(),
+                    E(),
+                    F(),
+                    G(name),
+                ],
+                [],
+                [
+                    A -> B (id, Confidence::High),
+                    B -> C (id, Confidence::High),
+                    B -> C (name, Confidence::Medium),
+                    A -> D (id, Confidence::Ultimate),
+                    C -> E (id, Confidence::Medium),
+                    D -> E (id, Confidence::Negative),
+                    E -> F (id, Confidence::High),
+                    D -> G (id, Confidence::Medium),
+                    F -> G (name, Confidence::Low),
+                    D -> B (id, Confidence::Low),
+                    E -> D (id, Confidence::Negative),
+                ],
+            };
+            let paths = trustnet_to_paths(&trustnet, "A", "G", None);
+            let named = paths_named(&lookup, &paths);
+            let counts = path_counts(&paths);
+            assert_eq!(
+                counts,
+                vec![
+                    vec![1, 2, 1, 1, 1],
+                    vec![1, 2, 1, 1, 1],
+                    vec![1, 1, 1, 1],
+                    vec![1, 1, 2, 1, 1, 1],
+                    vec![1, 1],
+                ]
+            );
+            assert_eq!(
+                named,
+                vec![
+                    vec!["B", "C", "E", "D", "G"],
+                    vec!["B", "C", "E", "F", "G"],
+                    vec!["D", "E", "F", "G"],
+                    vec!["D", "B", "C", "E", "F", "G"],
+                    vec!["D", "G"],
+                ],
+            );
+            (counts, named)
         };
-        let paths_named1 = trustnet_to_paths(&trustnet1, &lookup1, "A", "G", None);
-        assert_eq!(
-            paths_named1,
-            vec![
-                vec!["B", "C", "E", "D", "G"],
-                vec!["B", "C", "E", "F", "G"],
-                vec!["B", "C", "E", "D", "G"],
-                vec!["B", "C", "E", "F", "G"],
-                vec!["D", "E", "F", "G"],
-                vec!["D", "B", "C", "E", "F", "G"],
-                vec!["D", "B", "C", "E", "F", "G"],
-                vec!["D", "G"],
-            ],
-        );
-        // same network, different ordering of links, should yield same paths
-        let (trustnet2, lookup2) = make_trust_network! {
-            [
-                B(),
-                F(),
-                E(),
-                A(name),
-                G(name),
-                D(),
-                C(name, email),
-            ],
-            [
-                D -> B (id, Confidence::Low),
-                D -> G (id, Confidence::Medium),
-                F -> G (name, Confidence::Low),
-                E -> F (id, Confidence::High),
-                C -> E (id, Confidence::Medium),
-                E -> D (id, Confidence::Negative),
-                B -> C (name, Confidence::Medium),
-                A -> B (id, Confidence::High),
-                B -> C (id, Confidence::High),
-                D -> E (id, Confidence::Negative),
-                A -> D (id, Confidence::Ultimate),
-            ],
-        };
-        let paths_named2 = trustnet_to_paths(&trustnet2, &lookup2, "A", "G", None);
-        assert_eq!(paths_named1, paths_named2);
+        {
+            // same network, different ordering of links, should yield same paths
+            let (trustnet, _trustmap, lookup) = make_trust_network! {
+                [
+                    B(),
+                    F(),
+                    E(),
+                    A(name),
+                    G(name),
+                    D(),
+                    C(name, email),
+                ],
+                [],
+                [
+                    D -> B (id, Confidence::Low),
+                    D -> G (id, Confidence::Medium),
+                    F -> G (name, Confidence::Low),
+                    E -> F (id, Confidence::High),
+                    C -> E (id, Confidence::Medium),
+                    E -> D (id, Confidence::Negative),
+                    B -> C (name, Confidence::Medium),
+                    A -> B (id, Confidence::High),
+                    B -> C (id, Confidence::High),
+                    D -> E (id, Confidence::Negative),
+                    A -> D (id, Confidence::Ultimate),
+                ],
+            };
+            let paths = trustnet_to_paths(&trustnet, "A", "G", None);
+            let named = paths_named(&lookup, &paths);
+            let counts = path_counts(&paths);
+            assert_eq!(counts, counts1);
+            assert_eq!(named, named1);
+        }
     }
 
     #[test]
     fn network_find_paths_max_distance() {
-        let (trustnet1, lookup1) = make_trust_network! {
-            [
-                A(),
-                B(),
-                C(),
-                D(),
-                E(),
-                F(),
-                G(),
-            ],
-            [
-                A -> B (id, Confidence::High),
-                B -> C (id, Confidence::High),
-                C -> D (id, Confidence::High),
-                D -> E (id, Confidence::High),
-                E -> F (id, Confidence::High),
-                F -> G (id, Confidence::High),
-            ],
-        };
-        let paths_named1_1 = trustnet_to_paths(&trustnet1, &lookup1, "A", "G", None);
-        assert_eq!(paths_named1_1, vec![vec!["B", "C", "D", "E", "F", "G"]]);
-        let paths_named1_2 = trustnet_to_paths(&trustnet1, &lookup1, "A", "G", Some(3));
-        assert_eq!(paths_named1_2.len(), 0);
-        let paths_named1_3 = trustnet_to_paths(&trustnet1, &lookup1, "A", "G", Some(5));
-        assert_eq!(paths_named1_3.len(), 0);
-        let paths_named1_4 = trustnet_to_paths(&trustnet1, &lookup1, "A", "G", Some(6));
-        assert_eq!(paths_named1_4, vec![vec!["B", "C", "D", "E", "F", "G"]]);
+        {
+            let (trustnet, _trustmap, lookup) = make_trust_network! {
+                [
+                    A(),
+                    B(),
+                    C(),
+                    D(),
+                    E(),
+                    F(),
+                    G(),
+                ],
+                [],
+                [
+                    A -> B (id, Confidence::High),
+                    B -> C (id, Confidence::High),
+                    C -> D (id, Confidence::High),
+                    D -> E (id, Confidence::High),
+                    E -> F (id, Confidence::High),
+                    F -> G (id, Confidence::High),
+                ],
+            };
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "G", None);
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts, vec![vec![1, 1, 1, 1, 1, 1]]);
+                assert_eq!(named, vec![vec!["B", "C", "D", "E", "F", "G"]]);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "G", Some(3));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts.len(), 0);
+                assert_eq!(named.len(), 0);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "G", Some(3));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts.len(), 0);
+                assert_eq!(named.len(), 0);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "G", Some(6));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts, vec![vec![1, 1, 1, 1, 1, 1]]);
+                assert_eq!(named, vec![vec!["B", "C", "D", "E", "F", "G"]]);
+            }
+        }
 
-        let (trustnet2, lookup2) = make_trust_network! {
-            [
-                A(),
-                B(),
-                C(),
-                D(),
-                E(),
-                F(),
-                G(),
-            ],
-            [
-                A -> B (id, Confidence::High),
-                B -> C (id, Confidence::High),
-                C -> D (id, Confidence::High),
-                D -> E (id, Confidence::High),
-                E -> F (id, Confidence::High),
-                F -> G (id, Confidence::High),
-                B -> G (id, Confidence::High),
-            ],
-        };
-        let paths_named2_1 = trustnet_to_paths(&trustnet2, &lookup2, "A", "G", None);
-        assert_eq!(paths_named2_1, vec![vec!["B", "C", "D", "E", "F", "G"], vec!["B", "G"],]);
-        let paths_named2_2 = trustnet_to_paths(&trustnet2, &lookup2, "A", "G", Some(1));
-        assert_eq!(paths_named2_2.len(), 0);
-        let paths_named2_3 = trustnet_to_paths(&trustnet2, &lookup2, "A", "G", Some(3));
-        assert_eq!(paths_named2_3, vec![vec!["B", "G"],]);
-        let paths_named2_4 = trustnet_to_paths(&trustnet2, &lookup2, "A", "G", Some(5));
-        assert_eq!(paths_named2_4, vec![vec!["B", "G"],]);
-        let paths_named2_5 = trustnet_to_paths(&trustnet2, &lookup2, "A", "G", Some(6));
-        assert_eq!(paths_named2_5, vec![vec!["B", "C", "D", "E", "F", "G"], vec!["B", "G"],]);
+        {
+            let (trustnet, _trustmap, lookup) = make_trust_network! {
+                [
+                    A(),
+                    B(),
+                    C(),
+                    D(),
+                    E(),
+                    F(),
+                    G(),
+                ],
+                [],
+                [
+                    A -> B (id, Confidence::High),
+                    B -> C (id, Confidence::High),
+                    C -> D (id, Confidence::High),
+                    D -> E (id, Confidence::High),
+                    E -> F (id, Confidence::High),
+                    F -> G (id, Confidence::High),
+                    B -> G (id, Confidence::High),
+                ],
+            };
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "G", None);
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts, vec![vec![1, 1, 1, 1, 1, 1], vec![1, 1]]);
+                assert_eq!(named, vec![vec!["B", "C", "D", "E", "F", "G"], vec!["B", "G"]]);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "G", Some(1));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts.len(), 0);
+                assert_eq!(named.len(), 0);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "G", Some(3));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts, vec![vec![1, 1]]);
+                assert_eq!(named, vec![vec!["B", "G"]]);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "G", Some(5));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts, vec![vec![1, 1]]);
+                assert_eq!(named, vec![vec!["B", "G"]]);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "G", Some(6));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts, vec![vec![1, 1, 1, 1, 1, 1], vec![1, 1]]);
+                assert_eq!(named, vec![vec!["B", "C", "D", "E", "F", "G"], vec!["B", "G"]]);
+            }
+        }
 
-        let (trustnet3, lookup3) = make_trust_network! {
-            [
-                A(),
-                B(),
-                C(),
-                D(),
-                E(),
-                F(),
-                G(),
-            ],
-            [
-                A -> B (id, Confidence::High),
-                B -> C (id, Confidence::High),
-                C -> D (id, Confidence::High),
-                D -> E (id, Confidence::High),
-                E -> F (id, Confidence::High),
-                A -> G (id, Confidence::High),
-                G -> B (id, Confidence::High),
-            ],
-        };
-        let paths_named3_1 = trustnet_to_paths(&trustnet3, &lookup3, "A", "F", None);
-        assert_eq!(paths_named3_1, vec![vec!["B", "C", "D", "E", "F"], vec!["G", "B", "C", "D", "E", "F"],]);
-        let paths_named3_2 = trustnet_to_paths(&trustnet3, &lookup3, "A", "F", Some(1));
-        assert_eq!(paths_named3_2.len(), 0);
-        let paths_named3_3 = trustnet_to_paths(&trustnet3, &lookup3, "A", "F", Some(3));
-        assert_eq!(paths_named3_3.len(), 0);
-        let paths_named3_4 = trustnet_to_paths(&trustnet3, &lookup3, "A", "F", Some(5));
-        assert_eq!(paths_named3_4, vec![vec!["B", "C", "D", "E", "F"],]);
-        let paths_named3_5 = trustnet_to_paths(&trustnet3, &lookup3, "A", "F", Some(6));
-        assert_eq!(paths_named3_5, vec![vec!["B", "C", "D", "E", "F"], vec!["G", "B", "C", "D", "E", "F"],]);
+        {
+            let (trustnet, _trustmap, lookup) = make_trust_network! {
+                [
+                    A(),
+                    B(),
+                    C(),
+                    D(),
+                    E(),
+                    F(),
+                    G(),
+                ],
+                [],
+                [
+                    A -> B (id, Confidence::High),
+                    B -> C (id, Confidence::High),
+                    C -> D (id, Confidence::High),
+                    D -> E (id, Confidence::High),
+                    E -> F (id, Confidence::High),
+                    A -> G (id, Confidence::High),
+                    G -> B (id, Confidence::High),
+                ],
+            };
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "F", None);
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts, vec![vec![1, 1, 1, 1, 1], vec![1, 1, 1, 1, 1, 1]]);
+                assert_eq!(named, vec![vec!["B", "C", "D", "E", "F"], vec!["G", "B", "C", "D", "E", "F"],]);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "F", Some(1));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts.len(), 0);
+                assert_eq!(named.len(), 0);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "F", Some(3));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts.len(), 0);
+                assert_eq!(named.len(), 0);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "F", Some(5));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts, vec![vec![1, 1, 1, 1, 1]]);
+                assert_eq!(named, vec![vec!["B", "C", "D", "E", "F"]]);
+            }
+            {
+                let paths = trustnet_to_paths(&trustnet, "A", "F", Some(6));
+                let named = paths_named(&lookup, &paths);
+                let counts = path_counts(&paths);
+                assert_eq!(counts, vec![vec![1, 1, 1, 1, 1], vec![1, 1, 1, 1, 1, 1]]);
+                assert_eq!(named, vec![vec!["B", "C", "D", "E", "F"], vec!["G", "B", "C", "D", "E", "F"],]);
+            }
+        }
     }
 
     #[test]
-    fn trust_score_lol() {
-        let (trustnet1, lookup1) = make_trust_network! {
+    fn trust_algo_stamps() {
+        unimplemented!();
+    }
+
+    #[test]
+    fn trust_score_simple() {
+        let (trustnet, trustmap, _lookup) = make_trust_network! {
             [
                 A(),
                 B(name),
@@ -802,6 +1105,10 @@ mod tests {
                 D(),
             ],
             [
+                A(Trust::Ultimate),
+                C(Trust::Low),
+            ],
+            [
                 A -> B (id, Confidence::High),
                 A -> B (name, Confidence::Medium),
                 B -> C (id, Confidence::High),
@@ -809,28 +1116,141 @@ mod tests {
                 C -> D (id, Confidence::High),
             ],
         };
-        let id_a = trustnet1.get("A").unwrap().identity_id().unwrap();
-        let id_c = trustnet1.get("C").unwrap().identity_id().unwrap();
-        let id_d = trustnet1.get("D").unwrap().identity_id().unwrap();
-        for node in trustnet1.values() {
-            let id = node.identity_id().unwrap();
-            println!("- node {} -- {}", lookup1.get(&id).unwrap(), id);
-        }
-        let ids = trustnet1.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
+        let id_a = trustnet.get("A").unwrap().identity_id().unwrap();
+        let id_d = trustnet.get("D").unwrap().identity_id().unwrap();
+        let ids = trustnet.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
         let ids_borrow = ids.iter().collect::<Vec<_>>();
-        let trust_algo = TrustAlgoDefault::new();
-        let (score, report) = trust_score(&id_a, &id_d, ids_borrow.as_slice(), &trust_algo).unwrap().unwrap();
-        println!(">> trust score: {}", score);
-        for (i, path_report) in report.paths().iter().enumerate() {
-            println!("-- path {}", i);
-            for entry in path_report {
-                println!("   {} -> {}", entry.from().deref(), entry.to().deref());
-                println!("     trust (prev node):   {}", entry.trust_previous_node());
-                println!("     stamp trust:         {}", entry.trust_stamps());
-                println!("     trust tx:            {}", entry.trust_transferred());
-                println!("     distance:            {}", entry.distance_from_originator());
-                println!("     trust decayed:       {}", entry.trust_decayed());
-            }
+        let trust_algo = TrustAlgoDefault::default();
+        let (score, report) = trust_score(&id_a, &id_d, &trustmap, ids_borrow.as_slice(), &trust_algo).unwrap();
+        let report_vals = report_to_vals(&report);
+        assert_eq!(score, 19);
+        assert_eq!(
+            report_vals,
+            vec![
+                vec![[10, 127, 0, 10, 10, 10, 20], [0, 20, 1, 100, 15, 12, 12]],
+                vec![
+                    [0, 127, 0, 75, 75, 75, 75],
+                    [10, 75, 1, 100, 59, 47, 57],
+                    [0, 57, 2, 100, 44, 26, 26]
+                ],
+            ]
+        );
+    }
+
+    #[test]
+    fn trust_score_max_dist() {
+        let (trustnet, trustmap, _lookup) = make_trust_network! {
+            [
+                A(),
+                B(),
+                C(),
+                D(),
+                E(),
+                F(),
+                G(),
+            ],
+            [ A(Trust::Ultimate), ],
+            [
+                A -> B (id, Confidence::High),
+                B -> C (id, Confidence::High),
+                C -> D (id, Confidence::High),
+                D -> E (id, Confidence::High),
+                E -> F (id, Confidence::High),
+                F -> G (id, Confidence::High),
+            ],
+        };
+        let id_a = trustnet.get("A").unwrap().identity_id().unwrap();
+        let id_f = trustnet.get("F").unwrap().identity_id().unwrap();
+        let id_g = trustnet.get("G").unwrap().identity_id().unwrap();
+        let ids = trustnet.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
+        let ids_borrow = ids.iter().collect::<Vec<_>>();
+        let trust_algo = TrustAlgoDefault::default();
+        {
+            let (score, report) = trust_score(&id_a, &id_f, &trustmap, ids_borrow.as_slice(), &trust_algo).unwrap();
+            let report_vals = report_to_vals(&report);
+            assert_eq!(score, 1);
+            assert_eq!(
+                report_vals,
+                vec![vec![
+                    [0, 127, 0, 100, 100, 100, 100],
+                    [0, 100, 1, 100, 78, 62, 62],
+                    [0, 62, 2, 100, 48, 28, 28],
+                    [0, 28, 3, 100, 22, 8, 8],
+                    [0, 8, 4, 100, 6, 1, 1],
+                ]]
+            );
         }
+        {
+            let res = trust_score(&id_a, &id_g, &trustmap, ids_borrow.as_slice(), &trust_algo);
+            assert!(res.is_none());
+        }
+    }
+
+    #[test]
+    fn trust_score_branches() {
+        {
+            let (trustnet, trustmap, lookup) = make_trust_network! {
+                [
+                    A(),
+                    B(name),
+                    C(),
+                    D(),
+                    E(),
+                    F(email),
+                    G(),
+                    H(name),
+                ],
+                [ A(Trust::Ultimate), ],
+                [
+                    A -> B (id, Confidence::High),
+                    A -> B (name, Confidence::Medium),
+                    B -> E (id, Confidence::High),
+                    E -> H (id, Confidence::Low),
+
+                    A -> C (id, Confidence::Ultimate),
+                    C -> F (id, Confidence::Medium),
+                    C -> F (email, Confidence::High),
+                    F -> H (id, Confidence::High),
+                    F -> H (name, Confidence::High),
+
+                    A -> D (id, Confidence::Medium),
+                    D -> G (id, Confidence::Ultimate),
+                    G -> H (id, Confidence::High),
+                ],
+            };
+            let id_a = trustnet.get("A").unwrap().identity_id().unwrap();
+            let id_h = trustnet.get("H").unwrap().identity_id().unwrap();
+            for node in trustnet.values() {
+                let id = node.identity_id().unwrap();
+                println!("- node {} -- {}", lookup.get(&id).unwrap(), id);
+            }
+            let ids = trustnet.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
+            let ids_borrow = ids.iter().collect::<Vec<_>>();
+            let trust_algo = TrustAlgoDefault::default();
+            let (score, report) = trust_score(&id_a, &id_h, &trustmap, ids_borrow.as_slice(), &trust_algo).unwrap();
+            let report_vals = report_to_vals(&report);
+            assert_eq!(score, 15);
+            assert_eq!(
+                report_vals,
+                vec![
+                    vec![
+                        [0, 127, 0, 127, 127, 127, 127],
+                        [0, 127, 1, 75, 75, 60, 60],
+                        [0, 60, 2, 100, 47, 28, 28]
+                    ],
+                    vec![[0, 127, 0, 75, 75, 75, 75], [0, 75, 1, 100, 59, 47, 47], [0, 47, 2, 10, 3, 1, 1]],
+                    vec![
+                        [0, 127, 0, 50, 50, 50, 50],
+                        [0, 50, 1, 127, 50, 40, 40],
+                        [0, 40, 2, 100, 31, 18, 18]
+                    ]
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn trust_score_negative() {
+        unimplemented!();
     }
 }
