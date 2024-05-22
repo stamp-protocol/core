@@ -117,17 +117,20 @@ of transactions, allowing quick lookups of identity information without the BS.
 ## Roadmap
 
 - [ ] Stamp core proof of concept
-  - [x] Key hierarchy
-  - [x] Root signature and verification
+  - [x] DAG transactional model
+  - [x] Policy system
+    - [x] Admin keys
+    - [x] Flexible policies that grant additive permissions
+    - [x] Multisig designations to create arbitrary combinations of admin sigs to fulfill policies
   - [x] Keychain management
-    - [x] Policy, publish, root key management
+    - [x] Admin key management
     - [x] Subkey management
       - [x] Add
       - [x] Update name/description
       - [x] Revoke
       - [x] Delete
     - [x] Reencryption via new master key
-  - [ ] Claims system
+  - [x] Claims system
     - [x] Create, sign, verify claims
     - [x] Support multiple claim types
       - [x] Identity
@@ -151,9 +154,7 @@ of transactions, allowing quick lookups of identity information without the BS.
     - [x] Automatic claim verification
       - [x] Domain TXT claim verification
       - [x] URL (https) claim verification
-  - [x] Identity versioning
   - [x] Identity human-readable serialization
-  - [x] Publishing system and verfication
   - [x] Cryptographic utilities
     - [x] Encrypted messages between identities
     - [x] Cryptographic signatures
