@@ -142,7 +142,7 @@ of transactions, allowing quick lookups of identity information without the BS.
       - [x] Relationship to another stamp identity
       - [x] Relationship to non-stamp identity
       - [x] Extendable claim
-    - [ ] Stamp requests (sending private claims to stamper)
+    - [x] Stamp requests (sending private claims to stamper)
     - [x] Private verifiable claims (via HMAC)
     - [x] Stamps
       - [x] Create, sign, verify stamps
@@ -154,10 +154,10 @@ of transactions, allowing quick lookups of identity information without the BS.
   - [x] Identity versioning
   - [x] Identity human-readable serialization
   - [x] Publishing system and verfication
-  - [ ] Cryptographic utilities
+  - [x] Cryptographic utilities
     - [x] Encrypted messages between identities
     - [x] Cryptographic signatures
-    - [ ] Personal data encryption/decryption
+    - [x] Personal data encryption/decryption
   - [x] Recovery system
   - [x] Extra data management
     - [x] Nickname
@@ -165,7 +165,7 @@ of transactions, allowing quick lookups of identity information without the BS.
   - [ ] Whole identity revocation
   - [ ] Trust system
     - [ ] Trust of specific identities
-    - [ ] Flow of trust through stamps, using confidence as control valve
+    - [x] Flow of trust through stamps, using confidence as control valve
 - [ ] CLI proof of concept
   - [ ] Interface all available functions of core
 - [ ] Formal specification of Stamp protocol
