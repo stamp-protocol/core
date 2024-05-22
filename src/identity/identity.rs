@@ -67,6 +67,18 @@ pub struct Identity {
     /// for checking of revocation.
     #[rasn(tag(explicit(5)))]
     stamps: Vec<Stamp>,
+    /// Marks if this identity has been revoked. Revoked identities cannot issue any new
+    /// transactions and become read-only for all intents and purposes.
+    #[rasn(tag(explicit(6)))]
+    revoked: bool,
+}
+
+macro_rules! check_revoked {
+    ($self:ident) => {
+        if *$self.revoked() {
+            Err(Error::IdentityRevoked)?;
+        }
+    };
 }
 
 impl Identity {
@@ -83,11 +95,18 @@ impl Identity {
             keychain,
             claims: vec![],
             stamps: vec![],
+            revoked: false,
         }
+    }
+
+    pub(crate) fn revoke(mut self) -> Result<Self> {
+        self.revoked = true;
+        Ok(self)
     }
 
     /// Reset the admin keys/capabilities in this identity.
     pub(crate) fn reset(mut self, admin_keys_maybe: Option<Vec<AdminKey>>, policies_maybe: Option<Vec<PolicyContainer>>) -> Result<Self> {
+        check_revoked! { self }
         if let Some(admin_keys) = admin_keys_maybe {
             let mut keychain = self.keychain().clone();
             keychain.set_admin_keys(admin_keys);
@@ -100,28 +119,33 @@ impl Identity {
     }
 
     pub(crate) fn add_admin_key(mut self, admin_key: AdminKey) -> Result<Self> {
+        check_revoked! { self }
         self.set_keychain(self.keychain().clone().add_admin_key(admin_key)?);
         Ok(self)
     }
 
     pub(crate) fn edit_admin_key(mut self, id: &AdminKeyID, name: Option<String>, description: Option<Option<String>>) -> Result<Self> {
+        check_revoked! { self }
         self.set_keychain(self.keychain().clone().edit_admin_key(id, name, description)?);
         Ok(self)
     }
 
     pub(crate) fn revoke_admin_key(mut self, id: &AdminKeyID, reason: RevocationReason, new_name: Option<String>) -> Result<Self> {
+        check_revoked! { self }
         self.set_keychain(self.keychain().clone().revoke_admin_key(id, reason, new_name)?);
         Ok(self)
     }
 
     /// Add a new capability policy
     pub(crate) fn add_policy(mut self, container: PolicyContainer) -> Result<Self> {
+        check_revoked! { self }
         self.policies_mut().push(container);
         Ok(self)
     }
 
     /// Delete a capability policy by name
     pub(crate) fn delete_policy(mut self, id: &PolicyID) -> Result<Self> {
+        check_revoked! { self }
         if !self.policies().iter().any(|c| c.id() == id) {
             Err(Error::PolicyNotFound)?;
         }
@@ -132,6 +156,7 @@ impl Identity {
     /// Create a new claim from the given data, sign it, and attach it to this
     /// identity.
     pub(crate) fn make_claim(mut self, claim_id: ClaimID, claim: ClaimSpec, name: Option<String>) -> Result<Self> {
+        check_revoked! { self }
         let claim = Claim::new(claim_id, claim, name);
         self.claims_mut().push(claim);
         Ok(self)
@@ -139,6 +164,7 @@ impl Identity {
 
     /// Set a new name for a claim
     pub(crate) fn edit_claim(mut self, id: &ClaimID, name: Option<String>) -> Result<Self> {
+        check_revoked! { self }
         let claim_maybe = self.claims_mut().iter_mut().find(|x| x.id() == id);
         if let Some(claim) = claim_maybe {
             claim.set_name(name);
@@ -148,12 +174,14 @@ impl Identity {
 
     /// Remove a claim from this identity, including any stamps it has received.
     pub(crate) fn delete_claim(mut self, id: &ClaimID) -> Result<Self> {
+        check_revoked! { self }
         self.claims_mut().retain(|x| x.id() != id);
         Ok(self)
     }
 
     /// Make a public stamp
     pub(crate) fn make_stamp(mut self, stamp: Stamp) -> Result<Self> {
+        check_revoked! { self }
         if !self.stamps().iter().any(|s| s.id() == stamp.id()) {
             self.stamps_mut().push(stamp);
         }
@@ -162,6 +190,7 @@ impl Identity {
 
     /// Revoke a public stamp.
     pub(crate) fn revoke_stamp(mut self, stamp_id: &StampID, reason: StampRevocationReason) -> Result<Self> {
+        check_revoked! { self }
         let stamp = self
             .stamps_mut()
             .iter_mut()
@@ -173,6 +202,7 @@ impl Identity {
 
     /// Accept a stamp on one of our claims.
     pub(crate) fn accept_stamp(mut self, stamp: Stamp) -> Result<Self> {
+        check_revoked! { self }
         let claim_id = stamp.entry().claim_id();
         let claim = self
             .claims_mut()
@@ -187,6 +217,7 @@ impl Identity {
 
     /// Remove a stamp from one of our claims.
     pub(crate) fn delete_stamp(mut self, stamp_id: &StampID) -> Result<Self> {
+        check_revoked! { self }
         let mut found = None;
         for claim in self.claims_mut() {
             for stamp in claim.stamps() {
@@ -210,24 +241,28 @@ impl Identity {
 
     /// Add a new subkey to our identity.
     pub(crate) fn add_subkey<T: Into<String>>(mut self, key: Key, name: T, description: Option<T>) -> Result<Self> {
+        check_revoked! { self }
         self.set_keychain(self.keychain().clone().add_subkey(key, name, description)?);
         Ok(self)
     }
 
     /// Update the name/description on a subkey.
     pub(crate) fn edit_subkey<T: Into<String>>(mut self, id: &KeyID, new_name: Option<T>, new_desc: Option<Option<T>>) -> Result<Self> {
+        check_revoked! { self }
         self.set_keychain(self.keychain().clone().edit_subkey(id, new_name, new_desc)?);
         Ok(self)
     }
 
     /// Revoke one of our subkeys, for instance if it has been compromised.
     pub(crate) fn revoke_subkey(mut self, id: &KeyID, reason: RevocationReason, new_name: Option<String>) -> Result<Self> {
+        check_revoked! { self }
         self.set_keychain(self.keychain().clone().revoke_subkey(id, reason, new_name)?);
         Ok(self)
     }
 
     /// Remove a subkey from the keychain.
     pub(crate) fn delete_subkey(mut self, id: &KeyID) -> Result<Self> {
+        check_revoked! { self }
         self.set_keychain(self.keychain().clone().delete_subkey(id)?);
         Ok(self)
     }
@@ -382,6 +417,12 @@ mod tests {
             &vec![admin_key.key()]
         );
         assert_eq!(identity.policies(), &vec![container.clone()]);
+        todo!("test revokd");
+    }
+
+    #[test]
+    fn identity_reset() {
+        unimplemented!();
     }
 
     #[test]
@@ -414,6 +455,7 @@ mod tests {
         let identity2 = identity.clone().delete_claim(&claim_id).unwrap();
         assert_eq!(identity2.claims().len(), 1);
         assert_eq!(identity2.claims()[0].id(), &claim_id2);
+        todo!("test revokd");
     }
 
     #[test]
@@ -453,6 +495,7 @@ mod tests {
         let identity2_5 = identity2_4.revoke_stamp(&stamp_id, StampRevocationReason::Invalid).unwrap();
         assert_eq!(identity2_5.stamps().len(), 1);
         assert_eq!(identity2_5.stamps().iter().filter(|x| x.revocation().is_some()).count(), 1);
+        todo!("test revokd");
     }
 
     #[test]
@@ -496,10 +539,11 @@ mod tests {
 
         let res = identity1_4.delete_stamp(stamp.id());
         assert_eq!(res.err(), Some(Error::IdentityStampNotFound));
+        todo!("test revokd");
     }
 
     #[test]
-    fn identity_add_remove_admin_keys_brah_whoaaa_shaka_gnargnar_so_pitted_whapow() {
+    fn identity_add_remove_admin_keys() {
         let mut rng = crate::util::test::rng();
         let (master_key, identity) = create_identity(&mut rng);
         assert_eq!(identity.keychain().subkeys().len(), 0);
@@ -545,6 +589,7 @@ mod tests {
         assert_eq!(identity6.keychain().admin_keys()[1].description(), &Some("send me messages".into()));
         assert_eq!(identity6.keychain().admin_keys()[1].revocation().is_some(), true);
         assert_eq!(identity6.keychain().subkeys().len(), 0);
+        todo!("test revokd");
     }
 
     #[test]
@@ -600,6 +645,7 @@ mod tests {
 
         let identity3 = identity.clone().delete_subkey(&key_id).unwrap();
         assert_eq!(identity3.keychain().subkeys().len(), 0);
+        todo!("test revokd");
     }
 
     #[test]
@@ -743,7 +789,8 @@ keychain:
       revocation: ~
   subkeys: []
 claims: []
-stamps: []"#
+stamps: []
+revoked: false"#
         );
     }
 

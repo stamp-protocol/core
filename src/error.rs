@@ -129,6 +129,10 @@ pub enum Error {
     #[error("identity is not owned, but we attempted an operation requiring ownership")]
     IdentityNotOwned,
 
+    /// An operation was attempted on a revoked identity.
+    #[error("identity is revoked and cannot issue new transactions")]
+    IdentityRevoked,
+
     /// The stamp being operated on wasn't found
     #[error("identity stamp not found")]
     IdentityStampNotFound,

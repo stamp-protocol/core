@@ -74,10 +74,12 @@ pub enum TransactionBodyType {
     #[rasn(tag(explicit(17)))]
     DeleteSubkeyV1,
     #[rasn(tag(explicit(18)))]
-    PublishV1,
+    RevokeIdentityV1,
     #[rasn(tag(explicit(19)))]
-    SignV1,
+    PublishV1,
     #[rasn(tag(explicit(20)))]
+    SignV1,
+    #[rasn(tag(explicit(21)))]
     ExtV1,
 }
 
@@ -104,6 +106,7 @@ impl From<&TransactionBody> for TransactionBodyType {
             TransactionBody::EditSubkeyV1 { .. } => Self::EditSubkeyV1,
             TransactionBody::RevokeSubkeyV1 { .. } => Self::RevokeSubkeyV1,
             TransactionBody::DeleteSubkeyV1 { .. } => Self::DeleteSubkeyV1,
+            TransactionBody::RevokeIdentityV1 => Self::RevokeIdentityV1,
             TransactionBody::PublishV1 { .. } => Self::PublishV1,
             TransactionBody::SignV1 { .. } => Self::SignV1,
             TransactionBody::ExtV1 { .. } => Self::ExtV1,
@@ -382,6 +385,7 @@ impl Context {
                     contexts.push(Self::Name(subkey.name().clone()));
                 }
             }
+            TransactionBody::RevokeIdentityV1 => {}
             TransactionBody::PublishV1 { .. } => {}
             TransactionBody::SignV1 { .. } => {}
             TransactionBody::ExtV1 { ty, context, .. } => {

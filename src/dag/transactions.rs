@@ -173,6 +173,10 @@ impl Transactions {
                 let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.delete_subkey(&id)?;
                 Ok(identity_mod)
             }
+            TransactionBody::RevokeIdentityV1 => {
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.revoke()?;
+                Ok(identity_mod)
+            }
             TransactionBody::PublishV1 { .. } => {
                 // NOPE
                 Err(Error::TransactionInvalid("Publish transactions cannot be applied to identities".into()))

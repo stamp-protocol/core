@@ -182,9 +182,13 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(0)))]
         id: KeyID,
     },
+    /// Revoke this identity. This prohibits any further transactions being issued against the
+    /// identity or on behalf of the identity. In effect, it becomes read-only and inactive.
+    #[rasn(tag(explicit(18)))]
+    RevokeIdentityV1,
     /// Publish this identity. This transaction cannot be saved with the identity, but
     /// rather should be published to a public medium (like StampNet!!!!1)
-    #[rasn(tag(explicit(18)))]
+    #[rasn(tag(explicit(19)))]
     PublishV1 {
         #[rasn(tag(explicit(0)))]
         transactions: Box<Transactions>,
@@ -197,7 +201,7 @@ pub enum TransactionBody {
     /// transaction fairly lightweight while still being reasonably secure.
     ///
     /// `Sign` transactions cannot be applied to the identity!
-    #[rasn(tag(explicit(19)))]
+    #[rasn(tag(explicit(20)))]
     SignV1 {
         #[rasn(tag(explicit(0)))]
         creator: IdentityID,
@@ -218,7 +222,7 @@ pub enum TransactionBody {
     ///
     /// Note that `Ext` transactions cannot be applied to the identity...Stamp allows
     /// their creation but provides no methods for executing them.
-    #[rasn(tag(explicit(20)))]
+    #[rasn(tag(explicit(21)))]
     ExtV1 {
         /// The identity that created this transaction
         #[rasn(tag(explicit(0)))]
@@ -304,6 +308,7 @@ impl TransactionBody {
             Self::EditSubkeyV1 { id, new_name, new_desc } => Self::EditSubkeyV1 { id, new_name, new_desc },
             Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
+            Self::RevokeIdentityV1 => Self::RevokeIdentityV1,
             Self::PublishV1 { transactions } => Self::PublishV1 {
                 transactions: Box::new(transactions.reencrypt(rng, old_master_key, new_master_key)?),
             },
@@ -370,6 +375,7 @@ impl Public for TransactionBody {
             Self::EditSubkeyV1 { id, new_name, new_desc } => Self::EditSubkeyV1 { id, new_name, new_desc },
             Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
+            Self::RevokeIdentityV1 => Self::RevokeIdentityV1,
             Self::PublishV1 { transactions } => Self::PublishV1 {
                 transactions: Box::new(transactions.strip_private()),
             },
@@ -413,6 +419,7 @@ impl Public for TransactionBody {
             Self::EditSubkeyV1 { .. } => false,
             Self::RevokeSubkeyV1 { .. } => false,
             Self::DeleteSubkeyV1 { .. } => false,
+            Self::RevokeIdentityV1 => false,
             Self::PublishV1 { transactions } => transactions.has_private(),
             Self::SignV1 { .. } => false,
             Self::ExtV1 { .. } => false,
@@ -878,6 +885,9 @@ mod tests {
                 TransactionBody::DeleteSubkeyV1 { .. } => {
                     assert!(!body.has_private());
                 }
+                TransactionBody::RevokeIdentityV1 => {
+                    assert!(!body.has_private());
+                }
                 // blehhhh...
                 TransactionBody::PublishV1 { .. } => {}
                 // blehhhh...
@@ -965,6 +975,7 @@ mod tests {
             new_name: Some("REVOKED DOGE KEY".into()),
         });
         test_privates(&TransactionBody::DeleteSubkeyV1 { id: key_id.clone() });
+        test_privates(&TransactionBody::RevokeIdentityV1);
     }
 
     #[test]
