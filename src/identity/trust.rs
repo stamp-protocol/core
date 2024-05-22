@@ -127,7 +127,9 @@ pub struct TrustAlgoDefault {
     /// Allows us to skip N nodes before applying the decay function. Setting this to 0 is probably
     /// too aggressive, so 1 is generally a good value.
     trust_decay_skip: usize,
-    /// How many hops away from us we care to crawl our network and assign trust.
+    /// How many hops away from us we care to crawl our network and assign trust. This is
+    /// inclusive, meaning `max_distance == 2` will allow allow nodes 2 hops or less away from an
+    /// origin node.
     #[getset(skip)]
     max_distance: usize,
 }
@@ -155,7 +157,7 @@ impl TrustAlgoDefault {
 
 impl Default for TrustAlgoDefault {
     fn default() -> Self {
-        Self::new(64, 1, 3)
+        Self::new(64, 1, 1)
     }
 }
 
@@ -177,7 +179,7 @@ impl TrustAlgo for TrustAlgoDefault {
         if trust == 0 {
             return trust;
         }
-        if distance_from_origin >= self.max_distance() {
+        if distance_from_origin > self.max_distance() {
             return 0;
         }
 
@@ -191,6 +193,36 @@ impl TrustAlgo for TrustAlgoDefault {
 
     fn max_distance(&self) -> usize {
         self.max_distance.clone()
+    }
+}
+
+/// Represents an ordered path between two nodes in a trust/stamp network.
+#[derive(Clone, Debug, Getters, MutGetters)]
+#[getset(get = "pub", get_mut = "pub(crate)")]
+pub struct Path<'a> {
+    /// The connections in this path.
+    ///
+    /// Each entry of the outer `Vec` is a connection between two nodes, and the inner `Vec`
+    /// represents the one or more stamps going from the previous node to the next node.
+    nodes: Vec<Vec<&'a StampEntry>>,
+}
+
+impl<'a> Path<'a> {
+    fn new(nodes: Vec<Vec<&'a StampEntry>>) -> Self {
+        Self { nodes }
+    }
+
+    /// Consume this `Path` and turn it into a `Vec<Vec<&StampEntry>>`
+    pub fn into_vec(self) -> Vec<Vec<&'a StampEntry>> {
+        let Self { nodes } = self;
+        nodes
+    }
+}
+
+impl<'a> Deref for Path<'a> {
+    type Target = Vec<Vec<&'a StampEntry>>;
+    fn deref(&self) -> &Self::Target {
+        self.nodes()
     }
 }
 
@@ -227,7 +259,7 @@ impl<'a> Network<'a> {
         }
     }
 
-    fn find_paths(&'a self, from: &'a TransactionID, to: &'a TransactionID, max_distance: usize) -> Vec<Vec<Vec<&'a StampEntry>>> {
+    fn find_paths(&self, from: &'a TransactionID, to: &'a TransactionID, max_distance: usize) -> Vec<Path<'a>> {
         #[derive(Debug, Default)]
         struct PathWalker<'a> {
             /// Sorry this is three layers deep, but hear me out.
@@ -312,7 +344,7 @@ impl<'a> Network<'a> {
             }
         }
         walk(&self.links, &mut walker, from, from, to, vec![], max_distance);
-        walker.to_matches()
+        walker.to_matches().into_iter().map(|path| Path::new(path)).collect::<Vec<_>>()
     }
 }
 
@@ -432,6 +464,30 @@ impl std::fmt::Display for TrustReport {
     }
 }
 
+/// Find the paths between a set of trusted nodes and a subject node, given a network of nodes and
+/// a max distance to search.
+pub fn find_paths<'a>(
+    trust_mapping: &'a HashMap<TransactionID, Trust>,
+    subject: &'a TransactionID,
+    identity_network: &[&'a Identity],
+    max_dist: usize,
+) -> Vec<Path<'a>> {
+    let mut network = Network::new();
+    for id in identity_network {
+        network.add_node(id);
+    }
+    let mut paths = Vec::new();
+    let mut keys = trust_mapping.keys().collect::<Vec<_>>();
+    keys.sort();
+    for from in keys {
+        let found = network.find_paths(from, subject, max_dist);
+        for path in found {
+            paths.push(path);
+        }
+    }
+    paths
+}
+
 /// Determine the trust between a set of trusted nodes (`trust_mapping`) and a `subject` identity,
 /// given a network of identities linked by stamps. You probably always want `trust_mapping` to at
 /// the very least have *your* identity, hopefully with a high trust value =].
@@ -439,31 +495,18 @@ impl std::fmt::Display for TrustReport {
 /// This walks the network, finding paths from trusted nodes to the subject, and assigns trust
 /// along those paths with the given `TrustAlgo`.
 ///
-/// Note that deriving the `trust_network` is out of scope for this system. It's assumed you can
+/// Note that deriving the `identity_network` is out of scope for this system. It's assumed you can
 /// generate this before passing in.
 pub fn trust_score<T: TrustAlgo>(
     trust_mapping: &HashMap<TransactionID, Trust>,
     subject: &TransactionID,
-    trust_network: &[&Identity],
+    identity_network: &[&Identity],
     trust_algo: &T,
 ) -> Option<(i8, TrustReport)> {
     if trust_mapping.len() == 0 {
         return None;
     }
-
-    let mut network = Network::new();
-    for id in trust_network {
-        network.add_node(id);
-    }
-    let mut paths = Vec::new();
-    let mut keys = trust_mapping.keys().collect::<Vec<_>>();
-    keys.sort();
-    for from in keys {
-        let found = network.find_paths(from, subject, trust_algo.max_distance());
-        for path in found {
-            paths.push(path);
-        }
-    }
+    let paths = find_paths(trust_mapping, subject, identity_network, trust_algo.max_distance());
 
     if paths.len() == 0 {
         return None;
@@ -483,7 +526,7 @@ pub fn trust_score<T: TrustAlgo>(
             .unwrap_or(0);
         let mut last_node_trust = None;
         let mut path_report: Vec<TrustReportPathEntry> = Vec::with_capacity(path.len());
-        for (dist, stamps) in path.into_iter().enumerate() {
+        for (dist, stamps) in path.into_vec().into_iter().enumerate() {
             // distance is not 0-indexed
             let dist = dist + 1;
             let trust_stamps = trust_algo.trust_from_stamps(&stamps);
@@ -690,23 +733,24 @@ mod tests {
     }
 
     fn trustnet_to_paths(
-        trust_network: &HashMap<&'static str, Transactions>,
+        identity_network: &HashMap<&'static str, Transactions>,
         from: &'static str,
         to: &'static str,
         max_dist: usize,
     ) -> Vec<Vec<Vec<StampEntry>>> {
         let mut network = Network::new();
-        let identities = trust_network.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
+        let identities = identity_network.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
         for id in &identities {
             network.add_node(&id);
         }
-        let from = trust_network.get(from).unwrap().identity_id().unwrap();
-        let to = trust_network.get(to).unwrap().identity_id().unwrap();
+        let from = identity_network.get(from).unwrap().identity_id().unwrap();
+        let to = identity_network.get(to).unwrap().identity_id().unwrap();
         network
             .find_paths(&from, &to, max_dist)
             .into_iter()
             .map(|path| {
-                path.into_iter()
+                path.into_vec()
+                    .into_iter()
                     .map(|stamps| stamps.into_iter().map(|stamp| stamp.clone()).collect::<Vec<_>>())
                     .collect::<Vec<_>>()
             })
@@ -1191,10 +1235,10 @@ mod tests {
         {
             let algo = TrustAlgoDefault::default();
             assert_eq!(algo.trust_decay_per_hop(), 64);
-            assert_eq!(algo.max_distance(), 3);
+            assert_eq!(algo.max_distance(), 1);
             assert_eq!(algo.decay(100, 0), 100);
             assert_eq!(algo.decay(100, 1), 100);
-            assert_eq!(algo.decay(100, 2), 36);
+            assert_eq!(algo.decay(100, 2), 0);
             assert_eq!(algo.decay(100, 3), 0);
             assert_eq!(algo.decay(100, 4), 0);
             assert_eq!(algo.decay(100, 5), 0);
@@ -1213,7 +1257,7 @@ mod tests {
             assert_eq!(algo.decay(100, 2), 100);
             assert_eq!(algo.decay(100, 3), 95);
             assert_eq!(algo.decay(100, 4), 90);
-            assert_eq!(algo.decay(100, 5), 0);
+            assert_eq!(algo.decay(100, 5), 85);
             assert_eq!(algo.decay(100, 6), 0);
             assert_eq!(algo.decay(100, 7), 0);
             assert_eq!(algo.decay(100, 8), 0);
@@ -1224,7 +1268,7 @@ mod tests {
             let algo = TrustAlgoDefault::new(64, 1, 0);
             assert_eq!(algo.trust_decay_per_hop(), 64);
             assert_eq!(algo.max_distance(), 0);
-            assert_eq!(algo.decay(100, 0), 0);
+            assert_eq!(algo.decay(100, 0), 100);
             assert_eq!(algo.decay(100, 1), 0);
             assert_eq!(algo.decay(100, 2), 0);
             assert_eq!(algo.decay(100, 3), 0);
@@ -1241,7 +1285,7 @@ mod tests {
             assert_eq!(algo.trust_decay_per_hop(), 64);
             assert_eq!(algo.max_distance(), 1);
             assert_eq!(algo.decay(100, 0), 100);
-            assert_eq!(algo.decay(100, 1), 0);
+            assert_eq!(algo.decay(100, 1), 100);
             assert_eq!(algo.decay(100, 2), 0);
             assert_eq!(algo.decay(100, 3), 0);
             assert_eq!(algo.decay(100, 4), 0);
@@ -1258,7 +1302,7 @@ mod tests {
             assert_eq!(algo.max_distance(), 2);
             assert_eq!(algo.decay(100, 0), 100);
             assert_eq!(algo.decay(100, 1), 100);
-            assert_eq!(algo.decay(100, 2), 0);
+            assert_eq!(algo.decay(100, 2), 80);
             assert_eq!(algo.decay(100, 3), 0);
             assert_eq!(algo.decay(100, 4), 0);
             assert_eq!(algo.decay(100, 5), 0);
@@ -1282,7 +1326,9 @@ mod tests {
             assert_eq!(algo.decay(100, 7), 40);
             assert_eq!(algo.decay(100, 8), 30);
             assert_eq!(algo.decay(100, 9), 20);
-            assert_eq!(algo.decay(100, 10), 0);
+            assert_eq!(algo.decay(100, 10), 10);
+            assert_eq!(algo.decay(120, 10), 30);
+            assert_eq!(algo.decay(120, 11), 0);
         }
     }
 
@@ -1310,18 +1356,11 @@ mod tests {
         let id_d = trustnet.get("D").unwrap().identity_id().unwrap();
         let ids = trustnet.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
         let ids_borrow = ids.iter().collect::<Vec<_>>();
-        let trust_algo = TrustAlgoDefault::new(50, 1, 4);
+        let trust_algo = TrustAlgoDefault::default();
         let (score, report) = trust_score(&trustmap, &id_d, ids_borrow.as_slice(), &trust_algo).unwrap();
         let report_vals = report_to_vals(&report);
-        assert_eq!(score, 43);
-        assert_eq!(
-            report_vals,
-            vec![
-                vec![[20, 1, 100, 15, 15]],
-                vec![[127, 1, 100, 100, 100], [100, 2, 100, 78, 28]],
-                vec![[127, 1, 75, 75, 75], [75, 2, 10, 5, 0]],
-            ]
-        );
+        assert_eq!(score, 15);
+        assert_eq!(report_vals, vec![vec![[20, 1, 100, 15, 15]]]);
     }
 
     #[test]
@@ -1440,13 +1479,7 @@ mod tests {
             let (score, report) = trust_score(&trustmap, &id_d, ids_borrow.as_slice(), &trust_algo).unwrap();
             let report_vals = report_to_vals(&report);
             assert_eq!(score, 0);
-            assert_eq!(
-                report_vals,
-                vec![
-                    vec![[-128, 1, 100, -100, -100]],
-                    vec![[127, 1, 100, 100, 100], [100, 2, 100, 78, 14]]
-                ]
-            );
+            assert_eq!(report_vals, vec![vec![[-128, 1, 100, -100, -100]],]);
         }
     }
 }
