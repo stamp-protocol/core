@@ -23,7 +23,7 @@ macro_rules! object_id {
         $(#[$meta:meta])*
         $name:ident
     ) => {
-        #[derive(Debug, Clone, rasn::AsnType, rasn::Encode, rasn::Decode, PartialEq, serde_derive::Serialize, serde_derive::Deserialize)]
+        #[derive(Debug, Clone, rasn::AsnType, rasn::Encode, rasn::Decode, PartialEq, Eq, Hash, serde_derive::Serialize, serde_derive::Deserialize)]
         #[rasn(delegate)]
         $(#[$meta])*
         pub struct $name(pub(crate) crate::dag::TransactionID);
@@ -320,8 +320,21 @@ impl std::fmt::Display for Url {
 mod tests {
     use super::*;
     use crate::{crypto::base::Hash, dag::TransactionID, util::ser};
+    use std::collections::HashMap;
     use std::convert::TryFrom;
     use std::ops::Deref;
+
+    #[test]
+    fn object_id_hash() {
+        object_id! {
+            RabbitID
+        }
+
+        let id = RabbitID::from(TransactionID::from(Hash::new_blake3(b"i like your hat...").unwrap()));
+        let mut store: HashMap<RabbitID, i32> = HashMap::new();
+        store.insert(id.clone(), -9090);
+        assert_eq!(store.get(&id), Some(-9090).as_ref());
+    }
 
     #[test]
     fn object_id_deref_to_from_string() {
