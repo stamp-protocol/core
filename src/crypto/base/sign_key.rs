@@ -229,6 +229,14 @@ impl From<SignKeypair> for SignKeypairPublic {
     }
 }
 
+impl AsRef<[u8]> for SignKeypairPublic {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Ed25519(sig) => sig.as_ref(),
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
