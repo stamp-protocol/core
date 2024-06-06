@@ -752,6 +752,32 @@ impl Transaction {
     }
 }
 
+impl std::cmp::PartialEq for Transaction {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id() && self.signatures() == other.signatures()
+    }
+}
+
+impl std::cmp::Eq for Transaction {}
+
+impl std::cmp::Ord for Transaction {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let cmp = self.entry().created().cmp(other.entry().created());
+        let ord = if cmp == std::cmp::Ordering::Equal {
+            self.id().cmp(other.id())
+        } else {
+            cmp
+        };
+        ord
+    }
+}
+
+impl std::cmp::PartialOrd for Transaction {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl<'a> From<&'a Transaction> for DagNode<'a, TransactionID, Transaction> {
     fn from(t: &'a Transaction) -> Self {
         DagNode::new(t.id(), t, t.entry().previous_transactions().iter().collect::<Vec<_>>(), t.entry().created())
@@ -1075,6 +1101,12 @@ mod tests {
         let des = Transaction::deserialize_binary(ser.as_slice()).unwrap();
 
         assert_eq!(trans.id(), des.id());
+    }
+
+    #[test]
+    #[ignore]
+    fn trans_ord() {
+        todo!("make sure transaction orders by created asc then id asc");
     }
 
     // -------------------------------------------------------------------------
