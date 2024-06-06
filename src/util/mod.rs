@@ -30,8 +30,8 @@ macro_rules! object_id {
 
         impl $name {
             /// Take a full string id and return the shortened ID
-            pub fn short(full_id: &str) -> String {
-                String::from(&full_id[0..16])
+            pub fn short(full_id: &str) -> &str {
+                &full_id[0..16]
             }
         }
 
