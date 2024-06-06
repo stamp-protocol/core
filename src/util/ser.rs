@@ -153,7 +153,7 @@ macro_rules! impl_asn1_binary {
 /// Defines a container for fixed-length binary data in octet form. Effectively
 /// allows for strictly defining key/nonce/etc sizes and also allowing proper
 /// serialization and deserialization.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Binary<const N: usize>([u8; N]);
 
 impl<const N: usize> Binary<N> {
@@ -185,6 +185,12 @@ impl<'de, const N: usize> serde::Deserialize<'de> for Binary<N> {
             .try_into()
             .map_err(|_| serde::de::Error::custom(String::from("bad slice length")))?;
         Ok(Self(tmp))
+    }
+}
+
+impl<const N: usize> std::fmt::Debug for Binary<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", base64_encode(self.deref()))
     }
 }
 
@@ -239,7 +245,7 @@ impl<'de, const N: usize> serde::Deserialize<'de> for BinarySecret<N> {
 }
 
 /// Defines a container for variable-length binary data in octet form.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct BinaryVec(Vec<u8>);
 
 impl From<Vec<u8>> for BinaryVec {
@@ -307,6 +313,12 @@ impl<'de> serde::Deserialize<'de> for BinaryVec {
         let s = <String>::deserialize(deserializer)?;
         let tmp = base64_decode(s).map_err(serde::de::Error::custom)?;
         Ok(Self(tmp))
+    }
+}
+
+impl std::fmt::Debug for BinaryVec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", base64_encode(&self.deref()))
     }
 }
 
