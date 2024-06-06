@@ -94,6 +94,8 @@ pub trait SerdeBinary: Encode + Decode {
     }
 }
 
+impl<T> SerdeBinary for Vec<T> where T: SerdeBinary {}
+
 /// Allows serializing to human readable format (but not deserializing). This is
 /// generally used for things that we want to be able to display in human readable
 /// format but aren't for consumption. If you want it consumable, use [SerdeBinary].
