@@ -1,6 +1,6 @@
 use crate::{
     error::{Error, Result},
-    util::ser::{self, Binary},
+    util::ser::{self, Binary, SerdeBinary},
 };
 #[cfg(test)]
 use rand::{rngs::OsRng, RngCore};
@@ -51,6 +51,8 @@ impl Hash {
         }
     }
 }
+
+impl SerdeBinary for Hash {}
 
 impl TryFrom<&Hash> for String {
     type Error = Error;
