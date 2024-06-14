@@ -73,11 +73,39 @@ impl SecretKey {
         }
     }
 
+    /// Make a nonce from a set of bytes passed in. Make sure you send enough bytes for hte nonce
+    /// type you want...
+    pub fn make_nonce(&self, bytes: &[u8]) -> Result<SecretKeyNonce> {
+        match self {
+            SecretKey::XChaCha20Poly1305(_) => {
+                let nonce_bytes: [u8; 24] = bytes[0..24].try_into().map_err(|_| Error::BadLength)?;
+                Ok(SecretKeyNonce::XChaCha20Poly1305(Binary::new(nonce_bytes)))
+            }
+        }
+    }
+
     /// Encrypt a value with a secret key/nonce
     pub fn seal<'a, R: RngCore + CryptoRng>(&'a self, rng: &mut R, data: &[u8]) -> Result<Sealed> {
         match self {
             SecretKey::XChaCha20Poly1305(ref key) => {
                 let nonce = self.gen_nonce(rng)?;
+                let nonce_bin = match nonce {
+                    SecretKeyNonce::XChaCha20Poly1305(ref bin) => bin.deref(),
+                };
+                let secret: &'a [u8; 32] = key.expose_secret();
+                let cipher = chacha20poly1305::XChaCha20Poly1305::new(secret.into());
+                let enc = cipher
+                    .encrypt(chacha20poly1305::XNonce::from_slice(nonce_bin.as_slice()), data)
+                    .map_err(|_| Error::CryptoSealFailed)?;
+                Ok(Sealed::new(nonce, enc))
+            }
+        }
+    }
+
+    /// Encrypt a value with a secret key/nonce
+    pub fn seal_with_nonce<'a>(&'a self, nonce: SecretKeyNonce, data: &[u8]) -> Result<Sealed> {
+        match self {
+            SecretKey::XChaCha20Poly1305(ref key) => {
                 let nonce_bin = match nonce {
                     SecretKeyNonce::XChaCha20Poly1305(ref bin) => bin.deref(),
                 };
@@ -128,6 +156,8 @@ impl PartialEq for SecretKey {
 pub(crate) mod tests {
     use super::*;
 
+    use crate::crypto::base::Hash;
+
     #[test]
     fn secretkey_xchacha20poly1305_enc_dec() {
         let mut rng = crate::util::test::rng();
@@ -157,5 +187,25 @@ pub(crate) mod tests {
         .unwrap();
         let dec = key.open(&sealed).unwrap();
         assert_eq!(dec.as_slice(), b"HI HUNGRY IM DAD");
+    }
+
+    #[test]
+    fn secretkey_xchacha20poly1305_seal_with_nonce() {
+        let key = SecretKey::new_xchacha20poly1305_from_bytes([
+            120, 111, 109, 233, 7, 27, 205, 94, 55, 95, 248, 113, 138, 246, 244, 109, 147, 168, 117, 163, 48, 193, 100, 103, 43, 205, 212,
+            197, 110, 111, 105, 1,
+        ])
+        .unwrap();
+        let hash = Hash::new_blake3(b"HI HUNGRY IM DAD").unwrap();
+        println!("bytes: {}", hash.as_bytes().len());
+        let nonce = key.make_nonce(hash.as_bytes()).unwrap();
+        let sealed = key.seal_with_nonce(nonce, b"nice marmot").unwrap();
+        assert_eq!(
+            sealed.ciphertext().deref(),
+            &vec![
+                114, 167, 228, 142, 11, 57, 241, 39, 220, 201, 163, 107, 118, 195, 31, 167, 194, 30, 174, 117, 38, 163, 209, 165, 249, 25,
+                66
+            ]
+        );
     }
 }
