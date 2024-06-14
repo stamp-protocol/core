@@ -17,7 +17,7 @@ use crate::{
         stamp::{RevocationReason as StampRevocationReason, Stamp, StampID},
     },
     policy::{PolicyContainer, PolicyID},
-    util::{Public, SerText, Timestamp},
+    util::{Public, SerText, Timestamp, Url},
 };
 use getset;
 use rasn::{AsnType, Decode, Encode};
@@ -280,6 +280,28 @@ impl Identity {
             .iter()
             .filter_map(|x| match x.spec() {
                 ClaimSpec::Name(MaybePrivate::Public(ref name)) => Some(name.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    }
+
+    /// Return all domains associated with this identity
+    pub fn domains(&self) -> Vec<String> {
+        self.claims()
+            .iter()
+            .filter_map(|x| match x.spec() {
+                ClaimSpec::Domain(MaybePrivate::Public(ref val)) => Some(val.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    }
+
+    /// Return all URLs associated with this identity
+    pub fn urls(&self) -> Vec<Url> {
+        self.claims()
+            .iter()
+            .filter_map(|x| match x.spec() {
+                ClaimSpec::Url(MaybePrivate::Public(ref val)) => Some(val.clone()),
                 _ => None,
             })
             .collect::<Vec<_>>()
