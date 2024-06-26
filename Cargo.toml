@@ -22,6 +22,7 @@ rasn = "0.12"
 serde = "1.0"
 serde_derive = "1.0"
 serde_yaml = "0.8"
+subtle = "2.5.0"
 thiserror = "1.0"
 url = { version = "2.4", features = ["serde"] }
 zeroize = { version = "1.7", features = ["zeroize_derive" ] }

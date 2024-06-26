@@ -1,12 +1,13 @@
 use crate::{
     error::{Error, Result},
-    util::ser::{Binary, BinarySecret},
+    util::ser::{Binary, BinarySecret, SerdeBinary},
 };
 use hmac::{Mac, SimpleHmac};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Encode};
 use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
+use subtle::{Choice, ConstantTimeEq};
 
 /// A key for deriving an HMAC.
 #[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize)]
@@ -32,12 +33,13 @@ impl HmacKey {
 }
 
 /// An HMAC
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Hmac {
     /// Blake3 HMAC. Yes, I know that technically you don't need to do blake3 in an HMAC format
     /// because it is not vulnerable to length extension blah blah. However, doing it this way expands the
-    /// possibilities to other hash types which *do* require an HMAC if they are so desired.
+    /// possibilities to other hash types which *do* require an HMAC if they are so desired without
+    /// having 14 different APIs to create an (H)MAC.
     #[rasn(tag(explicit(0)))]
     Blake3(Binary<32>),
 }
@@ -84,6 +86,22 @@ impl Deref for Hmac {
     }
 }
 
+impl ConstantTimeEq for Hmac {
+    fn ct_eq(&self, other: &Self) -> Choice {
+        self.deref().ct_eq(other.deref())
+    }
+}
+
+impl PartialEq for Hmac {
+    fn eq(&self, other: &Self) -> bool {
+        self.ct_eq(other).unwrap_u8() == 1
+    }
+}
+
+impl Eq for Hmac {}
+
+impl SerdeBinary for Hmac {}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -119,5 +137,26 @@ pub(crate) mod tests {
         assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
         let res = hmac.verify(&hmac_key2, data2.as_bytes());
         assert_eq!(res, Err(Error::CryptoHmacVerificationFailed));
+    }
+
+    #[test]
+    fn hmac_eq() {
+        // we don't test for constant time here, but oh well. it probably works.
+        let mut rng = crate::util::test::rng_seeded(b"get a job");
+        let key1 = HmacKey::new_blake3(&mut rng).unwrap();
+        let key2 = HmacKey::new_blake3(&mut rng).unwrap();
+        let hmac1 = Hmac::new(&key1, b"hi im jerry").unwrap();
+        let hmac2 = Hmac::new(&key2, b"hi im jerry").unwrap();
+        let hmac3 = Hmac::new(&key1, b"hi im dupe dupe").unwrap();
+        let hmac4 = Hmac::new(&key1, b"hi im jerry").unwrap();
+
+        assert!(hmac1.ct_eq(&hmac4).unwrap_u8() == 1);
+        assert!(hmac1.ct_eq(&hmac2).unwrap_u8() == 0);
+        assert!(hmac1.ct_eq(&hmac3).unwrap_u8() == 0);
+        assert!(hmac2.ct_eq(&hmac3).unwrap_u8() == 0);
+        assert!(hmac1 == hmac4);
+        assert!(hmac1 != hmac2);
+        assert!(hmac1 != hmac3);
+        assert!(hmac2 != hmac3);
     }
 }
