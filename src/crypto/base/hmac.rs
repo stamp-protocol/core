@@ -88,7 +88,9 @@ impl Deref for Hmac {
 
 impl ConstantTimeEq for Hmac {
     fn ct_eq(&self, other: &Self) -> Choice {
-        self.deref().ct_eq(other.deref())
+        match (self, other) {
+            (Hmac::Blake3(bytes1), Hmac::Blake3(bytes2)) => bytes1.deref().ct_eq(bytes2.deref()),
+        }
     }
 }
 
