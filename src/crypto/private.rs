@@ -68,7 +68,7 @@ impl<T: AsnType> Decode for Private<T> {
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
     ) -> std::result::Result<Self, D::Error> {
-        decoder.decode_sequence(tag, |decoder| {
+        decoder.decode_sequence(tag, None::<fn() -> Self>, |decoder| {
             let sealed = Sealed::decode_with_tag_and_constraints(decoder, Tag::new(Class::Context, 0), constraints)?;
             Ok(Self {
                 _phantom: PhantomData,
@@ -175,7 +175,7 @@ impl<T: AsnType> Decode for SealedTyped<T> {
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
     ) -> std::result::Result<Self, D::Error> {
-        decoder.decode_sequence(tag, |decoder| {
+        decoder.decode_sequence(tag, None::<fn() -> Self>, |decoder| {
             let sealed = Sealed::decode_with_tag_and_constraints(decoder, Tag::new(Class::Context, 0), constraints)?;
             Ok(Self {
                 _phantom: PhantomData,
