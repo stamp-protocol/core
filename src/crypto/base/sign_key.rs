@@ -240,6 +240,7 @@ impl AsRef<[u8]> for SignKeypairPublic {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
     #[test]
     fn signkeypair_ed25519_sign_verify() {
         let mut rng = crate::util::test::rng();

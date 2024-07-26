@@ -498,6 +498,7 @@ impl Public for AdminKey {
         self.key().has_private()
     }
 }
+
 /// Holds the keys for our identity.
 ///
 /// This is a set of administration keys which can be used to manage the

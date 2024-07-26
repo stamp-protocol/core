@@ -1169,7 +1169,7 @@ mod tests {
         };
         let ser_check = ser::serialize(&trans).unwrap();
         let ser = [
-            160, 130, 1, 232, 48, 130, 1, 228, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160,
+            160, 130, 1, 228, 48, 130, 1, 224, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160,
             34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46,
             150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17,
             36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203,
@@ -1180,13 +1180,13 @@ mod tests {
             161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 126, 211, 248, 125, 247, 70, 44, 106, 7, 197, 177, 121, 25, 118, 5, 100, 96,
             210, 7, 49, 214, 133, 140, 43, 161, 52, 4, 50, 50, 61, 176, 253, 193, 203, 151, 105, 21, 18, 9, 43, 235, 225, 118, 44, 149,
             110, 145, 115, 98, 235, 65, 219, 156, 13, 170, 216, 244, 198, 121, 156, 250, 36, 176, 190, 92, 116, 212, 140, 193, 73, 68, 13,
-            184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 161, 48, 129, 158, 48,
-            67, 160, 6, 48, 4, 160, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36,
-            160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242,
-            46, 150, 172, 28, 121, 47, 92, 109, 48, 87, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48,
-            6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34,
-            4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209,
-            82, 131, 11, 177, 81, 88,
+            184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 157, 48, 129, 154, 48,
+            65, 160, 6, 48, 4, 160, 2, 5, 0, 161, 55, 162, 53, 48, 51, 160, 3, 2, 1, 1, 161, 44, 48, 42, 160, 40, 48, 38, 161, 36, 160, 34,
+            4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150,
+            172, 28, 121, 47, 92, 109, 48, 85, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169,
+            4, 161, 2, 5, 0, 161, 55, 162, 53, 48, 51, 160, 3, 2, 1, 1, 161, 44, 48, 42, 160, 40, 48, 38, 161, 36, 160, 34, 4, 32, 151, 40,
+            118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11,
+            177, 81, 88,
         ];
         assert_eq!(ser_check, ser);
         let trans_deser: TransactionBody = ser::deserialize(&ser).unwrap();
@@ -1251,7 +1251,7 @@ mod tests {
         let ser1_check = ser::serialize(&trans1).unwrap();
         let ser2_check = ser::serialize(&trans2).unwrap();
         let ser1 = [
-            161, 130, 1, 232, 48, 130, 1, 228, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160,
+            161, 130, 1, 228, 48, 130, 1, 224, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160,
             34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46,
             150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17,
             36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203,
@@ -1262,15 +1262,15 @@ mod tests {
             161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 126, 211, 248, 125, 247, 70, 44, 106, 7, 197, 177, 121, 25, 118, 5, 100, 96,
             210, 7, 49, 214, 133, 140, 43, 161, 52, 4, 50, 50, 61, 176, 253, 193, 203, 151, 105, 21, 18, 9, 43, 235, 225, 118, 44, 149,
             110, 145, 115, 98, 235, 65, 219, 156, 13, 170, 216, 244, 198, 121, 156, 250, 36, 176, 190, 92, 116, 212, 140, 193, 73, 68, 13,
-            184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 161, 48, 129, 158, 48,
-            67, 160, 6, 48, 4, 160, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36,
-            160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242,
-            46, 150, 172, 28, 121, 47, 92, 109, 48, 87, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48,
-            6, 169, 4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34,
-            4, 32, 151, 40, 118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209,
-            82, 131, 11, 177, 81, 88,
+            184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 157, 48, 129, 154, 48,
+            65, 160, 6, 48, 4, 160, 2, 5, 0, 161, 55, 162, 53, 48, 51, 160, 3, 2, 1, 1, 161, 44, 48, 42, 160, 40, 48, 38, 161, 36, 160, 34,
+            4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150,
+            172, 28, 121, 47, 92, 109, 48, 85, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169,
+            4, 161, 2, 5, 0, 161, 55, 162, 53, 48, 51, 160, 3, 2, 1, 1, 161, 44, 48, 42, 160, 40, 48, 38, 161, 36, 160, 34, 4, 32, 151, 40,
+            118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11,
+            177, 81, 88,
         ];
-        let ser2 = [161, 6, 48, 4, 160, 0, 161, 0];
+        let ser2 = [161, 2, 48, 0];
         assert_eq!(ser1_check, ser1);
         assert_eq!(ser2_check, ser2);
         let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
@@ -1648,25 +1648,26 @@ mod tests {
         let published_identity = r#"
 ---
 id:
-  Blake3: N727v76Gx3Kv_hynOYvsYS_7CrBlvSiQfNutfCHDZss
+  Blake3: pJbf3PvEF2swcX-QRMcHF2YPn7_ome5o30IhFaYuKM0
 entry:
-  created: "2024-01-04T07:49:51.898Z"
-  previous_transactions: []
+  created: "2024-07-26T00:24:15.361Z"
+  previous_transactions:
+    - Blake3: o9eaGWb0Xgkrg5Oqf-tehNdur7pUUC4UmSV00r_hR6s
   body:
     PublishV1:
       transactions:
         transactions:
           - id:
-              Blake3: Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3A
+              Blake3: zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzw
             entry:
-              created: "2024-01-04T07:40:51.669Z"
+              created: "2024-07-26T00:19:03.796Z"
               previous_transactions: []
               body:
                 CreateIdentityV1:
                   admin_keys:
                     - key:
                         Ed25519:
-                          public: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                          public: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
                           secret: ~
                       name: alpha
                       description: Your main admin key
@@ -1681,38 +1682,38 @@ entry:
                             - Key:
                                 name: ~
                                 key:
-                                  Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                                  Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
             signatures:
               - Key:
                   key:
-                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
                   signature:
-                    Ed25519: KSye_UHFzy7bE0lekc5L9w6dvjnujUgJ2mqkVZNFJRtp0X46fqZvn5k-1M3KskIJGderUENr3KpKA4BcSKtWBw
+                    Ed25519: H1Vbg47FW01JJhdk2_ASIFNB4xUbOIxpcUJJlm6PyT-kJcrS3uTPUGyl7yWq4mZ8OlENNGihuJgfFIqdS14RAA
           - id:
-              Blake3: Dr4qJ88VNLMraCqXBGoNO8ILbtizognoTwOvR3o7OtY
+              Blake3: 9CpMShDnJCkm7xfYnzhlXLTVz_4ooR9lOggYG2E2Qxo
             entry:
-              created: "2024-01-04T07:41:11.901Z"
+              created: "2024-07-26T00:19:36.383Z"
               previous_transactions:
-                - Blake3: Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3A
+                - Blake3: zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzw
               body:
                 MakeClaimV1:
                   spec:
                     Identity:
                       Public:
-                        Blake3: Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3A
+                        Blake3: zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzw
                   name: ~
             signatures:
               - Key:
                   key:
-                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
                   signature:
-                    Ed25519: SqXlNUmqx-Hr9LMTX4eAZ1ic9UFf3d_AUzvf25Gxd1ZeKNHZnUFSYnxofLdDpclA8k0SHjl83UEQ7d34FzIwBA
+                    Ed25519: eUsfBpWGePyR98OUV4WQkJuSeW_7KrzpPKI-9lN9OG_YqpRHeadYXUp_ZXO1NHGYU4HwoBNEhfBDnbk--v27AQ
           - id:
-              Blake3: yMRZQTTIsPdmCuhaJvwzCFXDsnljQk1y32VcgNn4b8o
+              Blake3: FJLh0dArIgR10WyPyDCuYHEBxTeGvLhUetN5vmtB7aU
             entry:
-              created: "2024-01-04T07:41:11.901Z"
+              created: "2024-07-26T00:19:36.384Z"
               previous_transactions:
-                - Blake3: Dr4qJ88VNLMraCqXBGoNO8ILbtizognoTwOvR3o7OtY
+                - Blake3: 9CpMShDnJCkm7xfYnzhlXLTVz_4ooR9lOggYG2E2Qxo
               body:
                 MakeClaimV1:
                   spec:
@@ -1722,15 +1723,15 @@ entry:
             signatures:
               - Key:
                   key:
-                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
                   signature:
-                    Ed25519: r8ymcgyRovieDWZodLJPULiabfmiN7QZ5ZwabJoTa9mYePLxa2obF_7jrkmJln9Ltmnb1_CxgrT6MmaoLPm5AQ
+                    Ed25519: n0c1QeglXFA4Ih96pqdVTb7orjofHgKVCaaGFOYTOHsxHXf5l9eG5F4a3foxH8-7GOcwV2JFFvAtfDPs1HQ6Aw
           - id:
-              Blake3: 13_BWJcu_HrKFQV0mSogjHpm3i-4HQGDf-6vhnarH5Y
+              Blake3: gOpIJMGGUsRdLSI8EqnkHDfroXUzmA3zEK_alKlqPs4
             entry:
-              created: "2024-01-04T07:41:11.901Z"
+              created: "2024-07-26T00:19:36.384Z"
               previous_transactions:
-                - Blake3: yMRZQTTIsPdmCuhaJvwzCFXDsnljQk1y32VcgNn4b8o
+                - Blake3: FJLh0dArIgR10WyPyDCuYHEBxTeGvLhUetN5vmtB7aU
               body:
                 MakeClaimV1:
                   spec:
@@ -1740,78 +1741,78 @@ entry:
             signatures:
               - Key:
                   key:
-                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
                   signature:
-                    Ed25519: YrhHLHG53oMc-wzQkABDTADFu18Dh_mMBEH5n6EUi4OnV5SQy6wrAxI2H7bqoBG49lnEdqc_Uvqxh9VHplr7Aw
+                    Ed25519: "-hUkX6qOsU3YRfA-Rhx-TLjnBcTMzWBT3wsVyAJF6VauYWcc9LdxPyllannYs7vaVjzhL2mOjLnqMhJ7h4kuDw"
           - id:
-              Blake3: eG-ezU5d-LVjmVbIHy_CPDMIipkVozIAC2ym5glnUGo
+              Blake3: CME1vP1HrTOf44TLvQ08zZJ2vgNJ2Ao1IIgwW1LWDuw
             entry:
-              created: "2024-01-04T07:41:11.902Z"
+              created: "2024-07-26T00:19:36.385Z"
               previous_transactions:
-                - Blake3: 13_BWJcu_HrKFQV0mSogjHpm3i-4HQGDf-6vhnarH5Y
+                - Blake3: gOpIJMGGUsRdLSI8EqnkHDfroXUzmA3zEK_alKlqPs4
               body:
                 AddSubkeyV1:
                   key:
                     Sign:
                       Ed25519:
-                        public: LD9pzUz2mHpY1fr-wn03fHA-sqVo-vFcYm9nal5gSyE
+                        public: hmGYRn5eH6lAhTEoYTkJWi27eNwLU0G2XgILwyiO0Lo
                         secret: ~
                   name: default/sign
                   desc: A default key for signing documents or messages.
             signatures:
               - Key:
                   key:
-                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
                   signature:
-                    Ed25519: XOBkXzQafXblmbkiE_roxgXH0o3EFGrMBblW9vvAE6R_-qhEELDYskTmyTHWJ2U9F89SClNRX90vvciEgkHwAg
+                    Ed25519: taLWH361m-uYkrpvWFKyYQCHm8eMbBeBFvJgvU03DSVe5XNh45SoA5ayureIAJjSSfay5lj3oLIfnY0uJv3FCw
           - id:
-              Blake3: MBngTWWon600NOBzZI2hVNetglpVJjfT5Ls807GyfqE
+              Blake3: YxCab7-VEgAhqKF9HuD6wRDz2sn6w_SEAi0Jl_C5-EI
             entry:
-              created: "2024-01-04T07:41:11.903Z"
+              created: "2024-07-26T00:19:36.386Z"
               previous_transactions:
-                - Blake3: eG-ezU5d-LVjmVbIHy_CPDMIipkVozIAC2ym5glnUGo
+                - Blake3: CME1vP1HrTOf44TLvQ08zZJ2vgNJ2Ao1IIgwW1LWDuw
               body:
                 AddSubkeyV1:
                   key:
                     Crypto:
                       Curve25519XChaCha20Poly1305:
-                        public: LtIC_cnuUprmT9C-YtHZmken25vf-_OaqiCAHFWRJ1E
+                        public: gwxr0F2ylNd98u6_2G3FZ38dfeY-bnMTQrADEJMVIlE
                         secret: ~
                   name: default/crypto
                   desc: A default key for receiving private messages.
             signatures:
               - Key:
                   key:
-                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
                   signature:
-                    Ed25519: 7X6qGeqA3YS_v9RoHDFOussKrHmy_dkfaDweVmoC9xv8CSNrLO4kXcdyeNX-ty65OgpQqng6UrxTGMyk6dqSCQ
+                    Ed25519: "-7QYIod0Gf25U8dZorfqMzfBGmlITgEMsMQP0CZPHqfT6wWVHwE2_eydlBsAmQhV-rBkBg7IXwohPcuhaeKqDg"
           - id:
-              Blake3: OG5wLtZuJ72SKujlp8YbOw3aQUyVTexYlKjv6L2KqVk
+              Blake3: 2FokIj1zj4EQg24Z1MCWZ-1cnc_EodzgpTVMAiBFVIE
             entry:
-              created: "2024-01-04T07:41:11.904Z"
+              created: "2024-07-26T00:19:36.387Z"
               previous_transactions:
-                - Blake3: MBngTWWon600NOBzZI2hVNetglpVJjfT5Ls807GyfqE
+                - Blake3: YxCab7-VEgAhqKF9HuD6wRDz2sn6w_SEAi0Jl_C5-EI
               body:
                 AddSubkeyV1:
                   key:
                     Secret:
                       hmac:
-                        Blake3: fTbD8ptHwCa-9_iXAIHyroTM8mBLq1w91Fm5LLmf2Yg
+                        Blake3: tv-7T7GEqR36xuwzcdhxr66t6iDacLdZ2raoAppgyRw
                       data: ~
                   name: default/secret
                   desc: A default key allowing encryption/decryption of personal data.
             signatures:
               - Key:
                   key:
-                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
                   signature:
-                    Ed25519: 83Sak68ltmxqzfdt3mpwAkbxDeUThzMQ6QtNyUi_l8d95FkgeAlvZO5clCJ91hEsV8uoeXLrSRYXXU5-LYzmBg
+                    Ed25519: TIBcinDKy3Mh7fGZ6Hhr7StUlyLrZXHq44wHpKUg8EBw_KzWrFUYUcbVEm_GYs8uTIlLgMpH5AzZY9U2dDyoAA
           - id:
-              Blake3: j98fNieA0pRXwKS6xBMkJYOWOuvOCBKzkOVyzG-2vXA
+              Blake3: Z-qg1FexHYIrLsqm9HrYC_E7vJ1Pl-XQNKwh5AtVADo
             entry:
-              created: "2024-01-04T07:43:14.192Z"
+              created: "2024-07-26T00:20:39.788Z"
               previous_transactions:
-                - Blake3: OG5wLtZuJ72SKujlp8YbOw3aQUyVTexYlKjv6L2KqVk
+                - Blake3: 2FokIj1zj4EQg24Z1MCWZ-1cnc_EodzgpTVMAiBFVIE
               body:
                 MakeClaimV1:
                   spec:
@@ -1821,15 +1822,15 @@ entry:
             signatures:
               - Key:
                   key:
-                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
                   signature:
-                    Ed25519: meUIklJ4H58cyYmZOaWvH5Kb3weDNiTbj9sD8Z7UaLGHB3zabrPUr5onDfVz9TgTnHA_cNbkDg4_Gsj5uQ0zCQ
+                    Ed25519: D8Xy0Qo6JqRrb7sUJC_B2NkCl7D9e8uFk8Jf8DYVL0L2CnDNw0NJLrTGjUkP-VhSVkwrizkHhS4yL0m3HcXfCQ
           - id:
-              Blake3: HflWay2xmCYnbqTKYP3utSo0s3v4Ne3vWOBzwHziD-o
+              Blake3: o9eaGWb0Xgkrg5Oqf-tehNdur7pUUC4UmSV00r_hR6s
             entry:
-              created: "2024-01-04T07:45:01.291Z"
+              created: "2024-07-26T00:21:11.657Z"
               previous_transactions:
-                - Blake3: j98fNieA0pRXwKS6xBMkJYOWOuvOCBKzkOVyzG-2vXA
+                - Blake3: Z-qg1FexHYIrLsqm9HrYC_E7vJ1Pl-XQNKwh5AtVADo
               body:
                 MakeClaimV1:
                   spec:
@@ -1839,21 +1840,21 @@ entry:
             signatures:
               - Key:
                   key:
-                    Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
                   signature:
-                    Ed25519: "-1XBmxQAdO1CMXf_ccA4Dr4P8xigaIhNCqCo6MTuBq_61CCBjNAOppP5fSuBHpfpCxovfyh8Z7-XIUwF0i17Bg"
+                    Ed25519: JlDAP8rs64KmR0VxWeLPGUYAbhLWInvuy-XuSYhX5N7oGBT6f2ZraGGGuRErQs6DHWRBL5wH6J2NmVAKlmRUAA
 signatures:
   - Key:
       key:
-        Ed25519: wcyZMSHhXOpE2oyTgdvx6LFQK8UOc92poq99mjC7Li8
+        Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
       signature:
-        Ed25519: A7tyA0accrK9uwvA6crQ9o623c5GabBrqlsW1rjKDpfULRYGVH6IbEkpkgLhsqPrTaB7nAQ1vz4-wWFdmTWzDw
+        Ed25519: JjVFZPID7ITsX13xJLk_ht-a-JDVpQ7mun_yG7WE6V2SdZsHFeQoWjXQHxoD6HNAi4qEHtqlwVoW3u_CpwGdAg
         "#;
         let transaction = Transaction::deserialize_text(published_identity).unwrap();
         match transaction.entry().body() {
             TransactionBody::PublishV1 { transactions } => {
                 let identity = transactions.build_identity().unwrap();
-                assert_eq!(format!("{}", identity.id()), "Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3AA");
+                assert_eq!(format!("{}", identity.id()), "zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzwA");
                 let ids = transactions
                     .transactions()
                     .iter()
@@ -1862,15 +1863,15 @@ signatures:
                 assert_eq!(
                     ids,
                     vec![
-                        "Zef-ZpmdW1CsA-zxqUzHTP2sKZwUqnfV3oQ7Di2gL3AA",
-                        "Dr4qJ88VNLMraCqXBGoNO8ILbtizognoTwOvR3o7OtYA",
-                        "yMRZQTTIsPdmCuhaJvwzCFXDsnljQk1y32VcgNn4b8oA",
-                        "13_BWJcu_HrKFQV0mSogjHpm3i-4HQGDf-6vhnarH5YA",
-                        "eG-ezU5d-LVjmVbIHy_CPDMIipkVozIAC2ym5glnUGoA",
-                        "MBngTWWon600NOBzZI2hVNetglpVJjfT5Ls807GyfqEA",
-                        "OG5wLtZuJ72SKujlp8YbOw3aQUyVTexYlKjv6L2KqVkA",
-                        "j98fNieA0pRXwKS6xBMkJYOWOuvOCBKzkOVyzG-2vXAA",
-                        "HflWay2xmCYnbqTKYP3utSo0s3v4Ne3vWOBzwHziD-oA",
+                        "zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzwA",
+                        "9CpMShDnJCkm7xfYnzhlXLTVz_4ooR9lOggYG2E2QxoA",
+                        "FJLh0dArIgR10WyPyDCuYHEBxTeGvLhUetN5vmtB7aUA",
+                        "gOpIJMGGUsRdLSI8EqnkHDfroXUzmA3zEK_alKlqPs4A",
+                        "CME1vP1HrTOf44TLvQ08zZJ2vgNJ2Ao1IIgwW1LWDuwA",
+                        "YxCab7-VEgAhqKF9HuD6wRDz2sn6w_SEAi0Jl_C5-EIA",
+                        "2FokIj1zj4EQg24Z1MCWZ-1cnc_EodzgpTVMAiBFVIEA",
+                        "Z-qg1FexHYIrLsqm9HrYC_E7vJ1Pl-XQNKwh5AtVADoA",
+                        "o9eaGWb0Xgkrg5Oqf-tehNdur7pUUC4UmSV00r_hR6sA",
                     ]
                 );
             }
