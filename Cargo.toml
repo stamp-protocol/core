@@ -1,6 +1,6 @@
 [package]
 name = "stamp-core"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["Andrew Danger Lyon <andrew@killtheradio.net>"]
 edition = "2021"
 
