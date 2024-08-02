@@ -112,7 +112,7 @@ where
     }
 
     /// Takes a flat list of nodes and returns a of DAG that models those nodes.
-    pub fn from_nodes(nodes: &'a [DagNode<'a, I, T>]) -> Dag<'a, I, T> {
+    pub fn from_nodes(nodes: &[DagNode<'a, I, T>]) -> Dag<'a, I, T> {
         // create our DAG object.
         let mut dag = Dag::new();
 
