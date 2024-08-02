@@ -8,7 +8,7 @@ use crate::{
     policy::{Capability, MultisigPolicy, Participant, Policy, PolicyContainer},
     util::Timestamp,
 };
-use rand::{CryptoRng, RngCore, SeedableRng};
+use rand::{CryptoRng, RngCore};
 use std::thread;
 use std::time::Duration;
 
@@ -25,7 +25,7 @@ pub(crate) fn rng() -> rand_chacha::ChaCha20Rng {
 pub(crate) fn rng_seeded(seed: &[u8]) -> rand_chacha::ChaCha20Rng {
     let seed_hash = Hash::new_blake3(seed).unwrap();
     let seed_bytes: [u8; 32] = seed_hash.as_bytes().try_into().unwrap();
-    rand_chacha::ChaCha20Rng::from_seed(seed_bytes)
+    crate::crypto::base::rng::chacha20_seeded(seed_bytes)
 }
 
 pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Timestamp) -> (SecretKey, Transactions, AdminKey) {

@@ -55,12 +55,24 @@ pub const KDF_MEM_SENSITIVE: u32 = 1048576;
 pub mod rng {
     use rand::{rngs::OsRng, RngCore, SeedableRng};
 
+    /// Create a seeded chacha20 RNG. If you don't have a good reason for creating a seeded RNG,
+    /// please see the [`chacha20`] function.
+    pub fn chacha20_seeded(seed_bytes: [u8; 32]) -> rand_chacha::ChaCha20Rng {
+        rand_chacha::ChaCha20Rng::from_seed(seed_bytes)
+    }
+
+    /// Create a seeded chacha8 RNG. If you don't have a good reason for creating a seeded RNG,
+    /// please see the [`chacha8`] function.
+    pub fn chacha8_seeded(seed_bytes: [u8; 32]) -> rand_chacha::ChaCha8Rng {
+        rand_chacha::ChaCha8Rng::from_seed(seed_bytes)
+    }
+
     /// Use this if you want a nice, strong random number generator, you don't want to wire one up
     /// yourself, and your platform provides good entropy.
     pub fn chacha20() -> rand_chacha::ChaCha20Rng {
         let mut seed_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut seed_bytes);
-        rand_chacha::ChaCha20Rng::from_seed(seed_bytes)
+        chacha20_seeded(seed_bytes)
     }
 
     /// Use this if you need a CSRNG with fast performance. This is not as secure as [`chacha20`]
@@ -68,7 +80,7 @@ pub mod rng {
     pub fn chacha8() -> rand_chacha::ChaCha8Rng {
         let mut seed_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut seed_bytes);
-        rand_chacha::ChaCha8Rng::from_seed(seed_bytes)
+        chacha8_seeded(seed_bytes)
     }
 }
 
