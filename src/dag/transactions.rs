@@ -218,7 +218,6 @@ impl Transactions {
         }
 
         let nodes = self.transactions().iter().map(|x| x.into()).collect::<Vec<_>>();
-        //let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&trans_borrowed);
         let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&nodes);
 
         if dag.head().len() != 1 {
