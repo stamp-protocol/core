@@ -318,10 +318,10 @@ impl Transactions {
     /// Find any transactions that are not referenced as previous transactions.
     /// Effectively, the leaves of our graph.
     fn find_leaf_transactions<'a>(transaction_list: &'a [Transaction]) -> Vec<&'a TransactionID> {
-        let mut seen: HashMap<&TransactionID, bool> = HashMap::new();
+        let mut seen: HashSet<&TransactionID> = HashSet::new();
         for trans in transaction_list {
             for prev in trans.entry().previous_transactions() {
-                seen.insert(prev, true);
+                seen.insert(prev);
             }
         }
         transaction_list
