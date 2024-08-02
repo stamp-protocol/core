@@ -61,7 +61,7 @@ impl Transactions {
         body: TransactionBody,
     ) -> Result<Transaction> {
         let leaves = Self::find_leaf_transactions(self.transactions());
-        Transaction::new(TransactionEntry::new(now, leaves, body), hash_with)
+        Transaction::new(TransactionEntry::new(now, leaves.into_iter().cloned().collect::<Vec<_>>(), body), hash_with)
     }
 
     /// Run a transaction and return the output
@@ -317,16 +317,16 @@ impl Transactions {
 
     /// Find any transactions that are not referenced as previous transactions.
     /// Effectively, the leaves of our graph.
-    fn find_leaf_transactions(transaction_list: &[Transaction]) -> Vec<TransactionID> {
-        let mut seen: HashMap<TransactionID, bool> = HashMap::new();
+    fn find_leaf_transactions<'a>(transaction_list: &'a [Transaction]) -> Vec<&'a TransactionID> {
+        let mut seen: HashMap<&TransactionID, bool> = HashMap::new();
         for trans in transaction_list {
             for prev in trans.entry().previous_transactions() {
-                seen.insert(prev.clone(), true);
+                seen.insert(prev, true);
             }
         }
         transaction_list
             .iter()
-            .filter_map(|t| if seen.get(t.id()).is_some() { None } else { Some(t.id().clone()) })
+            .filter_map(|t| if seen.get(t.id()).is_some() { None } else { Some(t.id()) })
             .collect::<Vec<_>>()
     }
 
