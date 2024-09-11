@@ -37,6 +37,11 @@ impl Hash {
         Ok(Self::Blake3(Binary::new(arr)))
     }
 
+    /// Create a new Blake3 hash from a byte array.
+    pub fn new_blake3_from_bytes(inner: [u8; 32]) -> Self {
+        Self::Blake3(Binary::new(inner))
+    }
+
     #[cfg(test)]
     pub(crate) fn random_blake3() -> Self {
         let mut randbuf = [0u8; 32];
