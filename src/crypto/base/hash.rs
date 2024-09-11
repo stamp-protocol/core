@@ -93,6 +93,30 @@ impl TryFrom<&str> for Hash {
     }
 }
 
+impl PartialOrd for Hash {
+    fn partial_cmp(&self, rhs: &Self) -> Option<std::cmp::Ordering> {
+        fn get_hash_prefix(hash: &Hash) -> u8 {
+            match hash {
+                Hash::Blake3(..) => 0,
+            }
+        }
+        let a_prefix = get_hash_prefix(self);
+        let b_prefix = get_hash_prefix(rhs);
+        let prefix_ord = a_prefix.cmp(&b_prefix);
+        let ord = match prefix_ord {
+            std::cmp::Ordering::Equal => self.as_bytes().cmp(rhs.as_bytes()),
+            _ => prefix_ord,
+        };
+        Some(ord)
+    }
+}
+
+impl Ord for Hash {
+    fn cmp(&self, rhs: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(rhs).unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
 impl std::fmt::Display for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", String::try_from(self).map_err(|_| std::fmt::Error)?)
