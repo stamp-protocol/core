@@ -307,7 +307,7 @@ impl Transactions {
                 // already used to create the root identity outside of the walk() loop, we don't
                 // actually need to do anything at all.
             }
-            Ok(())
+            Ok::<(), Error>(())
         })?;
 
         // note here we grab the identity at branch 0...this is the root identity that all the

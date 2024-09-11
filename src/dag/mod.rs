@@ -15,7 +15,7 @@ pub use crate::dag::{
     transaction::{Transaction, TransactionBody, TransactionEntry, TransactionID},
     transactions::Transactions,
 };
-use crate::{error::Result, util::Timestamp};
+use crate::{error::Error, util::Timestamp};
 use getset::{Getters, MutGetters};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::Hash;
@@ -191,7 +191,7 @@ where
                 if node.next().is_empty() {
                     tail_nodes.push(*node.id());
                 }
-                Ok(())
+                Ok::<(), Error>(())
             })
             .unwrap();
         for entry in missing {
@@ -235,9 +235,9 @@ where
     /// - Nodes referenced by some visited node that don't exist in the DAG (missing nodes)
     ///
     /// And so these are the things we return. In that order. As a tuple.
-    pub fn walk<F>(&self, mut opfn: F) -> Result<(Vec<&'a I>, HashSet<&'a I>)>
+    pub fn walk<F, E>(&self, mut opfn: F) -> core::result::Result<(Vec<&'a I>, HashSet<&'a I>), E>
     where
-        F: FnMut(&DagNode<'a, I, T>, &[u32], &HashMap<&'a I, Vec<u32>>) -> Result<()>,
+        F: FnMut(&DagNode<'a, I, T>, &[u32], &HashMap<&'a I, Vec<u32>>) -> core::result::Result<(), E>,
     {
         /// stored with the `pending_nodes` as a way to instruct nodes whether they should
         /// use the given ancestry as-is or whether they should grab a new branch and append it to
@@ -437,10 +437,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::{
-        ser::{BinaryVec, HashMapAsn1},
-        test::make_dag_chain,
-        Timestamp,
+    use crate::{
+        error::Error,
+        util::{
+            ser::{BinaryVec, HashMapAsn1},
+            test::make_dag_chain,
+            Timestamp,
+        },
     };
     use std::str::FromStr;
 
@@ -495,7 +498,7 @@ mod tests {
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, _| {
             visited.push((*tid_to_name.get(node.id()).unwrap(), Vec::from(ancestry)));
-            Ok(())
+            Ok::<(), Error>(())
         })
         .unwrap();
         assert_eq!(
@@ -567,7 +570,7 @@ mod tests {
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, _| {
             visited.push((*tid_to_name.get(node.id()).unwrap(), Vec::from(ancestry)));
-            Ok(())
+            Ok::<(), Error>(())
         })
         .unwrap();
         assert_eq!(
@@ -637,7 +640,7 @@ mod tests {
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, _| {
             visited.push((*tid_to_name.get(node.id()).unwrap(), Vec::from(ancestry)));
-            Ok(())
+            Ok::<(), Error>(())
         })
         .unwrap();
         assert_eq!(visited, vec![("A", vec![0]), ("B", vec![1]),],);
@@ -678,7 +681,7 @@ mod tests {
         let mut visited = Vec::new();
         dag.walk(|node, _ancestry, _anc_idx| {
             visited.push(*node.id());
-            Ok(())
+            Ok::<(), Error>(())
         })
         .unwrap();
         assert_eq!(
@@ -728,7 +731,7 @@ mod tests {
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, idx| {
             visited.push((*node.id(), Vec::from(ancestry), idx.get(node.id()).map(|x| x.as_slice()) == Some(ancestry)));
-            Ok(())
+            Ok::<(), Error>(())
         })
         .unwrap();
         assert_eq!(
@@ -787,7 +790,7 @@ mod tests {
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, idx| {
             visited.push((*node.id(), Vec::from(ancestry), idx.get(node.id()).map(|x| x.as_slice()) == Some(ancestry)));
-            Ok(())
+            Ok::<(), Error>(())
         })
         .unwrap();
         assert_eq!(
