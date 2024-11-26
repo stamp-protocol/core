@@ -13,7 +13,7 @@ use crate::{
 };
 use base64::Engine as _;
 use core::hash::Hash;
-use rasn::{AsnType, Decode, Decoder, Encode, Encoder, Tag};
+use rasn::{types::Tag, AsnType, Decode, Decoder, Encode, Encoder};
 use serde::{
     de::{DeserializeOwned, Deserializer},
     ser::Serializer,

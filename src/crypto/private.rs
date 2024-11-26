@@ -19,9 +19,9 @@ use rand::{CryptoRng, RngCore};
 use rasn::{
     types::{
         fields::{Field, Fields},
-        Class, Constructed,
+        Class, Constructed, Tag,
     },
-    AsnType, Decode, Decoder, Encode, Encoder, Tag,
+    AsnType, Decode, Decoder, Encode, Encoder,
 };
 use serde_derive::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -39,7 +39,7 @@ pub struct Private<T> {
 }
 
 impl<T> AsnType for Private<T> {
-    const TAG: rasn::Tag = rasn::Tag::SEQUENCE;
+    const TAG: Tag = Tag::SEQUENCE;
 }
 
 impl<T> Constructed for Private<T> {
@@ -146,7 +146,7 @@ pub struct SealedTyped<T> {
 }
 
 impl<T> AsnType for SealedTyped<T> {
-    const TAG: rasn::Tag = rasn::Tag::SEQUENCE;
+    const TAG: Tag = Tag::SEQUENCE;
 }
 
 impl<T> Constructed for SealedTyped<T> {

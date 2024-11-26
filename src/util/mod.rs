@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, SubsecRound, TimeZone, Utc};
-use rasn::{AsnType, Decode, Decoder, Encode, Encoder, Tag};
+use rasn::{types::Tag, AsnType, Decode, Decoder, Encode, Encoder};
 use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 use std::str::FromStr;
@@ -123,7 +123,7 @@ impl Encode for Timestamp {
     fn encode_with_tag_and_constraints<E: rasn::Encoder>(
         &self,
         encoder: &mut E,
-        tag: rasn::Tag,
+        tag: Tag,
         constraints: rasn::types::constraints::Constraints,
     ) -> std::result::Result<(), E::Error> {
         let ts = self.timestamp_millis();
@@ -135,7 +135,7 @@ impl Encode for Timestamp {
 impl Decode for Timestamp {
     fn decode_with_tag_and_constraints<D: rasn::Decoder>(
         decoder: &mut D,
-        tag: rasn::Tag,
+        tag: Tag,
         constraints: rasn::types::constraints::Constraints,
     ) -> std::result::Result<Self, D::Error> {
         let ts = <i64>::decode_with_tag_and_constraints(decoder, tag, constraints)?;
