@@ -219,7 +219,7 @@ impl StampRequest {
             decrypt_key: one_time_key,
         };
         let serialized = ser::serialize(&req)?;
-        message::send(rng, sender_master_key, sender_identity_id, sender_key, recipient_key, serialized.as_slice())
+        message::seal(rng, sender_master_key, sender_identity_id, sender_key, recipient_key, serialized.as_slice())
     }
 
     /// Opens a message with a StampRequest in it, and if all goes well, returns

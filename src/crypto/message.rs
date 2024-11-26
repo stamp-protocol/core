@@ -48,12 +48,12 @@ impl Message {
 
 impl ser::SerdeBinary for Message {}
 
-/// Send a message to an identity.
+/// Seal a message for an identity.
 ///
 /// We use the sender's/recipient's subkeys for messaging, which is the most
 /// general container we can use (passing just an identity object won't do here
 /// because an identity could have many CryptoKeypairs).
-pub fn send<R: RngCore + CryptoRng>(
+pub fn seal<R: RngCore + CryptoRng>(
     rng: &mut R,
     sender_master_key: &SecretKey,
     sender_identity_id: &IdentityID,
@@ -69,7 +69,7 @@ pub fn send<R: RngCore + CryptoRng>(
     Ok(Message::Signed(signed_msg))
 }
 
-/// Open a message sent with [send].
+/// Open a message sent with [seal].
 ///
 /// Note that we need the sender's public key to verify the signature on the
 /// message, which signs the *outside* of the message (not the inside).
@@ -146,7 +146,7 @@ mod tests {
         let recipient_subkey = recipient_identity.keychain().subkey_by_name("cryptololol").unwrap();
 
         let msg = b"And if you ever put your goddamn hands on my wife again, I will...";
-        let sealed = send(&mut rng, &sender_master_key, sender_identity.id(), &sender_subkey, recipient_subkey, msg).unwrap();
+        let sealed = seal(&mut rng, &sender_master_key, sender_identity.id(), &sender_subkey, recipient_subkey, msg).unwrap();
         match sealed {
             Message::Signed(_) => {}
             _ => panic!("Bad message format returned"),
