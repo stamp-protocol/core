@@ -139,7 +139,7 @@ impl CryptoKeypair {
         &self,
         rng: &mut R,
         sender_master_key: &SecretKey,
-        sender_keypair: &CryptoKeypair,
+        sender_keypair: &Self,
         data: &[u8],
     ) -> Result<CryptoKeypairMessage> {
         match (sender_keypair, self) {
@@ -171,12 +171,7 @@ impl CryptoKeypair {
     /// Open a message encrypted with our public key and verify the sender of
     /// the message using their public key. Needs our master key to unlock the
     /// private key used to decrypt the message.
-    pub fn open(
-        &self,
-        recipient_master_key: &SecretKey,
-        sender_keypair: &CryptoKeypair,
-        message: &CryptoKeypairMessage,
-    ) -> Result<Vec<u8>> {
+    pub fn open(&self, recipient_master_key: &SecretKey, sender_keypair: &Self, message: &CryptoKeypairMessage) -> Result<Vec<u8>> {
         match (self, sender_keypair) {
             (
                 Self::Curve25519XChaCha20Poly1305 {
@@ -253,6 +248,35 @@ pub enum CryptoKeypairPublic {
 }
 
 impl CryptoKeypairPublic {
+    /// Encrypt a message to a recipient, and sign it with our secret crypto
+    /// key. Needs our master key to unlock our heroic private key.
+    pub fn seal<R: RngCore + CryptoRng>(
+        &self,
+        rng: &mut R,
+        sender_master_key: &SecretKey,
+        sender_pubkey: &CryptoKeypair,
+        data: &[u8],
+    ) -> Result<CryptoKeypairMessage> {
+        let keypair = match self {
+            Self::Curve25519XChaCha20Poly1305(pubkey) => CryptoKeypair::Curve25519XChaCha20Poly1305 {
+                public: pubkey.clone(),
+                secret: None,
+            },
+        };
+        keypair.seal(rng, sender_master_key, sender_pubkey, data)
+    }
+
+    /// Anonymously encrypt a message using the recipient's public key.
+    pub fn seal_anonymous<R: RngCore + CryptoRng>(&self, rng: &mut R, data: &[u8]) -> Result<Vec<u8>> {
+        let keypair = match self {
+            Self::Curve25519XChaCha20Poly1305(pubkey) => CryptoKeypair::Curve25519XChaCha20Poly1305 {
+                public: pubkey.clone(),
+                secret: None,
+            },
+        };
+        keypair.seal_anonymous(rng, data)
+    }
+
     /// Create a KeyID from this keypair.
     pub fn key_id(&self) -> KeyID {
         KeyID::CryptoKeypair(self.clone())
@@ -289,24 +313,55 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn cryptokeypair_curve25519xchacha20poly1305_anonymous_encpub_dec() {
+        let mut rng = crate::util::test::rng();
+        let our_master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let our_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &our_master_key).unwrap();
+        let fake_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &our_master_key).unwrap();
+        let our_pubkey = CryptoKeypairPublic::from(our_keypair.clone());
+
+        let message = String::from("HI JERRY I'M BUTCH");
+        let sealed1 = our_keypair.seal_anonymous(&mut rng, message.as_bytes()).unwrap();
+        let sealed2 = our_pubkey.seal_anonymous(&mut rng, message.as_bytes()).unwrap();
+        let opened1 = our_keypair.open_anonymous(&our_master_key, &sealed1).unwrap();
+        let opened2 = our_keypair.open_anonymous(&our_master_key, &sealed2).unwrap();
+
+        assert_eq!(&opened1[..], message.as_bytes());
+        assert_eq!(&opened2[..], message.as_bytes());
+
+        let fake2_1 = fake_keypair.open_anonymous(&our_master_key, &sealed1);
+        let fake2_2 = fake_keypair.open_anonymous(&our_master_key, &sealed2);
+        assert_eq!(fake2_1, Err(Error::CryptoOpenFailed));
+        assert_eq!(fake2_2, Err(Error::CryptoOpenFailed));
+    }
+
+    #[test]
     fn cryptokeypair_curve25519xchacha20poly1305_enc_dec() {
         let mut rng = crate::util::test::rng();
         let sender_master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let sender_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &sender_master_key).unwrap();
         let recipient_master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let recipient_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &recipient_master_key).unwrap();
+        let recipient_pubkey = CryptoKeypairPublic::from(recipient_keypair.clone());
         let fake_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &recipient_master_key).unwrap();
 
-        let message = String::from("HI JERRY I'M BUTCH");
-        let sealed = recipient_keypair
-            .seal(&mut rng, &sender_master_key, &sender_keypair, message.as_bytes())
+        let message = b"HI JERRY I'M BUTCH";
+        let sealed1 = recipient_keypair
+            .seal(&mut rng, &sender_master_key, &sender_keypair, message)
             .unwrap();
-        let opened = recipient_keypair.open(&recipient_master_key, &sender_keypair, &sealed).unwrap();
+        let sealed2 = recipient_pubkey
+            .seal(&mut rng, &sender_master_key, &sender_keypair, message)
+            .unwrap();
+        let opened1 = recipient_keypair.open(&recipient_master_key, &sender_keypair, &sealed1).unwrap();
+        let opened2 = recipient_keypair.open(&recipient_master_key, &sender_keypair, &sealed2).unwrap();
 
-        assert_eq!(&opened[..], message.as_bytes());
+        assert_eq!(&opened1[..], message);
+        assert_eq!(&opened2[..], message);
 
-        let opened2 = sender_keypair.open(&sender_master_key, &fake_keypair, &sealed);
-        assert_eq!(opened2, Err(Error::CryptoOpenFailed));
+        let fake1 = sender_keypair.open(&sender_master_key, &fake_keypair, &sealed1);
+        let fake2 = sender_keypair.open(&sender_master_key, &fake_keypair, &sealed2);
+        assert_eq!(fake1, Err(Error::CryptoOpenFailed));
+        assert_eq!(fake2, Err(Error::CryptoOpenFailed));
     }
 
     #[test]
