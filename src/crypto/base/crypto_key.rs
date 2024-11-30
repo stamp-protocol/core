@@ -87,6 +87,7 @@ impl CryptoKeypair {
     }
 
     /// Anonymously encrypt a message using the recipient's public key.
+    // TODO: move this to CryptoKeypairPublic
     pub fn seal_anonymous<R: RngCore + CryptoRng>(&self, rng: &mut R, data: &[u8]) -> Result<Vec<u8>> {
         match self {
             Self::Curve25519XChaCha20Poly1305 { public: ref pubkey, .. } => {
@@ -135,6 +136,7 @@ impl CryptoKeypair {
 
     /// Encrypt a message to a recipient, and sign it with our secret crypto
     /// key. Needs our master key to unlock our heroic private key.
+    // TODO: move this to CryptoKeypairPublic
     pub fn seal<R: RngCore + CryptoRng>(
         &self,
         rng: &mut R,
