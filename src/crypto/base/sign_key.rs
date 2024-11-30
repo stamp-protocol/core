@@ -107,6 +107,7 @@ impl SignKeypair {
 
     /// Verify a value with a detached signature given the public key of the
     /// signer.
+    // TODO: move this to SignKeypairPublic
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
         match (self, signature) {
             (
