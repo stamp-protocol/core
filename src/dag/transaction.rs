@@ -575,6 +575,46 @@ impl Transaction {
         })
     }
 
+    /// A very unsafe function that is sometimes required in situations where a DAG needs to be
+    /// hand-created (forged) and we don't have all the information to do it ze proper way.
+    ///
+    /// For instance, if removing nodes from a DAG and then later re-creating them with fake
+    /// entries (that would never verify BTW so it's not some workaround to break integrity) we
+    /// might want to recreate the removed DAG nodes given just an ID and timestamp.
+    pub fn create_raw_with_id<T: Into<Timestamp>>(
+        id: TransactionID,
+        created: T,
+        previous_transactions: Vec<TransactionID>,
+        body: TransactionBody,
+    ) -> Self {
+        let entry = TransactionEntry::new(created, previous_transactions, body);
+        Self {
+            id,
+            entry,
+            signatures: Vec::new(),
+        }
+    }
+
+    /// Allows modification of the `previous_transactions` field of an ExtV1 body. This is useful
+    /// in situations where an application needs to do some DAG manipulation but can't do it
+    /// directly because the official functions don't allow modifications of the `Transaction` or
+    /// inner fields.
+    ///
+    /// We can do the same by cloning a bunch of garbage and using [`create_raw_with_id`] but this
+    /// allows the same without copy.
+    pub fn try_mod_ext_previous_transaction(&mut self, new_ext_previous_transactions: Vec<TransactionID>) -> Result<()> {
+        match self.entry_mut().body_mut() {
+            TransactionBody::ExtV1 {
+                ref mut previous_transactions,
+                ..
+            } => {
+                *previous_transactions = new_ext_previous_transactions;
+                Ok(())
+            }
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
     /// Sign this transaction. This consumes the transaction, adds the signature
     /// to the `signatures` list, then returns the new transaction.
     pub fn sign<K>(mut self, master_key: &SecretKey, admin_key: &K) -> Result<Self>
