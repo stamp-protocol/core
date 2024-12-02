@@ -595,6 +595,21 @@ impl Transaction {
         }
     }
 
+    /// Create a new transaction with hand-supplied values for the create time, previous
+    /// transactions, and body.
+    ///
+    /// You almost never want this! Use the dag::Transactions::<create_identity|add_subkey|...>
+    /// functions instead. This function's main utility is raw DAG manipulation.
+    pub fn create_raw<T: Into<Timestamp>>(
+        hash_with: &HashAlgo,
+        created: T,
+        previous_transactions: Vec<TransactionID>,
+        body: TransactionBody,
+    ) -> Result<Self> {
+        let entry = TransactionEntry::new(created, previous_transactions, body);
+        Transaction::new(entry, hash_with)
+    }
+
     /// Allows modification of the `previous_transactions` field of an ExtV1 body. This is useful
     /// in situations where an application needs to do some DAG manipulation but can't do it
     /// directly because the official functions don't allow modifications of the `Transaction` or
@@ -849,6 +864,42 @@ mod tests {
         policy::{Capability, Context, ContextClaimType, MultisigPolicy, Policy, TransactionBodyType},
         util::{ser, test},
     };
+    use std::str::FromStr;
+
+    #[test]
+    fn trans_create_raw() {
+        let body = TransactionBody::ExtV1 {
+            creator: IdentityID::from(TransactionID::from(Hash::new_blake3(b"owwww my head").unwrap())),
+            ty: Some(Vec::from(b"/stamp/test/raw").into()),
+            previous_transactions: vec![TransactionID::from(Hash::new_blake3(b"i like your hat").unwrap())],
+            context: Some([("create", "raw")].into()),
+            payload: Vec::from(b"who's this...Steve?").into(),
+        };
+        let trans1 = Transaction::create_raw(
+            &HashAlgo::Blake3,
+            crate::util::Timestamp::from_str("2028-09-30T06:34:22Z").unwrap(),
+            vec![TransactionID::from(Hash::new_blake3(b"toot").unwrap())],
+            body.clone(),
+        )
+        .unwrap();
+        let trans2 = Transaction::create_raw(
+            &HashAlgo::Blake3,
+            crate::util::Timestamp::from_str("3028-09-30T06:34:22Z").unwrap(),
+            vec![TransactionID::from(Hash::new_blake3(b"toot").unwrap())],
+            body.clone(),
+        )
+        .unwrap();
+        let trans3 = Transaction::create_raw(
+            &HashAlgo::Blake3,
+            crate::util::Timestamp::from_str("3028-09-30T06:34:22Z").unwrap(),
+            vec![TransactionID::from(Hash::new_blake3(b"zing").unwrap())],
+            body.clone(),
+        )
+        .unwrap();
+        assert_eq!(format!("{}", trans1.id()), "VvM-YerBlAZZBSHQQDTVMRDh87dZw5sbr-3GlzySeiMA");
+        assert_eq!(format!("{}", trans2.id()), "nibq1lpMmDE57hdvL3__K-IjHTmURCelR3YVXGVNSkQA");
+        assert_eq!(format!("{}", trans3.id()), "pXmIbpDkH9c_jnKtbsGTMmyfq4p5PldYRYAhP8kl60EA");
+    }
 
     #[test]
     fn trans_body_strip_has_private() {
