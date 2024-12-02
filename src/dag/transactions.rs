@@ -747,6 +747,167 @@ impl IntoIterator for Transactions {
 impl SerdeBinary for Transactions {}
 impl SerText for Transactions {}
 
+/// Allows creating DAG chains of transactions using a friendly and inviting syntax that will change
+/// the way you think and live *forever*.
+///
+/// You *could* create your transaction lists by hand, starting with the first and painstakingly
+/// crafting all the following ones, updating the `previous_transactions` lists by hand...
+///
+/// OR you could try this handy macro:
+///
+/// ```rust,ignore
+/// tx_chain! {
+///     // define your tx here, giving each a short, memorable name, a timestamp, and a lambda
+///     // function in the format:
+///     //
+///     //   |now: Timestamp, previous_transactions: Vec<TransactionID>| -> Transaction
+///     //
+///     // note that the lambda functions can reference the transactions that come before them
+///     // previously *in the DAG* (not as they are defined in the list below, but in the order of
+///     // produced DAG nodes).
+///     [
+///         A = ("2024-01-03T00:01:01Z", |now, prev| { ... });
+///         B = ("2024-01-02T00:01:01Z", |now, prev| { ... A.id() ... );
+///         C = ("2024-01-03T00:01:01Z", |now, prev| { ... });
+///         D = ("2024-01-04T00:01:01Z", |now, prev| { ... B.id() ...});
+///         E = ("2024-01-08T00:01:01Z", |now, prev| { ... });
+///         F = ("2024-01-05T00:01:01Z", |now, prev| { ... });
+///         G = ("2024-01-06T00:01:01Z", |now, prev| { ... B.id() ... F.id() ... });
+///     ],
+///     // now define all your backlinks. A & B are refrenced by C, C by D & E, E by F, D & F by G
+///     // this creates our heroic DAG chain. note that all these nodes/ops are signed and valid.
+///     [
+///         [A] <- [B],
+///         [A, B] <- [C],
+///         [C] <- [D, E],
+///         [E] <- [F],
+///         [D, F] <- [G],
+///     ],
+/// }
+/// ```
+///
+/// Note that this macro is only really used for testing, but because it's so useful for testing,
+/// it's exported as a public macro.
+#[macro_export]
+macro_rules! tx_chain {
+    (
+        [$($name:ident = ($time:expr, $tx:expr);)*],
+        [$([$($from:ident),*] <- [$($to:ident),*],)*],
+    ) => {{
+        /// A type meant to hold some relevant info about our DAG nodes in a format we don't have
+        /// to worry about dancing around mutations. This is a type we own and can manipulate to
+        /// our cold icy heart's content, but can be converted into a `Transaction` later which is
+        /// much more rigid about mutations.
+        #[derive(Clone, Debug)]
+        struct Node {
+            id: $crate::dag::TransactionID,
+            timestamp: Timestamp,
+            previous_transactions: Vec<$crate::dag::TransactionID>,
+        }
+        impl Node {
+            fn id(&self) -> &$crate::dag::TransactionID { &self.id }
+        }
+        impl<'a> From<&'a Node> for $crate::dag::DagNode<'a, $crate::dag::TransactionID, Node> {
+            fn from(n: &'a Node) -> Self {
+                $crate::dag::DagNode::new(&n.id, n, n.previous_transactions.iter().collect::<Vec<_>>(), &n.timestamp)
+            }
+        }
+
+        // maps temporary node ids to real/new node ids
+        let mut node_id_map: std::collections::HashMap<TransactionID, TransactionID> = Default::default();
+        // maps node name (ie, "A", "B", ...) to a transaction ID
+        let mut name_to_tx: std::collections::HashMap<&'static str, Transaction> = Default::default();
+        // holds our `Node` objects, to be turned into a DAG
+        let mut nodes_tmp = Vec::new();
+
+        // loop over our nodes and create `Node` objects for each, with "fake" ids (via Hash(<name>)).
+        // then we set up the proper previous nodes for each node given the spec.
+        {
+            $(
+                #[allow(non_snake_case, unused_mut)]
+                let mut $name = Node {
+                    id: $crate::dag::TransactionID::from(Hash::new_blake3(stringify!($name).as_bytes()).unwrap()),
+                    timestamp: $crate::util::Timestamp::from_str($time).unwrap(),
+                    previous_transactions: Vec::new(),
+                };
+            )*
+            $(
+                {
+                    let from = vec![$($from.id().clone()),*];
+                    $(
+                        for prev in &from {
+                            $to.previous_transactions.push(prev.clone());
+                        }
+                    )*
+                }
+            )*
+            // push our nodes into a temp vec
+            $(
+                nodes_tmp.push($name);
+            )*
+        }
+
+        // now create a named variable for each of the transactions we'll build. this allows
+        // transaction creation functions to reference other transactions by name, ASSUMING the
+        // referenced transactions happen BEFORE the current one in the DAG chain. if not, you'll
+        // get blank [0000...] ids for everything, so don't be silly and try to get ids for future
+        // DAG nodes. nobody thinks you're funny, Parker.
+        //
+        // this also saves us from having to pass a name->transaction mapping hash in each call!
+        let fake_trans = $crate::dag::Transaction::create_raw_with_id(
+            $crate::dag::TransactionID::from($crate::crypto::base::Hash::new_blake3_from_bytes([0u8; 32])),
+            $crate::util::Timestamp::from_str("1900-01-01T06:43:22Z").unwrap(),
+            Vec::new(),
+            $crate::dag::TransactionBody::DeletePolicyV1 { id: $crate::policy::PolicyID::from($crate::dag::TransactionID::from($crate::crypto::base::Hash::new_blake3_from_bytes([0u8; 32]))) },
+        );
+        $(
+            // start each named transaction with a fake clone. we'll populate these properly as the
+            // DAG progresses.
+            #[allow(non_snake_case, unused, unused_mut)]
+            let mut $name: Transaction = fake_trans.clone();
+        )*
+
+        // holds our final transaction list
+        let mut transactions: Vec<Transaction> = Vec::with_capacity(nodes_tmp.len());
+        // holds a mapping of final node ids (not temporary) to node name
+        let mut id_to_name = std::collections::HashMap::new();
+        // convert our temp node list a list of `DagNode`s, then build our DAG and walk it.
+        let nodes = nodes_tmp.iter().map(|x| x.into()).collect::<Vec<_>>();
+        let dag: Dag<TransactionID, Node> = Dag::from_nodes(&nodes);
+
+        dag.walk(|node, _, _| {
+            // loop over this node's previous transactions list, converting the temporary ids
+            // contained there into proper IDs via our old->new id mapping (which is populated just
+            // below).
+            let prev = node.node().previous_transactions.iter().map(|x| node_id_map.get(x).unwrap()).cloned().collect::<Vec<_>>();
+            // create a giant if {} block that matches nodes via the deterministic hash id
+            // (Hash(<name>)), allowing us to run our transaction creation fn for the current node.
+            if false {}
+            $(
+                else if node.node().id() == &$crate::dag::TransactionID::from(Hash::new_blake3(stringify!($name).as_bytes()).unwrap()) {
+                    let name: &'static str = stringify!($name);
+                    // run our $tx (transaction creation function) for the current node
+                    $name = $tx(node.node().timestamp.clone(), prev);
+                    // map our old node id to the new node id so future transactions can get an
+                    // updated `previous_transactions` list.
+                    node_id_map.insert(node.node().id().clone(), $name.id().clone());
+                    // update our name/id mappings
+                    name_to_tx.insert(name, $name.clone());
+                    id_to_name.insert($name.id().clone(), name);
+                    // final save
+                    transactions.push($name.clone());
+                }
+            )*
+            Ok::<(), ()>(())
+        }).unwrap();
+        // send it
+        (transactions, name_to_tx, id_to_name)
+    }};
+}
+
+#[allow(unused_imports)]
+pub use tx_chain;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2243,5 +2404,82 @@ mod tests {
         let identity2 = des.build_identity().unwrap();
         // quick and dirty. oh well.
         assert_eq!(identity.id(), identity2.id());
+    }
+
+    #[test]
+    fn tx_chain() {
+        let mut rng = test::rng_seeded(b"hi there!");
+        let (_master_key, transactions, _admin_key) =
+            test::create_fake_identity(&mut rng, Timestamp::from_str("2024-01-01T00:00:06Z").unwrap());
+
+        let ext = |now, prev, ref_id: &[&TransactionID], data: &[u8]| {
+            let mut ref_str = Vec::new();
+            for id in ref_id {
+                ref_str.push(format!("{}", id));
+            }
+            transactions
+                .ext(
+                    &HashAlgo::Blake3,
+                    now,
+                    prev,
+                    Some(Vec::from(b"/stamp/test").into()),
+                    Some([("ref", ref_str.join(",").as_str())]),
+                    Vec::from(data).into(),
+                )
+                .unwrap()
+        };
+
+        let (transactions, _name_to_op, _id_to_name) = tx_chain! {
+            [
+                G = ("2024-01-04T00:01:01Z", |now, prev| ext(now, prev, &[A.id(), F.id()], b"bathroom??!"));
+                B = ("2024-01-02T00:01:01Z", |now, prev| ext(now, prev, &[A.id(), C.id()], b"me"));
+                E = ("2024-01-02T00:01:01Z", |now, prev| ext(now, prev, &[], b"i"));
+                C = ("2024-01-02T00:01:01Z", |now, prev| ext(now, prev, &[A.id(), B.id()], b"may"));
+                D = ("2024-01-04T00:01:01Z", |now, prev| ext(now, prev, &[], b"your"));
+                A = ("2024-01-03T00:01:01Z", |now, prev| ext(now, prev, &[], b"pardon"));
+                F = ("2024-01-02T00:01:01Z", |now, prev| ext(now, prev, &[], b"use"));
+            ],
+            [
+                [A] <- [B],
+                [A, B] <- [C],
+                [C] <- [D, E],
+                [E] <- [F],
+                [D, F] <- [G],
+            ],
+        };
+        let datas = transactions
+            .iter()
+            .map(|t| match t.entry().body() {
+                TransactionBody::ExtV1 { payload, .. } => payload.clone(),
+                _ => panic!("oh no"),
+            })
+            .collect::<Vec<_>>();
+        let contexts = transactions
+            .iter()
+            .map(|t| match t.entry().body() {
+                TransactionBody::ExtV1 { context, .. } => context.as_ref().unwrap().get(&BinaryVec::from(Vec::from(b"ref"))).unwrap(),
+                _ => panic!("oh no"),
+            })
+            .map(|b| String::from_utf8(b.to_vec()).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            datas,
+            vec!["pardon", "me", "may", "i", "use", "your", "bathroom??!"]
+                .iter()
+                .map(|x| BinaryVec::from(Vec::from(x.as_bytes())))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            contexts,
+            vec![
+                "",
+                "N7-6K1IJdrqSc10hA0ST3G7UetA5F9AcPcITz35pyqoA,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "N7-6K1IJdrqSc10hA0ST3G7UetA5F9AcPcITz35pyqoA,AUPTwLGX1YnEqD6old_pN9LeReiRrLK770DHXVlAtYIA",
+                "",
+                "",
+                "",
+                "N7-6K1IJdrqSc10hA0ST3G7UetA5F9AcPcITz35pyqoA,4CjQyzCxVyfr8I9rb4aQnYzqIoD_z8ftQfmkE4FYjBgA",
+            ],
+        );
     }
 }

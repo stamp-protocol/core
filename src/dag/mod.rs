@@ -13,7 +13,7 @@ mod transactions;
 
 pub use crate::dag::{
     transaction::{Transaction, TransactionBody, TransactionEntry, TransactionID},
-    transactions::Transactions,
+    transactions::{tx_chain, Transactions},
 };
 use crate::{error::Error, util::Timestamp};
 use getset::{Getters, MutGetters};
