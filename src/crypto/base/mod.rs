@@ -53,7 +53,8 @@ pub const KDF_MEM_SENSITIVE: u32 = 1048576;
 /// These can be used as an input to any Stamp function that accepts `&mut rng`. Otherwise, you can
 /// bring your own RNG that implements [`rand::RngCore`].
 pub mod rng {
-    use rand::{rngs::OsRng, RngCore, SeedableRng};
+    pub use rand::{rngs::OsRng, CryptoRng, RngCore, SeedableRng};
+    pub use rand_chacha::{ChaCha20Rng, ChaCha8Rng};
 
     /// Create a seeded chacha20 RNG. If you don't have a good reason for creating a seeded RNG,
     /// please see the [`chacha20`] function.
