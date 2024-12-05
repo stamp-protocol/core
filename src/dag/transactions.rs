@@ -218,7 +218,7 @@ impl Transactions {
         }
 
         let nodes = self.transactions().iter().map(|x| x.into()).collect::<Vec<_>>();
-        let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&nodes);
+        let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&[&nodes]);
 
         if dag.head().len() != 1 {
             Err(Error::DagGenesisError)?;
@@ -873,7 +873,7 @@ macro_rules! tx_chain {
         let mut id_to_name = std::collections::HashMap::new();
         // convert our temp node list a list of `DagNode`s, then build our DAG and walk it.
         let nodes = nodes_tmp.iter().map(|x| x.into()).collect::<Vec<_>>();
-        let dag: Dag<TransactionID, Node> = Dag::from_nodes(&nodes);
+        let dag: Dag<TransactionID, Node> = Dag::from_nodes(&[&nodes]);
 
         dag.walk(|node, _, _| {
             // loop over this node's previous transactions list, converting the temporary ids

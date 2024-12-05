@@ -128,6 +128,7 @@ macro_rules! make_dag_chain {
         $(
             let dt: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_timestamp(2455191939 + $ts, 0).unwrap();
             let now = crate::util::Timestamp::from(dt);
+            #[allow(non_snake_case)]
             let mut $names = trans.ext(&crate::crypto::base::HashAlgo::Blake3, now, vec![], None, None::<HashMapAsn1<BinaryVec, BinaryVec>>, Vec::from(format!("{}", stringify!($names)).as_bytes()).into()).unwrap();
             $names.entry_mut().set_previous_transactions(vec![]);
             name_to_tid.insert(stringify!($names), $names.id().clone());

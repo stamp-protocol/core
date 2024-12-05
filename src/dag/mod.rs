@@ -111,14 +111,23 @@ where
         }
     }
 
-    /// Takes a flat list of nodes and returns a of DAG that models those nodes.
-    pub fn from_nodes(nodes: &[DagNode<'a, I, T>]) -> Dag<'a, I, T> {
+    /// Takes a list of a list of nodes and returns a of DAG that models those nodes.
+    ///
+    /// The reason we don't just do a flat list is sometimes we want to build a DAG by mashing a
+    /// number of nodes from multiple places together. We can support that internally, but
+    /// representing that as a structure that can be passed in naturally is difficult. So instead
+    /// we make the interface slightly more awkward by forcing you to wrap your collection in an
+    /// extra `&[...]` but ultimately it gives us more performance because you don't have to clone
+    /// your nodes to all be in one vec.
+    pub fn from_nodes(node_collections: &[&[DagNode<'a, I, T>]]) -> Dag<'a, I, T> {
         // create our DAG object.
         let mut dag = Dag::new();
 
         // index our nodes into the DAG.
-        for node in nodes {
-            dag.index_mut().insert(*node.id(), node.clone());
+        for nodes in node_collections {
+            for node in nodes.iter() {
+                dag.index_mut().insert(*node.id(), node.clone());
+            }
         }
 
         // holds locations at which our chain breaks, ie we reference a node that cannot be
@@ -135,26 +144,28 @@ where
 
         // this is a temporary index that stores &nodeid -> &Timestamp lookups, allowing us
         // to iterate and sort the `next` elements for each DAG node.
-        let mut trans_created_idx = HashMap::with_capacity(nodes.len());
+        let mut trans_created_idx = HashMap::with_capacity(node_collections.iter().map(|x| x.len()).sum());
 
         // now loop over our nodes again and update our .next[] references.
         // after this, we'll have both forward and backward links for all available nodes.
-        for node in nodes {
-            trans_created_idx.insert(node.id(), node.timestamp().timestamp_millis());
-            let prev = node.prev();
-            if prev.is_empty() {
-                // cool, we found a head node. track it.
-                head_nodes.push((node.timestamp(), node.id()));
-            } else {
-                for prev_id in prev {
-                    match dag.index_mut().get_mut(prev_id) {
-                        Some(previous_node) => {
-                            previous_node.next_mut().push(node.id());
-                        }
-                        None => {
-                            // we're referencing a node we cannot find. this means we have a break in
-                            // our DAG chain
-                            missing_nodes.insert(prev_id);
+        for nodes in node_collections {
+            for node in nodes.iter() {
+                trans_created_idx.insert(node.id(), node.timestamp().timestamp_millis());
+                let prev = node.prev();
+                if prev.is_empty() {
+                    // cool, we found a head node. track it.
+                    head_nodes.push((node.timestamp(), node.id()));
+                } else {
+                    for prev_id in prev {
+                        match dag.index_mut().get_mut(prev_id) {
+                            Some(previous_node) => {
+                                previous_node.next_mut().push(node.id());
+                            }
+                            None => {
+                                // we're referencing a node we cannot find. this means we have a break in
+                                // our DAG chain
+                                missing_nodes.insert(prev_id);
+                            }
                         }
                     }
                 }
@@ -464,7 +475,7 @@ mod tests {
            []
         };
         let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&nodes);
+        let dag = Dag::from_nodes(&[&nodes]);
         assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
         assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["G"],);
         assert_eq!(
@@ -536,7 +547,7 @@ mod tests {
         };
         transaction_list.sort_by_key(|x| x.id().clone());
         let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&nodes);
+        let dag = Dag::from_nodes(&[&nodes]);
         assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
         assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["G"],);
         assert_eq!(
@@ -606,7 +617,7 @@ mod tests {
         };
         transaction_list.sort_by_key(|x| x.id().clone());
         let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&nodes);
+        let dag = Dag::from_nodes(&[&nodes]);
         assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
         assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
         assert_eq!(dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B"],);
@@ -673,7 +684,7 @@ mod tests {
            []
         };
         let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&nodes);
+        let dag = Dag::from_nodes(&[&nodes]);
         assert_eq!(
             dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
             vec!["E", "A", "F", "G", "B", "C", "D", "H"],
@@ -716,7 +727,7 @@ mod tests {
            []
         };
         let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&nodes);
+        let dag = Dag::from_nodes(&[&nodes]);
         assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A"],);
         assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["O", "Q"],);
         assert_eq!(
@@ -778,7 +789,7 @@ mod tests {
            []
         };
         let nodes = transaction_list.iter().map(|t| t.into()).collect::<Vec<_>>();
-        let dag = Dag::from_nodes(&nodes);
+        let dag = Dag::from_nodes(&[&nodes]);
         assert_eq!(dag.head().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A"],);
         assert_eq!(dag.tail().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["C"],);
         assert_eq!(dag.visited().iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(), vec!["A", "B", "C"],);
@@ -799,6 +810,42 @@ mod tests {
                 .map(|(tid, ancestry, eq)| (*tid_to_name.get(&tid).unwrap(), ancestry, eq))
                 .collect::<Vec<_>>(),
             vec![("A", vec![0], true), ("B", vec![0], true), ("C", vec![0], true),],
+        )
+    }
+
+    #[test]
+    fn dag_multiple_node_sources() {
+        let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
+        let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
+        #[allow(non_snake_case, unused_mut)]
+        let (transaction_list1, tid_to_name1, _name_to_tid) = make_dag_chain! {
+           transactions,
+           [A(0), B(10), C(20)],
+           [
+               [A] <- [B],
+               [B] <- [C],
+           ],
+           []
+        };
+        let (transaction_list2, tid_to_name2, _name_to_tid) = make_dag_chain! {
+           transactions,
+           [D(5), E(40), F(40)],
+           [
+               [D] <- [E, F],
+               [E] <- [F],
+           ],
+           []
+        };
+        let nodes1 = transaction_list1.iter().map(|x| x.into()).collect::<Vec<_>>();
+        let nodes2 = transaction_list2.iter().map(|x| x.into()).collect::<Vec<_>>();
+        let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&[&nodes1[..], &nodes2[..]]);
+        assert_eq!(
+            dag.visited()
+                .iter()
+                .map(|tid| *tid_to_name1.get(tid).or_else(|| tid_to_name2.get(tid)).unwrap())
+                .collect::<Vec<_>>(),
+            vec!["A", "D", "B", "C", "E", "F"],
         )
     }
 }
