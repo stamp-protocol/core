@@ -188,36 +188,11 @@ impl Transactions {
         }
     }
 
-    /// Build an identity from our heroic transactions.
-    ///
-    /// This happens using the [`Dag`] utility helper to process and walk the transactions of the
-    /// DAG in order. Inside that walk function, each branch of the DAG gets its own branch ID, and
-    /// we use these branch IDs to create a set of identities (one-per-branch) that remains updated
-    /// as the transactions are walked. the nearest common branch to a transaction (or set of
-    /// transactions in the case of a merge) is used to *verify* the transaction, and if
-    /// verification passes, the transaction is then applied to ALL identities in its ancestry.
-    ///
-    /// The end result is that when we pluck the root identity off of the branch tracker, it has
-    /// had all the transactions validated and applied to it *in order*, giving us a final
-    /// identity!
-    ///
-    /// Easy, right??
-    ///
-    /// NOTE: this algorithm handles signing key conflicts by only using the
-    /// nearest branch-level identity to *validate* the current transaction,
-    /// although the transaction is applied to all identities from previous
-    /// branches as well. However, this algorithm does not handle other
-    /// conflicts (such as duplicate entries).
-    pub fn build_identity(&self) -> Result<Identity> {
-        if self.transactions().is_empty() {
-            Err(Error::DagEmpty)?;
-        }
-        let transactions = self.transactions.clone();
+    fn build_identity_impl(transactions: &[Transaction]) -> Result<Identity> {
         if transactions.is_empty() {
             Err(Error::DagEmpty)?;
         }
-
-        let nodes = self.transactions().iter().map(|x| x.into()).collect::<Vec<_>>();
+        let nodes = transactions.iter().map(|x| x.into()).collect::<Vec<_>>();
         let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&[&nodes]);
 
         if dag.head().len() != 1 {
@@ -229,7 +204,7 @@ impl Transactions {
         }
 
         if !dag.missing().is_empty() {
-            Err(Error::DagMissingTransaction(format!("{}", dag.unvisited().iter().next().unwrap())))?;
+            Err(Error::DagMissingTransactions(dag.missing().iter().cloned().cloned().collect::<Vec<_>>()))?;
         }
 
         let first_trans = dag.index().get(&dag.head()[0]).ok_or(Error::DagBuildError)?;
@@ -313,6 +288,68 @@ impl Transactions {
         // note here we grab the identity at branch 0...this is the root identity that all the
         // transactions have been applied to in-order.
         Ok(branch_identities.get(&0).ok_or(Error::DagMissingIdentity)?.clone())
+    }
+
+    /// Build an identity from our heroic transactions.
+    ///
+    /// This happens using the [`Dag`] utility helper to process and walk the transactions of the
+    /// DAG in order. Inside that walk function, each branch of the DAG gets its own branch ID, and
+    /// we use these branch IDs to create a set of identities (one-per-branch) that remains updated
+    /// as the transactions are walked. the nearest common branch to a transaction (or set of
+    /// transactions in the case of a merge) is used to *verify* the transaction, and if
+    /// verification passes, the transaction is then applied to ALL identities in its ancestry.
+    ///
+    /// The end result is that when we pluck the root identity off of the branch tracker, it has
+    /// had all the transactions validated and applied to it *in order*, giving us a final
+    /// identity!
+    ///
+    /// Easy, right??
+    ///
+    /// NOTE: this algorithm handles signing key conflicts by only using the
+    /// nearest branch-level identity to *validate* the current transaction,
+    /// although the transaction is applied to all identities from previous
+    /// branches as well. However, this algorithm does not handle other
+    /// conflicts (such as duplicate entries).
+    pub fn build_identity(&self) -> Result<Identity> {
+        Self::build_identity_impl(self.transactions())
+    }
+
+    /// Builds an identity using a set of transaction IDs as the stopping point.
+    ///
+    /// Basically this means we look at those transaction IDs, work backwards to find the entire
+    /// identity DAG leading up to those transaction IDs, and omit any transactions not in that
+    /// tree. The idea here is that we can build the identity at a certain point in history to
+    /// verify the validity of some transaction that may have been issued in the past (which is no
+    /// longer valid).
+    pub fn build_identity_at_point_in_history(&self, past_transactions: &[TransactionID]) -> Result<Identity> {
+        let mut transactions_idx = HashMap::with_capacity(self.transactions().len());
+        for trans in self.transactions().iter() {
+            transactions_idx.insert(trans.id(), trans);
+        }
+
+        fn transaction_finder<'a>(
+            idx: &'a HashMap<&TransactionID, &Transaction>,
+            prev: &'a [TransactionID],
+            visited: &mut HashSet<&'a TransactionID>,
+            final_list: &mut Vec<Transaction>,
+        ) -> Result<()> {
+            for txid in prev {
+                if visited.contains(txid) {
+                    continue;
+                }
+                let trans = idx.get(&txid).ok_or_else(|| Error::DagMissingTransactions(vec![txid.clone()]))?;
+                visited.insert(txid);
+                #[allow(suspicious_double_ref_op)]
+                final_list.push(trans.clone().clone());
+                transaction_finder(idx, trans.entry().previous_transactions(), visited, final_list)?;
+            }
+            Ok(())
+        }
+        let mut visited = HashSet::new();
+        let mut transactions = Vec::new();
+        transaction_finder(&transactions_idx, past_transactions, &mut visited, &mut transactions)?;
+
+        Self::build_identity_impl(&transactions)
     }
 
     /// Find any transactions that are not referenced as previous transactions.
@@ -756,7 +793,10 @@ impl SerText for Transactions {}
 /// OR you could try this handy macro:
 ///
 /// ```rust,ignore
-/// tx_chain! {
+/// // transaction_list: Vec<Transaction>
+/// // name_to_tx: HashMap<&'static str, Transaction>
+/// // id_to_name: HashMap<TransactionID, &'static str>
+/// let (transaction_list, name_to_tx, id_to_name): (Vec<Transaction>, HashMap<&'static str, Transaction>, HashMap<TransactionID, &'static str>) = tx_chain! {
 ///     // define your tx here, giving each a short, memorable name, a timestamp, and a lambda
 ///     // function in the format:
 ///     //
@@ -775,7 +815,7 @@ impl SerText for Transactions {}
 ///         G = ("2024-01-06T00:01:01Z", |now, prev| { ... B.id() ... F.id() ... });
 ///     ],
 ///     // now define all your backlinks. A & B are refrenced by C, C by D & E, E by F, D & F by G
-///     // this creates our heroic DAG chain. note that all these nodes/ops are signed and valid.
+///     // this creates our heroic DAG chain.
 ///     [
 ///         [A] <- [B],
 ///         [A, B] <- [C],
@@ -783,7 +823,7 @@ impl SerText for Transactions {}
 ///         [E] <- [F],
 ///         [D, F] <- [G],
 ///     ],
-/// }
+/// };
 /// ```
 ///
 /// Note that this macro is only really used for testing, but because it's so useful for testing,
@@ -875,7 +915,8 @@ macro_rules! tx_chain {
         let nodes = nodes_tmp.iter().map(|x| x.into()).collect::<Vec<_>>();
         let dag: Dag<TransactionID, Node> = Dag::from_nodes(&[&nodes]);
 
-        dag.walk(|node, _, _| {
+        for node_id in dag.visited() {
+            let node = dag.index().get(node_id).unwrap();
             // loop over this node's previous transactions list, converting the temporary ids
             // contained there into proper IDs via our old->new id mapping (which is populated just
             // below).
@@ -898,8 +939,7 @@ macro_rules! tx_chain {
                     transactions.push($name.clone());
                 }
             )*
-            Ok::<(), ()>(())
-        }).unwrap();
+        }
         // send it
         (transactions, name_to_tx, id_to_name)
     }};
@@ -936,6 +976,116 @@ mod tests {
         let (_master_key, transactions, _admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let identity = transactions.build_identity().unwrap();
         assert_eq!(IdentityID::from(transactions.transactions()[0].id().clone()), identity.id().clone());
+    }
+
+    #[test]
+    fn transactions_build_identity_at_point_in_history() {
+        let mut rng = crate::util::test::rng_seeded(b"beans");
+        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let mktx = |now, prev, body| Transaction::create_raw(&HashAlgo::Blake3, now, prev, body).unwrap();
+        let (tx, name_to_tx, id_to_name): (Vec<Transaction>, HashMap<&'static str, Transaction>, HashMap<TransactionID, &'static str>) = tx_chain! {
+            [
+                GEN = ("2024-01-01T00:00:00Z", |now, prev| mktx(now, prev, transactions.transactions()[0].entry().body().clone()));
+                NAM1 = ("2024-01-01T00:00:00Z", |now, prev| mktx(now, prev, TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_public("terrance".into())), name: None }));
+                DOM1 = ("2024-01-02T00:00:00Z", |now, prev| mktx(now, prev, TransactionBody::MakeClaimV1 { spec: ClaimSpec::Domain(MaybePrivate::new_public("plaque.is.a.figment.of.the.liberal.media".into())), name: Some("site/primary".into()) }));
+                DOM2 = ("2024-01-03T00:00:00Z", |now, prev| mktx(now, prev, TransactionBody::MakeClaimV1 { spec: ClaimSpec::Domain(MaybePrivate::new_public("plaque.is.a.figment.of.the.dental.industry".into())), name: Some("site/primary".into()) }));
+                EM1 = ("2024-01-04T00:00:00Z", |now, prev| mktx(now, prev, TransactionBody::MakeClaimV1 { spec: ClaimSpec::Email(MaybePrivate::new_public("fossil@niceyniceyzoozoo.com".into())), name: Some("email/personal".into()) }));
+                EM2 = ("2024-01-05T00:00:00Z", |now, prev| mktx(now, prev, TransactionBody::MakeClaimV1 { spec: ClaimSpec::Email(MaybePrivate::new_public("balloon.face@artbyvince.com".into())), name: Some("email/personal".into()) }));
+                URL1 = ("2024-01-06T00:00:00Z", |now, prev| mktx(now, prev, TransactionBody::MakeClaimV1 { spec: ClaimSpec::Url(MaybePrivate::new_public(Url::parse("https://uploads.vidbox.legitimate-vids.com.ru/watch/YOUR.WIFE.WITH.THE.NEXTDOOR.NEIGHBOR.mp4.avi.zip.exe").unwrap())), name: Some("urllol".into()) }));
+            ],
+            [
+                [GEN] <- [NAM1],
+                [NAM1] <- [DOM1, DOM2],
+                [DOM1] <- [EM1],
+                [DOM2] <- [EM2],
+                [EM1, EM2] <- [URL1],
+            ],
+        };
+        let names_to_ids =
+            |names: &[&str]| -> Vec<TransactionID> { names.iter().map(|n| name_to_tx.get(n).unwrap().id().clone()).collect::<Vec<_>>() };
+        let tx = tx.into_iter().map(|t| t.sign(&master_key, &admin_key).unwrap()).collect::<Vec<_>>();
+        let mut transactions = Transactions::new();
+        for t in tx {
+            transactions.push_transaction_raw(t).unwrap();
+        }
+
+        #[allow(unused_variables)]
+        let dump_transactions = |transactions: &[Transaction]| {
+            for tx in transactions {
+                println!("-- {}: {}", id_to_name.get(tx.id()).unwrap(), tx.id());
+                for prev in tx.entry().previous_transactions() {
+                    println!("   prev: {}", prev);
+                }
+            }
+        };
+
+        {
+            let identity = transactions.build_identity().unwrap();
+            assert_eq!(identity.names(), vec!["terrance".to_string()]);
+            assert_eq!(
+                identity.emails(),
+                vec!["fossil@niceyniceyzoozoo.com".to_string(), "balloon.face@artbyvince.com".to_string()]
+            );
+            match identity.find_claim_by_name("site/primary").unwrap().spec() {
+                ClaimSpec::Domain(MaybePrivate::Public(val)) => {
+                    assert_eq!(val, "plaque.is.a.figment.of.the.dental.industry");
+                }
+                _ => panic!("bad variant"),
+            }
+            match identity.find_claim_by_name("email/personal").unwrap().spec() {
+                ClaimSpec::Email(MaybePrivate::Public(val)) => {
+                    assert_eq!(val, "balloon.face@artbyvince.com");
+                }
+                _ => panic!("bad variant"),
+            }
+            match identity.find_claim_by_name("urllol").unwrap().spec() {
+                ClaimSpec::Url(MaybePrivate::Public(val)) => {
+                    assert_eq!(
+                        val,
+                        &Url::parse(
+                            "https://uploads.vidbox.legitimate-vids.com.ru/watch/YOUR.WIFE.WITH.THE.NEXTDOOR.NEIGHBOR.mp4.avi.zip.exe"
+                        )
+                        .unwrap()
+                    );
+                }
+                _ => panic!("bad variant"),
+            }
+        }
+
+        {
+            let identity = transactions.build_identity_at_point_in_history(&names_to_ids(&["DOM1"])).unwrap();
+            assert_eq!(identity.names(), vec!["terrance".to_string()]);
+            assert_eq!(identity.emails(), Vec::<String>::new());
+            match identity.find_claim_by_name("site/primary").unwrap().spec() {
+                ClaimSpec::Domain(MaybePrivate::Public(domain)) => {
+                    assert_eq!(domain, "plaque.is.a.figment.of.the.liberal.media");
+                }
+                _ => panic!("bad variant"),
+            }
+            assert!(identity.find_claim_by_name("email/personal").is_none());
+            assert!(identity.find_claim_by_name("urllol").is_none());
+        }
+
+        {
+            let identity = transactions
+                .build_identity_at_point_in_history(&names_to_ids(&["DOM2", "EM1"]))
+                .unwrap();
+            assert_eq!(identity.names(), vec!["terrance".to_string()]);
+            assert_eq!(identity.emails(), vec!["fossil@niceyniceyzoozoo.com".to_string()]);
+            match identity.find_claim_by_name("site/primary").unwrap().spec() {
+                ClaimSpec::Domain(MaybePrivate::Public(val)) => {
+                    assert_eq!(val, "plaque.is.a.figment.of.the.dental.industry");
+                }
+                _ => panic!("bad variant"),
+            }
+            match identity.find_claim_by_name("email/personal").unwrap().spec() {
+                ClaimSpec::Email(MaybePrivate::Public(val)) => {
+                    assert_eq!(val, "fossil@niceyniceyzoozoo.com");
+                }
+                _ => panic!("bad variant"),
+            }
+            assert!(identity.find_claim_by_name("urllol").is_none());
+        }
     }
 
     #[test]
