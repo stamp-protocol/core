@@ -1,6 +1,7 @@
 //! The main error enum for the project lives here, and documents the various
 //! conditions that can arise while interacting with the system.
 
+use crate::dag::TransactionID;
 use thiserror::Error;
 
 /// This is our error enum. It contains an entry for any part of the system in
@@ -93,8 +94,8 @@ pub enum Error {
     DagGenesisError,
 
     /// A transaction was referenced but is missing from a DAG.
-    #[error("missing transaction referenced in DAG: {0}")]
-    DagMissingTransaction(String),
+    #[error("missing transaction referenced in DAG: {0:?}")]
+    DagMissingTransactions(Vec<TransactionID>),
 
     /// Found a transaction that references other transactions (via its
     /// `previous_transactions`) in the DAG that do not exist.
