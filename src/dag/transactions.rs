@@ -1086,6 +1086,12 @@ mod tests {
             }
             assert!(identity.find_claim_by_name("urllol").is_none());
         }
+
+        {
+            let txid = TransactionID::from(Hash::new_blake3(b"not today, jerry").unwrap());
+            let res = transactions.build_identity_at_point_in_history(&[txid.clone()]);
+            assert_eq!(res.err().unwrap(), Error::DagMissingTransactions(vec![txid]));
+        }
     }
 
     #[test]
