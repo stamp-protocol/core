@@ -61,20 +61,6 @@ pub enum CryptoKeypair {
     },
 }
 
-impl Clone for CryptoKeypair {
-    fn clone(&self) -> Self {
-        match self {
-            CryptoKeypair::Curve25519XChaCha20Poly1305 {
-                public,
-                secret: secret_maybe,
-            } => CryptoKeypair::Curve25519XChaCha20Poly1305 {
-                public: public.clone(),
-                secret: secret_maybe.as_ref().cloned(),
-            },
-        }
-    }
-}
-
 impl CryptoKeypair {
     /// Create a new keypair
     pub fn new_curve25519xchacha20poly1305<R: RngCore + CryptoRng>(rng: &mut R, master_key: &SecretKey) -> Result<Self> {
@@ -220,6 +206,20 @@ impl CryptoKeypair {
     /// Create a KeyID from this keypair.
     pub fn key_id(&self) -> KeyID {
         KeyID::CryptoKeypair(self.clone().into())
+    }
+}
+
+impl Clone for CryptoKeypair {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Curve25519XChaCha20Poly1305 {
+                public,
+                secret: secret_maybe,
+            } => Self::Curve25519XChaCha20Poly1305 {
+                public: public.clone(),
+                secret: secret_maybe.as_ref().cloned(),
+            },
+        }
     }
 }
 

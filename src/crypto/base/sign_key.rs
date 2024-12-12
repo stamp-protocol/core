@@ -16,7 +16,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// A signature derived from a signing keypair.
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum SignKeypairSignature {
     #[rasn(tag(explicit(0)))]
@@ -43,20 +43,6 @@ pub enum SignKeypair {
         #[rasn(tag(explicit(1)))]
         secret: Option<Private<BinarySecret<32>>>,
     },
-}
-
-impl Clone for SignKeypair {
-    fn clone(&self) -> Self {
-        match self {
-            SignKeypair::Ed25519 {
-                public,
-                secret: secret_maybe,
-            } => SignKeypair::Ed25519 {
-                public: public.clone(),
-                secret: secret_maybe.as_ref().cloned(),
-            },
-        }
-    }
 }
 
 impl SignKeypair {
@@ -148,6 +134,20 @@ impl SignKeypair {
     /// Create a KeyID from this keypair.
     pub fn key_id(&self) -> KeyID {
         KeyID::SignKeypair(self.clone().into())
+    }
+}
+
+impl Clone for SignKeypair {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Ed25519 {
+                public,
+                secret: secret_maybe,
+            } => Self::Ed25519 {
+                public: public.clone(),
+                secret: secret_maybe.as_ref().cloned(),
+            },
+        }
     }
 }
 

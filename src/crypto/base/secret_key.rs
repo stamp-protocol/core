@@ -195,6 +195,14 @@ impl SecretKey {
     }
 }
 
+impl Clone for SecretKey {
+    fn clone(&self) -> Self {
+        match self {
+            Self::XChaCha20Poly1305(secret) => Self::XChaCha20Poly1305(BinarySecret::new(secret.expose_secret().clone())),
+        }
+    }
+}
+
 impl AsRef<[u8]> for SecretKey {
     fn as_ref(&self) -> &[u8] {
         match self {
