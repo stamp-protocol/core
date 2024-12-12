@@ -371,7 +371,7 @@ impl Transactions {
     /// onto this transaction set. We consume and return the transaction set for
     /// this.
     pub fn push_transaction(mut self, transaction: Transaction) -> Result<Self> {
-        self.push_transaction_raw(transaction)?;
+        self.push_transaction_mut(transaction)?;
         Ok(self)
     }
 
@@ -382,7 +382,7 @@ impl Transactions {
     /// Unless you know you want an [`Identity`] instead of [`Transactions`], or
     /// when in doubt, use [`push_transaction()`][Transactions::push_transaction]
     /// instead of this method.
-    pub fn push_transaction_raw(&mut self, transaction: Transaction) -> Result<Identity> {
+    pub fn push_transaction_mut(&mut self, transaction: Transaction) -> Result<Identity> {
         if self.transactions().iter().any(|x| x.id() == transaction.id()) {
             Err(Error::DuplicateTransaction)?;
         }
@@ -1006,7 +1006,7 @@ mod tests {
         let tx = tx.into_iter().map(|t| t.sign(&master_key, &admin_key).unwrap()).collect::<Vec<_>>();
         let mut transactions = Transactions::new();
         for t in tx {
-            transactions.push_transaction_raw(t).unwrap();
+            transactions.push_transaction_mut(t).unwrap();
         }
 
         #[allow(unused_variables)]
@@ -1112,7 +1112,7 @@ mod tests {
             .unwrap();
         transactions_1.push_transaction(trans_claim_signed.clone()).unwrap();
         transactions_2.build_identity().unwrap();
-        match transactions_2.push_transaction_raw(trans_claim_signed.clone()) {
+        match transactions_2.push_transaction_mut(trans_claim_signed.clone()) {
             Ok(_) => {
                 panic!("pushed a bad raw transaction: {}", trans_claim_signed.id().as_string())
             }
