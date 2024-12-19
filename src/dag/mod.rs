@@ -248,7 +248,7 @@ where
     /// And so these are the things we return. In that order. As a tuple.
     pub fn walk<F, E>(&self, mut opfn: F) -> core::result::Result<(Vec<&'a I>, HashSet<&'a I>), E>
     where
-        F: FnMut(&DagNode<'a, I, T>, &[u32], &HashMap<&'a I, Vec<u32>>) -> core::result::Result<(), E>,
+        F: FnMut(&DagNode<'a, I, T>, &[&'a I], &HashMap<&'a I, Vec<&'a I>>) -> core::result::Result<(), E>,
     {
         /// stored with the `pending_nodes` as a way to instruct nodes whether they should
         /// use the given ancestry as-is or whether they should grab a new branch and append it to
@@ -256,27 +256,28 @@ where
         ///
         /// this makes it so we don't have to sort the node.next() entries, and instead can
         /// lazy-load our ancetry so it corresponds directly to node order.
-        struct AncestryGrabber {
+        struct AncestryGrabber<'a, I> {
             /// The ancestry of the previous node
-            ancestry: Vec<u32>,
-            /// Whether or not we should register a new branch
-            grab_next_branch: bool,
+            ancestry: Vec<(u32, &'a I)>,
+            /// Whether or not we should append the current transaction being processed to the
+            /// ancestry list. In general, you'd do this after a branch.
+            append_next_transaction: bool,
         }
 
-        impl AncestryGrabber {
-            fn new(ancestry: Vec<u32>, grab_next_branch: bool) -> Self {
+        impl<'a, I> AncestryGrabber<'a, I> {
+            fn new(ancestry: Vec<(u32, &'a I)>, append_next_transaction: bool) -> Self {
                 Self {
                     ancestry,
-                    grab_next_branch,
+                    append_next_transaction,
                 }
             }
 
-            fn consume(self) -> (Vec<u32>, bool) {
+            fn consume(self) -> (Vec<(u32, &'a I)>, bool) {
                 let Self {
                     ancestry,
-                    grab_next_branch,
+                    append_next_transaction,
                 } = self;
-                (ancestry, grab_next_branch)
+                (ancestry, append_next_transaction)
             }
         }
 
@@ -295,21 +296,25 @@ where
         // the key is the node's timestamp, the node's ID, and the node that
         // created this entry (if any). the value is a struct that stores ancestry and determines
         // if we need to create a new branch for this node when it runs.
-        let mut pending_nodes: BTreeMap<(&'a Timestamp, &'a I, Option<&'a I>), AncestryGrabber> = Default::default();
-        // this tracks the current branch number, user to catalog branches/merges and ancestry.
-        let mut cur_branch: u32 = 0;
+        //
+        // NOTE: although temping to remove the `Option<&'a I>` from the key, please don't! allows
+        // multiple pending entries for merge nodes, which is exactly what you want. so although we
+        // never actually USE the value itself, it's used to segment different DAG paths from each
+        // other. leave it.
+        let mut pending_nodes: BTreeMap<(&'a Timestamp, &'a I, Option<&'a I>), AncestryGrabber<'a, I>> = Default::default();
+        // allows sorting branch trackers causally via an incrementing number
+        let mut branch_sort: u32 = 0;
         // Stores the ancestry of each node as they are being processed. This allows ancestry
         // lookups of nodes that have been previously seen.
-        let mut branch_tracker: HashMap<&'a I, Vec<u32>> = HashMap::with_capacity(self.index().len());
+        let mut branch_tracker: HashMap<&'a I, Vec<&'a I>> = HashMap::with_capacity(self.index().len());
         // this is used by merging nodes (ie, has prev_nodes.len() > 1) to store the
         // ancestry of the previous nodes so they can all be merged together when the merge is
         // ready.
-        let mut branch_merge_tracker: HashMap<&'a I, Vec<Vec<u32>>> = HashMap::new();
+        let mut branch_merge_tracker: HashMap<&'a I, Vec<Vec<(u32, &'a I)>>> = HashMap::new();
 
-        // a helper function to grab the current branch id and increment the counter.
-        let mut next_branch = || {
-            let prev = cur_branch;
-            cur_branch += 1;
+        let mut next_branch_sort = || {
+            let prev = branch_sort;
+            branch_sort += 1;
             prev
         };
 
@@ -336,7 +341,7 @@ where
                 // to be in the same position in the btree that they are when we loop over them.
                 pending_nodes.insert(
                     (node.timestamp(), tid, None),
-                    AncestryGrabber::new(vec![], true),
+                    AncestryGrabber::new(vec![(next_branch_sort(), tid)], false),
                 );
             }}
         }
@@ -353,7 +358,7 @@ where
                 continue;
             }
 
-            let (mut ancestry, grab_next_branch) = ancestry_grabber.consume();
+            let (mut ancestry, ancestry_append_next_transaction) = ancestry_grabber.consume();
 
             with_trans! { &tid, node, {
                 // if we have more than one previous node, we have to make sure that all the
@@ -384,21 +389,25 @@ where
                             continue;
                         }
                     }
-                    ancestry.push(next_branch());
-                    ancestry.sort();
+                    ancestry.push((next_branch_sort(), tid));
+                    ancestry.sort_by(|a, b| a.0.cmp(&b.0));
                     ancestry.dedup();
-                } else if grab_next_branch {
-                    ancestry.push(next_branch());
+                } else if ancestry_append_next_transaction {
+                    // we got a signal from a previous transaction that we should create a new
+                    // ancestry branch. this is likely because this transaction is one of a few
+                    // that branches off a past transaction.
+                    ancestry.push((next_branch_sort(), tid));
                 }
 
-                branch_tracker.insert(&tid, ancestry.clone());
+                let ancestry_flat = ancestry.iter().map(|(_, x)| *x).collect::<Vec<_>>();
+                branch_tracker.insert(&tid, ancestry_flat.clone());
 
                 // track that we've seen this node
                 visited.push(&tid);
                 visited_set.insert(&tid);
 
                 // run our user-supplied operation
-                opfn(node, &ancestry, &branch_tracker)?;
+                opfn(node, &ancestry_flat, &branch_tracker)?;
 
                 // if we only have one next node, we don't need to fuss with ancestry at all: we
                 // can just set it as is.
@@ -508,20 +517,23 @@ mod tests {
 
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, _| {
-            visited.push((*tid_to_name.get(node.id()).unwrap(), Vec::from(ancestry)));
+            visited.push((
+                *tid_to_name.get(node.id()).unwrap(),
+                ancestry.iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
+            ));
             Ok::<(), Error>(())
         })
         .unwrap();
         assert_eq!(
             visited,
             vec![
-                ("A", vec![0]),
-                ("B", vec![1]),
-                ("C", vec![0, 1, 2]),
-                ("D", vec![0, 1, 2, 3]),
-                ("E", vec![0, 1, 2, 4]),
-                ("F", vec![0, 1, 2, 4]),
-                ("G", vec![0, 1, 2, 3, 4, 5]),
+                ("A", vec!["A"]),
+                ("B", vec!["B"]),
+                ("C", vec!["A", "B", "C"]),
+                ("D", vec!["A", "B", "C", "D"]),
+                ("E", vec!["A", "B", "C", "E"]),
+                ("F", vec!["A", "B", "C", "E"]),
+                ("G", vec!["A", "B", "C", "D", "E", "G"]),
             ],
         );
     }
@@ -580,20 +592,23 @@ mod tests {
 
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, _| {
-            visited.push((*tid_to_name.get(node.id()).unwrap(), Vec::from(ancestry)));
+            visited.push((
+                *tid_to_name.get(node.id()).unwrap(),
+                ancestry.iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
+            ));
             Ok::<(), Error>(())
         })
         .unwrap();
         assert_eq!(
             visited,
             vec![
-                ("A", vec![0]),
-                ("B", vec![1]),
-                ("C", vec![0, 1, 2]),
-                ("D", vec![0, 1, 2, 3]),
-                ("E", vec![0, 1, 2, 4]),
-                ("F", vec![0, 1, 2, 4]),
-                ("G", vec![0, 1, 2, 3, 4, 5]),
+                ("A", vec!["A"]),
+                ("B", vec!["B"]),
+                ("C", vec!["A", "B", "C"]),
+                ("D", vec!["A", "B", "C", "D"]),
+                ("E", vec!["A", "B", "C", "E"]),
+                ("F", vec!["A", "B", "C", "E"]),
+                ("G", vec!["A", "B", "C", "D", "E", "G"]),
             ],
         );
     }
@@ -650,11 +665,14 @@ mod tests {
 
         let mut visited = Vec::new();
         dag.walk(|node, ancestry, _| {
-            visited.push((*tid_to_name.get(node.id()).unwrap(), Vec::from(ancestry)));
+            visited.push((
+                *tid_to_name.get(node.id()).unwrap(),
+                ancestry.iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
+            ));
             Ok::<(), Error>(())
         })
         .unwrap();
-        assert_eq!(visited, vec![("A", vec![0]), ("B", vec![1]),],);
+        assert_eq!(visited, vec![("A", vec!["A"]), ("B", vec!["B"])]);
     }
 
     #[test]
@@ -740,8 +758,13 @@ mod tests {
         );
         assert_eq!(dag.missing.len(), 0);
         let mut visited = Vec::new();
+        println!("---");
         dag.walk(|node, ancestry, idx| {
-            visited.push((*node.id(), Vec::from(ancestry), idx.get(node.id()).map(|x| x.as_slice()) == Some(ancestry)));
+            visited.push((
+                *node.id(),
+                ancestry.iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
+                idx.get(node.id()).map(|x| x.as_slice()) == Some(ancestry),
+            ));
             Ok::<(), Error>(())
         })
         .unwrap();
@@ -751,23 +774,23 @@ mod tests {
                 .map(|(tid, ancestry, eq)| (*tid_to_name.get(&tid).unwrap(), ancestry, eq))
                 .collect::<Vec<_>>(),
             vec![
-                ("A", vec![0], true),
-                ("B", vec![0, 1], true),
-                ("E", vec![0, 1, 2], true),
-                ("J", vec![0, 1, 2], true),
-                ("C", vec![0, 1, 3], true),
-                ("F", vec![0, 1, 3, 4], true),
-                ("G", vec![0, 1, 3, 5], true),
-                ("D", vec![0, 1, 6], true),
-                ("H", vec![0, 1, 6, 7], true),
-                ("I", vec![0, 1, 6, 8], true),
-                ("K", vec![0, 1, 2, 6, 7, 8, 9], true),
-                ("L", vec![0, 1, 3, 4], true),
-                ("M", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], true),
-                ("O", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], true),
-                ("N", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12], true),
-                ("P", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12], true),
-                ("Q", vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12], true),
+                ("A", vec!["A"], true),
+                ("B", vec!["A", "B"], true),
+                ("E", vec!["A", "B", "E"], true),
+                ("J", vec!["A", "B", "E"], true),
+                ("C", vec!["A", "B", "C"], true),
+                ("F", vec!["A", "B", "C", "F"], true),
+                ("G", vec!["A", "B", "C", "G"], true),
+                ("D", vec!["A", "B", "D"], true),
+                ("H", vec!["A", "B", "D", "H"], true),
+                ("I", vec!["A", "B", "D", "I"], true),
+                ("K", vec!["A", "B", "E", "D", "H", "I", "K"], true),
+                ("L", vec!["A", "B", "C", "F"], true),
+                ("M", vec!["A", "B", "E", "C", "F", "G", "D", "H", "I", "K", "M"], true),
+                ("O", vec!["A", "B", "E", "C", "F", "G", "D", "H", "I", "K", "M", "O"], true),
+                ("N", vec!["A", "B", "E", "C", "F", "G", "D", "H", "I", "K", "M", "N"], true),
+                ("P", vec!["A", "B", "E", "C", "F", "G", "D", "H", "I", "K", "M", "N"], true),
+                ("Q", vec!["A", "B", "E", "C", "F", "G", "D", "H", "I", "K", "M", "N"], true),
             ],
         )
     }
@@ -807,9 +830,13 @@ mod tests {
         assert_eq!(
             visited
                 .into_iter()
-                .map(|(tid, ancestry, eq)| (*tid_to_name.get(&tid).unwrap(), ancestry, eq))
+                .map(|(tid, ancestry, eq)| (
+                    *tid_to_name.get(&tid).unwrap(),
+                    ancestry.iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
+                    eq
+                ))
                 .collect::<Vec<_>>(),
-            vec![("A", vec![0], true), ("B", vec![0], true), ("C", vec![0], true),],
+            vec![("A", vec!["A"], true), ("B", vec!["A"], true), ("C", vec!["A"], true),],
         )
     }
 
