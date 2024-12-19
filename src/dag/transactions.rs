@@ -209,9 +209,9 @@ impl Transactions {
 
         let first_trans = dag.index().get(&dag.head()[0]).ok_or(Error::DagBuildError)?;
         first_trans.node().verify(None)?;
-        let mut branch_identities: HashMap<u32, Identity> = HashMap::new();
-        branch_identities.insert(0, Transactions::apply_transaction(None, first_trans.node())?);
-        let root_identity = branch_identities.get(&0).ok_or(Error::DagMissingIdentity)?.clone();
+        let mut branch_identities: HashMap<&TransactionID, Identity> = HashMap::new();
+        branch_identities.insert(first_trans.id(), Transactions::apply_transaction(None, first_trans.node())?);
+        let root_identity = branch_identities.get(first_trans.id()).ok_or(Error::DagMissingIdentity)?.clone();
         dag.walk(|node, ancestry, branch_tracker| {
             // check if this is a merge transaction or not.
             if node.prev().len() > 1 {
@@ -232,7 +232,7 @@ impl Transactions {
                             .map(|ancestors| ancestors.iter().copied().collect::<BTreeSet<_>>())
                             .ok_or(Error::DagBuildError)
                     })
-                    .collect::<Result<Vec<BTreeSet<u32>>>>()?;
+                    .collect::<Result<Vec<BTreeSet<&TransactionID>>>>()?;
                 // now we're going to run the intersection of all the ancestry sets...
                 let intersected = match ancestry_sets.len() {
                     0 => BTreeSet::new(),
@@ -251,7 +251,7 @@ impl Transactions {
                 //
                 // now apply this transaction to all of its ancestor branches, making sure to only
                 // apply the transaction once-per-branch
-                let mut seen_branch: HashSet<u32> = HashSet::new();
+                let mut seen_branch: HashSet<&TransactionID> = HashSet::new();
                 for ancestors in ancestry_sets {
                     // we're kind of going in reverse order here (oldest -> newest) but it
                     // doesn't really matter.
@@ -268,12 +268,12 @@ impl Transactions {
                 // this is NOT a merge transaction, so we can simply verify the transaction against
                 // the current branch identity and if all goes well, apply it to all the ancestor
                 // identities.
-                let current_branch_identity = branch_identities.entry(*ancestry.last().unwrap()).or_insert(root_identity.clone());
+                let current_branch_identity = branch_identities.entry(ancestry.last().unwrap()).or_insert(root_identity.clone());
                 // first verify the transaction is valid against the CURRENT branch identity.
                 node.node().verify(Some(current_branch_identity))?;
                 // now apply this transaction to all of its ancestor branches
                 for branch in ancestry {
-                    let branch_identity = branch_identities.entry(*branch).or_insert(root_identity.clone());
+                    let branch_identity = branch_identities.entry(branch).or_insert(root_identity.clone());
                     (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), node.node())?;
                 }
             } else {
@@ -287,7 +287,7 @@ impl Transactions {
 
         // note here we grab the identity at branch 0...this is the root identity that all the
         // transactions have been applied to in-order.
-        Ok(branch_identities.get(&0).ok_or(Error::DagMissingIdentity)?.clone())
+        Ok(branch_identities.get(first_trans.id()).ok_or(Error::DagMissingIdentity)?.clone())
     }
 
     /// Build an identity from our heroic transactions.
