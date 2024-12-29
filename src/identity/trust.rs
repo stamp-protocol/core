@@ -620,9 +620,9 @@ mod tests {
                 }
 
                 fn add_claim(&mut self, claimtype: &'static str) {
-                    let now = Timestamp::from_str("2016-04-04T02:00:00-0700").unwrap();
+                    let now = Timestamp::from_str("2016-04-04T02:00:00-0700").expect("make_trust_network!{} timestamp parsed");
                     let spec = match claimtype {
-                        "id" => ClaimSpec::Identity(MaybePrivate::new_public(self.transactions.identity_id().unwrap())),
+                        "id" => ClaimSpec::Identity(MaybePrivate::new_public(self.transactions.identity_id().expect("identity has id"))),
                         "name" => ClaimSpec::Name(MaybePrivate::new_public("Butch".into())),
                         "email" => ClaimSpec::Email(MaybePrivate::new_public("butch@canineclub.info".into())),
                         _ => panic!("make_trust_network!::IdentityKeys::add_claim() -- unknown claim type {}", claimtype),

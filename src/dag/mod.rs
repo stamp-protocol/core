@@ -204,7 +204,7 @@ where
                 }
                 Ok::<(), Error>(())
             })
-            .unwrap();
+            .expect("Dag::from_nodes()::walk() returned without error");
         for entry in missing {
             missing_nodes.insert(&entry);
         }

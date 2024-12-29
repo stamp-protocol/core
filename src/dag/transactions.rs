@@ -866,8 +866,8 @@ macro_rules! tx_chain {
             $(
                 #[allow(non_snake_case, unused_mut)]
                 let mut $name = Node {
-                    id: $crate::dag::TransactionID::from(Hash::new_blake3(stringify!($name).as_bytes()).unwrap()),
-                    timestamp: $crate::util::Timestamp::from_str($time).unwrap(),
+                    id: $crate::dag::TransactionID::from(Hash::new_blake3(stringify!($name).as_bytes()).expect("tx_chain!{} hash constructed")),
+                    timestamp: $crate::util::Timestamp::from_str($time).expect("tx_chain!{} timestamp parsed"),
                     previous_transactions: Vec::new(),
                 };
             )*
@@ -896,7 +896,7 @@ macro_rules! tx_chain {
         // this also saves us from having to pass a name->transaction mapping hash in each call!
         let fake_trans = $crate::dag::Transaction::create_raw_with_id(
             $crate::dag::TransactionID::from($crate::crypto::base::Hash::new_blake3_from_bytes([0u8; 32])),
-            $crate::util::Timestamp::from_str("1900-01-01T06:43:22Z").unwrap(),
+            $crate::util::Timestamp::from_str("1900-01-01T06:43:22Z").expect("tx_chain!{} timestamp parsed"),
             Vec::new(),
             $crate::dag::TransactionBody::DeletePolicyV1 { id: $crate::policy::PolicyID::from($crate::dag::TransactionID::from($crate::crypto::base::Hash::new_blake3_from_bytes([0u8; 32]))) },
         );
@@ -916,16 +916,16 @@ macro_rules! tx_chain {
         let dag: Dag<TransactionID, Node> = Dag::from_nodes(&[&nodes]);
 
         for node_id in dag.visited() {
-            let node = dag.index().get(node_id).unwrap();
+            let node = dag.index().get(node_id).expect("tx_chain!{} dag index has node");
             // loop over this node's previous transactions list, converting the temporary ids
             // contained there into proper IDs via our old->new id mapping (which is populated just
             // below).
-            let prev = node.node().previous_transactions.iter().map(|x| node_id_map.get(x).unwrap()).cloned().collect::<Vec<_>>();
+            let prev = node.node().previous_transactions.iter().map(|x| node_id_map.get(x).expect("tx_chain!{} id map has entry")).cloned().collect::<Vec<_>>();
             // create a giant if {} block that matches nodes via the deterministic hash id
             // (Hash(<name>)), allowing us to run our transaction creation fn for the current node.
             if false {}
             $(
-                else if node.node().id() == &$crate::dag::TransactionID::from(Hash::new_blake3(stringify!($name).as_bytes()).unwrap()) {
+                else if node.node().id() == &$crate::dag::TransactionID::from(Hash::new_blake3(stringify!($name).as_bytes()).expect("tx_chain!{} hash constructed")) {
                     let name: &'static str = stringify!($name);
                     // run our $tx (transaction creation function) for the current node
                     $name = $tx(node.node().timestamp.clone(), prev);

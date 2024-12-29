@@ -187,7 +187,11 @@ impl From<Timestamp> for Date {
 impl From<Date> for Timestamp {
     fn from(date: Date) -> Self {
         // UGH I hate unwraps, but this should never fail sooo....
-        Self(DateTime::<Utc>::from_naive_utc_and_offset(date.and_hms_opt(0, 0, 0).unwrap(), Utc))
+        Self(DateTime::<Utc>::from_naive_utc_and_offset(
+            date.and_hms_opt(0, 0, 0)
+                .expect("Timestamp::from(Date) -- DateTime construction failed"),
+            Utc,
+        ))
     }
 }
 
