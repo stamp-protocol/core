@@ -19,7 +19,7 @@ use serde::{
     ser::Serializer,
     Deserialize, Serialize,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::From;
 use std::ops::{Deref, DerefMut};
 use zeroize::Zeroize;
@@ -245,7 +245,7 @@ impl<'de, const N: usize> serde::Deserialize<'de> for BinarySecret<N> {
 }
 
 /// Defines a container for variable-length binary data in octet form.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BinaryVec(Vec<u8>);
 
 impl From<Vec<u8>> for BinaryVec {
@@ -345,12 +345,16 @@ impl<K, V> KeyValEntry<K, V> {
     }
 }
 
-/// Wraps a [HashMap] in a way that allows for ASN1 (de)serialization.
+/// Wraps a [BTreeMap] in a way that allows for ASN1 (de)serialization.
+///
+/// We use `BTreeMap` instead of `HashMap` because we require *stable sort*. Hash maps
+/// can lose sorting, which means converting into them will often change the order of
+/// the serialized components arbitrarily.
 #[derive(Clone, Debug)]
-pub struct HashMapAsn1<K, V>(HashMap<K, V>);
+pub struct HashMapAsn1<K, V>(BTreeMap<K, V>);
 
 impl<K, V> Deref for HashMapAsn1<K, V> {
-    type Target = HashMap<K, V>;
+    type Target = BTreeMap<K, V>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -362,9 +366,15 @@ impl<K, V> DerefMut for HashMapAsn1<K, V> {
     }
 }
 
-impl<K, V> From<HashMap<K, V>> for HashMapAsn1<K, V> {
-    fn from(map: HashMap<K, V>) -> Self {
+impl<K, V> From<BTreeMap<K, V>> for HashMapAsn1<K, V> {
+    fn from(map: BTreeMap<K, V>) -> Self {
         Self(map)
+    }
+}
+
+impl<K: Ord, V> From<HashMap<K, V>> for HashMapAsn1<K, V> {
+    fn from(map: HashMap<K, V>) -> Self {
+        Self(map.into_iter().collect())
     }
 }
 
@@ -385,14 +395,14 @@ impl<K: Encode, V: Encode> Encode for HashMapAsn1<K, V> {
     }
 }
 
-impl<K: Decode + Eq + Hash, V: Decode> Decode for HashMapAsn1<K, V> {
+impl<K: Decode + Ord, V: Decode> Decode for HashMapAsn1<K, V> {
     fn decode_with_tag_and_constraints<D: Decoder>(
         decoder: &mut D,
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
     ) -> std::result::Result<Self, D::Error> {
         let vec: Vec<KeyValEntry<K, V>> = decoder.decode_sequence_of(tag, constraints)?;
-        let mut map = HashMap::with_capacity(vec.len());
+        let mut map = BTreeMap::new();
         for KeyValEntry { key, val } in vec {
             map.insert(key, val);
         }
@@ -406,16 +416,16 @@ impl<K: Serialize, V: Serialize> Serialize for HashMapAsn1<K, V> {
     }
 }
 
-impl<'de, K: Deserialize<'de> + Eq + Hash, V: Deserialize<'de>> serde::Deserialize<'de> for HashMapAsn1<K, V> {
+impl<'de, K: Deserialize<'de> + Ord, V: Deserialize<'de>> serde::Deserialize<'de> for HashMapAsn1<K, V> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-        let map = HashMap::<K, V>::deserialize(deserializer)?;
+        let map = BTreeMap::<K, V>::deserialize(deserializer)?;
         Ok(Self(map))
     }
 }
 
 impl<const N: usize> From<[(&[u8], &[u8]); N]> for HashMapAsn1<BinaryVec, BinaryVec> {
     fn from(map: [(&[u8], &[u8]); N]) -> Self {
-        let mut hash = HashMap::with_capacity(N);
+        let mut hash = BTreeMap::new();
         for (key, val) in map.into_iter() {
             hash.insert(BinaryVec::from(Vec::from(key)), BinaryVec::from(Vec::from(val)));
         }
@@ -425,7 +435,7 @@ impl<const N: usize> From<[(&[u8], &[u8]); N]> for HashMapAsn1<BinaryVec, Binary
 
 impl<const N: usize> From<[(&str, &str); N]> for HashMapAsn1<BinaryVec, BinaryVec> {
     fn from(map: [(&str, &str); N]) -> Self {
-        let mut hash = HashMap::with_capacity(N);
+        let mut hash = BTreeMap::new();
         for (key, val) in map.into_iter() {
             hash.insert(BinaryVec::from(Vec::from(key.as_bytes())), BinaryVec::from(Vec::from(val.as_bytes())));
         }
