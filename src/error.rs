@@ -97,11 +97,6 @@ pub enum Error {
     #[error("missing transaction referenced in DAG: {0:?}")]
     DagMissingTransactions(Vec<TransactionID>),
 
-    /// Found a transaction that references other transactions (via its
-    /// `previous_transactions`) in the DAG that do not exist.
-    #[error("orphaned transaction found {0}")]
-    DagOrphanedTransaction(String),
-
     /// An error while engaging in deserialization.
     #[error("deserialization error")]
     DeserializeBase64(#[from] base64::DecodeError),
@@ -180,9 +175,9 @@ pub enum Error {
     #[error("transaction mismatch")]
     TransactionMismatch,
 
-    /// This transaction cannot be saved
-    #[error("transaction cannot be saved: {0}")]
-    TransactionInvalid(String),
+    /// This transaction is invalid
+    #[error("transaction {0} is invalid: {1}")]
+    TransactionInvalid(crate::dag::TransactionID, String),
 
     /// This transaction has no signatures. Why don't you try and get one?
     #[error("transaction has no signatures")]

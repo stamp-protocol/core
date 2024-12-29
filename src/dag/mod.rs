@@ -17,7 +17,7 @@ pub use crate::dag::{
 };
 use crate::{error::Error, util::Timestamp};
 use getset::{Getters, MutGetters};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
 /// Defines a node in a DAG. Each node can have multiple previous nodes and multiple next nodes.
@@ -441,6 +441,147 @@ where
         Ok((visited, missing_nodes))
     }
 
+    /// Build a state from a DAG.
+    ///
+    /// This works by walking the DAG forward, while tracking node ancestry and validating nodes
+    /// and applying them backwards as the DAG advances, ultimately returning the state from the
+    /// FIRST node, which will receive all of the updates *in order* BUT WITH THE CAVEAT that each
+    /// node will be validated based on its branch-local state. This means it validates nodes based
+    /// on their ancestry (previous_transactions) with no bearing on what is happening in
+    /// concurrent branches within the DAG.
+    ///
+    /// Note that this assumes your DAG starts with one head element! If this is not the case,
+    /// you'll want to deal with your own state application manually.
+    pub fn apply<'b, S, E, FN, FS, FV, FA>(
+        &self,
+        branch_state: &'b mut HashMap<I, S>,
+        new_initial_state_fn: FN,
+        skip_fn: FS,
+        validate_fn: FV,
+        apply_fn: FA,
+    ) -> core::result::Result<&'b S, E>
+    where
+        I: Clone,
+        E: From<Error>,
+        S: Clone,
+        FN: Fn(&DagNode<'a, I, T>) -> core::result::Result<S, E>,
+        FS: Fn(&DagNode<'a, I, T>) -> bool,
+        FV: Fn(&S, &DagNode<'a, I, T>) -> core::result::Result<(), E>,
+        FA: Fn(&mut S, &DagNode<'a, I, T>) -> core::result::Result<(), E>,
+    {
+        if self.head().len() != 1 {
+            Err(Error::DagGenesisError)?;
+        }
+
+        if !self.missing().is_empty() {
+            // ideally we'd return actual transaction IDs here, but it's incredibly limiting to
+            // need I: Into<TransactionID> just so we can show you an error that you should really
+            // be checking for yourself, so...
+            Err(Error::DagMissingTransactions(Vec::new()))?;
+        }
+
+        self.walk(|node, ancestry, branch_tracker| {
+            if skip_fn(node) {
+                return Ok::<(), E>(());
+            }
+
+            // check if this is a merge transaction or not.
+            if node.prev().len() > 1 {
+                // ok, we're merging a set of transactions together.
+                //
+                // we first need to verify this transaction is valid. the best way to do this is to
+                // find the branch that all the to-be-merged transactions have in common, pull out
+                // the identity for that branch, and use it to verify our merge transaction.
+
+                // so first, grab all the ancestors from our previous transactions, and put them
+                // into BTreeSets so they're pre-sorted for us.
+                let ancestry_sets = node
+                    .prev()
+                    .iter()
+                    .map(|tid| {
+                        // note, we `.enumerate()` because this allows our BTreeSet to sort our ids
+                        // in-order properly
+                        branch_tracker
+                            .get(tid)
+                            .map(|ancestors| ancestors.iter().copied().collect::<BTreeSet<_>>())
+                            .ok_or(Error::DagBuildError.into())
+                    })
+                    .collect::<core::result::Result<Vec<BTreeSet<&I>>, E>>()?;
+                // now we're going to run the intersection of all the ancestry sets...
+                let intersected = match ancestry_sets.len() {
+                    0 => BTreeSet::new(),
+                    _ => ancestry_sets[1..].iter().fold(ancestry_sets[0].clone(), |mut acc, set| {
+                        acc.retain(|item| set.contains(item));
+                        acc
+                    }),
+                };
+                let first_ancestry_set = branch_tracker.get(&node.prev()[0]).ok_or_else(|| Error::DagBuildError)?;
+                // and grab the highest-sorted common branch (aka the most recent one)
+                // take any ancestry set in our previous list and walk it *in reverse* (see the
+                // rev()??) until we find a node that's in our intersected set. that's our nearest
+                // common ancestor, and we'll use it to validate this dumb node.
+                let most_recent_common_branch = first_ancestry_set
+                    .iter()
+                    .rev()
+                    .find(|tid| intersected.contains(*tid))
+                    .ok_or_else(|| Error::DagBuildError)?;
+                // now grab the identity associated with this common branch and verify...
+                let most_recent_common_ancestor_state = branch_state.get(most_recent_common_branch).ok_or(Error::DagBuildError)?;
+                validate_fn(most_recent_common_ancestor_state, node)?;
+
+                // verified!
+                //
+                // now apply this transaction to all of its ancestor branches, making sure to only
+                // apply the transaction once-per-branch
+                let mut seen_branch: HashSet<&I> = HashSet::new();
+                for ancestors in ancestry_sets {
+                    // we're kind of going in reverse order here (oldest -> newest) but it
+                    // doesn't really matter.
+                    for branch in &ancestors {
+                        if seen_branch.contains(branch) {
+                            continue;
+                        }
+                        let root_state = branch_state.get(self.head()[0]).ok_or(Error::DagBuildError)?.clone();
+                        #[allow(suspicious_double_ref_op)]
+                        let state = branch_state.entry(branch.clone().clone()).or_insert_with(|| root_state.clone());
+                        apply_fn(state, node)?;
+                        seen_branch.insert(*branch);
+                    }
+                }
+            } else if node.prev().len() == 1 {
+                // this is NOT a merge transaction, so we can simply verify the transaction against
+                // the current branch identity and if all goes well, apply it to all the ancestor
+                // identities.
+                let current_ancestor_id = ancestry.last().expect("ancestry is not empty");
+                let current_branch_state = if branch_state.contains_key(current_ancestor_id) {
+                    branch_state.get_mut(current_ancestor_id).ok_or(Error::DagBuildError)?
+                } else {
+                    let ancestor_before_id = ancestry.iter().rev().skip(1).next().ok_or(Error::DagBuildError)?;
+                    let ancestor_before = branch_state.get(ancestor_before_id).ok_or(Error::DagBuildError)?.clone();
+                    #[allow(suspicious_double_ref_op)]
+                    branch_state.insert(current_ancestor_id.clone().clone(), ancestor_before);
+                    branch_state.get_mut(current_ancestor_id).ok_or(Error::DagBuildError)?
+                };
+                // first verify the transaction is valid against the CURRENT branch state.
+                validate_fn(&current_branch_state, node)?;
+                // now apply this transaction to all of its ancestor branches
+                for branch in ancestry {
+                    #[allow(suspicious_double_ref_op)]
+                    let state = branch_state.get_mut(branch).ok_or(Error::DagBuildError)?;
+                    apply_fn(state, node)?;
+                }
+            } else {
+                // we're processing our genesis transaction
+                let state = new_initial_state_fn(node)?;
+                validate_fn(&state, node)?;
+                #[allow(suspicious_double_ref_op)]
+                branch_state.insert(ancestry.last().ok_or(Error::DagBuildError)?.clone().clone(), state);
+            }
+            Ok::<(), E>(())
+        })?;
+        Ok(branch_state.get(&self.head()[0]).ok_or(Error::DagBuildError)?)
+    }
+
     /// Given a set of nodes visited from [`Dag::walk()`], find the nodes that are unvisited from
     /// that walk (ie, any known nodes we didn't walk to).
     pub fn find_unvisited(&self) -> HashSet<&'a I> {
@@ -758,7 +899,6 @@ mod tests {
         );
         assert_eq!(dag.missing.len(), 0);
         let mut visited = Vec::new();
-        println!("---");
         dag.walk(|node, ancestry, idx| {
             visited.push((
                 *node.id(),
@@ -874,5 +1014,216 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["A", "D", "B", "C", "E", "F"],
         )
+    }
+
+    /// A simple transaction operation. Can allow even numbers, block even numbers, and increment
+    /// the state by some value.
+    #[derive(Clone, Debug)]
+    enum TransOp {
+        AllowEven,
+        BlockEven,
+        Inc(u32),
+    }
+
+    /// A painfully simple transaction for constructing DAGs and allowing maintaining a state.
+    #[derive(Clone, Debug)]
+    struct Trans {
+        id: TransactionID,
+        created: Timestamp,
+        prev: Vec<TransactionID>,
+        op: TransOp,
+    }
+
+    impl Trans {
+        fn new<R: crate::crypto::base::rng::RngCore + crate::crypto::base::rng::CryptoRng>(
+            rng: &mut R,
+            created: &str,
+            prev: Vec<&Trans>,
+            op: TransOp,
+        ) -> Self {
+            let mut randbuf = [0u8; 32];
+            rng.fill_bytes(&mut randbuf);
+            let created = Timestamp::from_str(created).unwrap();
+            let prev = prev.into_iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+            Self {
+                id: TransactionID::from(crate::crypto::base::Hash::new_blake3_from_bytes(randbuf)),
+                created,
+                prev,
+                op,
+            }
+        }
+    }
+
+    impl<'a> From<&'a Trans> for DagNode<'a, TransactionID, Trans> {
+        fn from(t: &'a Trans) -> Self {
+            DagNode::new(&t.id, t, t.prev.iter().collect::<Vec<_>>(), &t.created)
+        }
+    }
+
+    /// A state object that can be updated via transactions in our heroic DAG.
+    #[derive(Clone, Debug)]
+    struct State {
+        allow_even: bool,
+        val: u32,
+    }
+
+    impl State {
+        fn from_trans(trans: &Trans) -> Self {
+            match trans.op {
+                TransOp::AllowEven => Self { allow_even: true, val: 0 },
+                TransOp::BlockEven => Self { allow_even: false, val: 0 },
+                TransOp::Inc(val) => Self { allow_even: true, val },
+            }
+        }
+
+        fn validate(&self, transaction: &Trans) -> crate::error::Result<()> {
+            match transaction.op {
+                TransOp::Inc(val) => {
+                    if !self.allow_even && (val & 1) == 0 {
+                        Err(crate::error::Error::TransactionInvalid(transaction.id.clone(), String::from("no evens!")))?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
+        fn apply(&mut self, transaction: &Trans) -> crate::error::Result<()> {
+            match transaction.op {
+                TransOp::AllowEven => {
+                    self.allow_even = true;
+                }
+                TransOp::BlockEven => {
+                    self.allow_even = false;
+                }
+                TransOp::Inc(val) => {
+                    self.val += val;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn dag_apply_branch_validation() {
+        // test some basic validation failures
+        {
+            let mut rng = crate::util::test::rng_seeded(b"i got a question about you, mortician...");
+            let trans_a = Trans::new(&mut rng, "2047-12-01T00:00:00Z", vec![], TransOp::BlockEven);
+            let trans_b = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::Inc(7));
+            let trans_c = Trans::new(&mut rng, "2047-12-01T00:00:03Z", vec![&trans_b], TransOp::Inc(4));
+
+            let transactions = vec![trans_a, trans_b, trans_c.clone()];
+            let nodes = transactions.iter().map(|x| x.into()).collect::<Vec<_>>();
+            let dag: Dag<TransactionID, Trans> = Dag::from_nodes(&[&nodes]);
+            let mut state_tracker: HashMap<TransactionID, State> = HashMap::new();
+            let res = dag.apply(
+                &mut state_tracker,
+                |node| Ok(State::from_trans(node.node())),
+                |_| false,
+                |state, node| state.validate(node.node()),
+                |state, node| state.apply(node.node()),
+            );
+            match res {
+                Err(Error::TransactionInvalid(ref id, ..)) => {
+                    assert_eq!(id, &trans_c.id);
+                }
+                _ => panic!("unexpected error: {:?}", res),
+            }
+        }
+
+        // now test what happens if validation takes competing branches/paths and our state
+        // diverges as a result. what then?!?!
+        fn run<R: crate::crypto::base::rng::RngCore + crate::crypto::base::rng::CryptoRng>(rng: &mut R) {
+            let trans_a = Trans::new(rng, "2047-12-01T00:00:00Z", vec![], TransOp::BlockEven);
+            let trans_b = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::AllowEven);
+            let trans_c = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::BlockEven);
+            let trans_d = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_b], TransOp::Inc(2));
+            let trans_e = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_b], TransOp::Inc(6));
+            let trans_f = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_d, &trans_e], TransOp::Inc(2));
+            let trans_g = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_f, &trans_c], TransOp::Inc(7));
+
+            let transactions = vec![trans_a, trans_b, trans_c, trans_d, trans_e, trans_f, trans_g];
+            let nodes = transactions.iter().map(|x| x.into()).collect::<Vec<_>>();
+            let dag: Dag<TransactionID, Trans> = Dag::from_nodes(&[&nodes]);
+
+            let mut state_tracker: HashMap<TransactionID, State> = HashMap::new();
+            let state = dag
+                .apply(
+                    &mut state_tracker,
+                    |node| Ok(State::from_trans(node.node())),
+                    |_| false,
+                    |state, node| state.validate(node.node()),
+                    |state, node| state.apply(node.node()),
+                )
+                .expect("dag applies properly");
+            assert_eq!(state.val, 17);
+        }
+        // run our tests with a new random state each time, trying to make sure ordering via
+        // transaction ID has no bearing
+        let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
+        for _ in 0..1000 {
+            run(&mut rng);
+        }
+    }
+
+    #[test]
+    fn dag_apply_skip() {
+        let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
+        let trans_a = Trans::new(&mut rng, "2047-12-01T00:00:00Z", vec![], TransOp::BlockEven);
+        let trans_b = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::AllowEven);
+        let trans_c = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::BlockEven);
+        let trans_d = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_b], TransOp::Inc(2));
+        let trans_e = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_b], TransOp::Inc(6));
+        let trans_f = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_d, &trans_e], TransOp::Inc(2));
+        let trans_g = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_f, &trans_c], TransOp::Inc(7));
+
+        let transactions = vec![trans_a, trans_b, trans_c, trans_d, trans_e, trans_f, trans_g];
+        let mut state_tracker: HashMap<TransactionID, State> = HashMap::new();
+
+        {
+            // grab a few nodes and run them.
+            let nodes = transactions[0..4].iter().map(|x| x.into()).collect::<Vec<_>>();
+            let dag: Dag<TransactionID, Trans> = Dag::from_nodes(&[&nodes]);
+            let num_validate = std::cell::RefCell::new(0);
+            let state = dag
+                .apply(
+                    &mut state_tracker,
+                    |node| Ok(State::from_trans(node.node())),
+                    |_| false,
+                    |state, node| {
+                        (*num_validate.borrow_mut()) += 1;
+                        state.validate(node.node())
+                    },
+                    |state, node| state.apply(node.node()),
+                )
+                .expect("dag applies properly");
+            assert_eq!(state.val, 2);
+            assert_eq!(num_validate.take(), 4);
+        }
+        {
+            // grab the rest of the nodes and run them, making sure to mark the nodes we already
+            // ran above as skips. we also use the same state object as the last run, so we
+            // build onto our existing state. this lets us stream in new transactions to a saved
+            // state without having to re-run/re-build our entire state front the back.
+            let nodes = transactions.iter().map(|x| x.into()).collect::<Vec<_>>();
+            let skip = transactions[0..4].iter().map(|x| x.id.clone()).collect::<HashSet<_>>();
+            let dag: Dag<TransactionID, Trans> = Dag::from_nodes(&[&nodes]);
+            let num_validate = std::cell::RefCell::new(0);
+            let state = dag
+                .apply(
+                    &mut state_tracker,
+                    |node| Ok(State::from_trans(node.node())),
+                    |node| skip.contains(node.id()),
+                    |state, node| {
+                        (*num_validate.borrow_mut()) += 1;
+                        state.validate(node.node())
+                    },
+                    |state, node| state.apply(node.node()),
+                )
+                .expect("dag applies properly");
+            assert_eq!(state.val, 17);
+            assert_eq!(num_validate.take(), 3);
+        }
     }
 }

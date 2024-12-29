@@ -21,7 +21,7 @@ use getset;
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Encode};
 use serde_derive::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 /// A container that holds a set of transactions.
 #[derive(Debug, Default, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
@@ -175,15 +175,24 @@ impl Transactions {
             }
             TransactionBody::PublishV1 { .. } => {
                 // NOPE
-                Err(Error::TransactionInvalid("Publish transactions cannot be applied to identities".into()))
+                Err(Error::TransactionInvalid(
+                    transaction.id().clone(),
+                    "Publish transactions cannot be applied to identities".into(),
+                ))
             }
             TransactionBody::SignV1 { .. } => {
                 // NOPE
-                Err(Error::TransactionInvalid("Sign transactions cannot be applied to identities".into()))
+                Err(Error::TransactionInvalid(
+                    transaction.id().clone(),
+                    "Sign transactions cannot be applied to identities".into(),
+                ))
             }
             TransactionBody::ExtV1 { .. } => {
                 // NOPE
-                Err(Error::TransactionInvalid("Ext transactions cannot be applied to identities".into()))
+                Err(Error::TransactionInvalid(
+                    transaction.id().clone(),
+                    "Ext transactions cannot be applied to identities".into(),
+                ))
             }
         }
     }
@@ -195,99 +204,28 @@ impl Transactions {
         let nodes = transactions.iter().map(|x| x.into()).collect::<Vec<_>>();
         let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&[&nodes]);
 
-        if dag.head().len() != 1 {
-            Err(Error::DagGenesisError)?;
-        }
-
-        if !dag.unvisited().is_empty() {
-            Err(Error::DagOrphanedTransaction(format!("{}", dag.unvisited().iter().next().unwrap())))?;
-        }
-
         if !dag.missing().is_empty() {
-            Err(Error::DagMissingTransactions(dag.missing().iter().cloned().cloned().collect::<Vec<_>>()))?;
+            #[allow(suspicious_double_ref_op)]
+            Err(Error::DagMissingTransactions(dag.missing().iter().map(|x| x.clone().clone()).collect::<Vec<_>>()))?;
         }
-
-        let first_trans = dag.index().get(&dag.head()[0]).ok_or(Error::DagBuildError)?;
-        first_trans.node().verify(None)?;
-        let mut branch_identities: HashMap<&TransactionID, Identity> = HashMap::new();
-        branch_identities.insert(first_trans.id(), Transactions::apply_transaction(None, first_trans.node())?);
-        let root_identity = branch_identities.get(first_trans.id()).ok_or(Error::DagMissingIdentity)?.clone();
-        dag.walk(|node, ancestry, branch_tracker| {
-            // check if this is a merge transaction or not.
-            if node.prev().len() > 1 {
-                // ok, we're merging a set of transactions together.
-                //
-                // we first need to verify this transaction is valid. the best way to do this is to
-                // find the branch that all the to-be-merged transactions have in common, pull out
-                // the identity for that branch, and use it to verify our merge transaction.
-
-                // so first, grab all the ancestors from our previous transactions, and put them
-                // into BTreeSets so they're pre-sorted for us.
-                let ancestry_sets = node
-                    .prev()
-                    .iter()
-                    .map(|tid| {
-                        branch_tracker
-                            .get(tid)
-                            .map(|ancestors| ancestors.iter().copied().collect::<BTreeSet<_>>())
-                            .ok_or(Error::DagBuildError)
-                    })
-                    .collect::<Result<Vec<BTreeSet<&TransactionID>>>>()?;
-                // now we're going to run the intersection of all the ancestry sets...
-                let intersected = match ancestry_sets.len() {
-                    0 => BTreeSet::new(),
-                    _ => ancestry_sets[1..].iter().fold(ancestry_sets[0].clone(), |mut acc, set| {
-                        acc.retain(|item| set.contains(item));
-                        acc
-                    }),
-                };
-                // and grab the highest-sorted common branch (aka the most recent one)
-                let most_recent_common_branch = intersected.last().ok_or(Error::DagBuildError)?;
-                // now grab the identity associated with this common branch and verify...
-                let most_recent_common_ancestor_identity = branch_identities.get(most_recent_common_branch).ok_or(Error::DagBuildError)?;
-                node.node().verify(Some(most_recent_common_ancestor_identity))?;
-
-                // verified!
-                //
-                // now apply this transaction to all of its ancestor branches, making sure to only
-                // apply the transaction once-per-branch
-                let mut seen_branch: HashSet<&TransactionID> = HashSet::new();
-                for ancestors in ancestry_sets {
-                    // we're kind of going in reverse order here (oldest -> newest) but it
-                    // doesn't really matter.
-                    for branch in &ancestors {
-                        if seen_branch.contains(branch) {
-                            continue;
-                        }
-                        let branch_identity = branch_identities.entry(*branch).or_insert(root_identity.clone());
-                        (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), node.node())?;
-                        seen_branch.insert(*branch);
-                    }
-                }
-            } else if node.prev().len() == 1 {
-                // this is NOT a merge transaction, so we can simply verify the transaction against
-                // the current branch identity and if all goes well, apply it to all the ancestor
-                // identities.
-                let current_branch_identity = branch_identities.entry(ancestry.last().unwrap()).or_insert(root_identity.clone());
-                // first verify the transaction is valid against the CURRENT branch identity.
-                node.node().verify(Some(current_branch_identity))?;
-                // now apply this transaction to all of its ancestor branches
-                for branch in ancestry {
-                    let branch_identity = branch_identities.entry(branch).or_insert(root_identity.clone());
-                    (*branch_identity) = Transactions::apply_transaction(Some((*branch_identity).clone()), node.node())?;
-                }
-            } else {
-                // if we're here, it means we're processing our genesis transaction. it should be
-                // the ONLY transaction that has no previous transactions, and because it was
-                // already used to create the root identity outside of the walk() loop, we don't
-                // actually need to do anything at all.
-            }
-            Ok::<(), Error>(())
-        })?;
+        let mut branch_identities: HashMap<TransactionID, Identity> = HashMap::new();
+        let identity = dag
+            .apply(
+                &mut branch_identities,
+                |node| Transactions::apply_transaction(None, node.node()),
+                |_node| false,
+                |identity, node| node.node().verify(Some(identity)),
+                |identity, node| {
+                    let id = identity.clone();
+                    (*identity) = Transactions::apply_transaction(Some(id), node.node())?;
+                    Ok(())
+                },
+            )?
+            .clone();
 
         // note here we grab the identity at branch 0...this is the root identity that all the
         // transactions have been applied to in-order.
-        Ok(branch_identities.get(first_trans.id()).ok_or(Error::DagMissingIdentity)?.clone())
+        Ok(identity)
     }
 
     /// Build an identity from our heroic transactions.
@@ -793,9 +731,6 @@ impl SerText for Transactions {}
 /// OR you could try this handy macro:
 ///
 /// ```rust,ignore
-/// // transaction_list: Vec<Transaction>
-/// // name_to_tx: HashMap<&'static str, Transaction>
-/// // id_to_name: HashMap<TransactionID, &'static str>
 /// let (transaction_list, name_to_tx, id_to_name): (Vec<Transaction>, HashMap<&'static str, Transaction>, HashMap<TransactionID, &'static str>) = tx_chain! {
 ///     // define your tx here, giving each a short, memorable name, a timestamp, and a lambda
 ///     // function in the format:
@@ -1117,7 +1052,10 @@ mod tests {
                 panic!("pushed a bad raw transaction: {}", trans_claim_signed.id().as_string())
             }
             Err(e) => {
-                assert_eq!(e, Error::DagOrphanedTransaction(trans_claim_signed.id().as_string()))
+                assert_eq!(
+                    e,
+                    Error::DagMissingTransactions(vec![trans_claim_signed.entry().previous_transactions()[0].clone()])
+                )
             }
         }
     }
