@@ -481,101 +481,134 @@ where
         }
 
         self.walk(|node, ancestry, branch_tracker| {
-            if skip_fn(node) {
-                return Ok::<(), E>(());
+            let current_ancestor_id = ancestry.last().expect("ancestry is not empty");
+            if !skip_fn(node) {
+                // check if this is a merge transaction or not.
+                if node.prev().len() > 1 {
+                    // ok, we're merging a set of transactions together.
+                    //
+                    // we first need to verify this transaction is valid. the best way to do this is to
+                    // find the branch that all the to-be-merged transactions have in common, pull out
+                    // the identity for that branch, and use it to verify our merge transaction.
+
+                    // so first, grab all the ancestors from our previous transactions, and put them
+                    // into BTreeSets so they're pre-sorted for us.
+                    let ancestry_sets = node
+                        .prev()
+                        .iter()
+                        .map(|tid| {
+                            // note, we `.enumerate()` because this allows our BTreeSet to sort our ids
+                            // in-order properly
+                            branch_tracker
+                                .get(tid)
+                                .map(|ancestors| ancestors.iter().copied().collect::<BTreeSet<_>>())
+                                .ok_or_else(|| Error::DagBuildError.into())
+                        })
+                        .collect::<core::result::Result<Vec<BTreeSet<&I>>, E>>()?;
+                    // now we're going to run the intersection of all the ancestry sets...
+                    let intersected = match ancestry_sets.len() {
+                        0 => BTreeSet::new(),
+                        _ => ancestry_sets[1..].iter().fold(ancestry_sets[0].clone(), |mut acc, set| {
+                            acc.retain(|item| set.contains(item));
+                            acc
+                        }),
+                    };
+                    let first_ancestry_set = branch_tracker.get(&node.prev()[0]).ok_or_else(|| Error::DagBuildError)?;
+                    // and grab the highest-sorted common branch (aka the most recent one)
+                    // take any ancestry set in our previous list and walk it *in reverse* (see the
+                    // rev()??) until we find a node that's in our intersected set. that's our nearest
+                    // common ancestor, and we'll use it to validate this dumb node.
+                    let most_recent_common_branch = first_ancestry_set
+                        .iter()
+                        .rev()
+                        .find(|tid| intersected.contains(*tid))
+                        .ok_or_else(|| Error::DagBuildError)?;
+                    // now grab the identity associated with this common branch and verify...
+                    let most_recent_common_ancestor_state = branch_state.get(most_recent_common_branch).ok_or(Error::DagBuildError)?;
+                    validate_fn(most_recent_common_ancestor_state, node)?;
+
+                    // verified!
+                    //
+                    // now apply this transaction to all of its ancestor branches, making sure to only
+                    // apply the transaction once-per-branch
+                    let mut seen_branch: HashSet<&I> = HashSet::new();
+                    for ancestors in ancestry_sets {
+                        // we're kind of going in reverse order here (oldest -> newest) but it
+                        // doesn't really matter.
+                        for branch in &ancestors {
+                            if seen_branch.contains(branch) {
+                                continue;
+                            }
+                            let root_state = branch_state.get(self.head()[0]).ok_or(Error::DagBuildError)?.clone();
+                            #[allow(suspicious_double_ref_op)]
+                            let state = branch_state.entry(branch.clone().clone()).or_insert_with(|| root_state.clone());
+                            apply_fn(state, node)?;
+                            seen_branch.insert(*branch);
+                        }
+                    }
+                } else if node.prev().len() == 1 {
+                    // this is NOT a merge transaction, so we can simply verify the transaction against
+                    // the current branch identity and if all goes well, apply it to all the ancestor
+                    // identities.
+                    let current_branch_state = if branch_state.contains_key(current_ancestor_id) {
+                        branch_state.get_mut(current_ancestor_id).ok_or(Error::DagBuildError)?
+                    } else {
+                        let ancestor_before_id = ancestry.iter().rev().skip(1).next().ok_or(Error::DagBuildError)?;
+                        let ancestor_before = branch_state.get(ancestor_before_id).ok_or(Error::DagBuildError)?.clone();
+                        #[allow(suspicious_double_ref_op)]
+                        branch_state.insert(current_ancestor_id.clone().clone(), ancestor_before);
+                        branch_state.get_mut(current_ancestor_id).ok_or(Error::DagBuildError)?
+                    };
+                    // first verify the transaction is valid against the CURRENT branch state.
+                    validate_fn(&current_branch_state, node)?;
+                    // now apply this transaction to all of its ancestor branches
+                    for branch in ancestry {
+                        #[allow(suspicious_double_ref_op)]
+                        let state = branch_state.get_mut(branch).ok_or(Error::DagBuildError)?;
+                        apply_fn(state, node)?;
+                    }
+                } else {
+                    // we're processing our genesis transaction
+                    let state = new_initial_state_fn(node)?;
+                    validate_fn(&state, node)?;
+                    #[allow(suspicious_double_ref_op)]
+                    branch_state.insert(ancestry.last().ok_or(Error::DagBuildError)?.clone().clone(), state);
+                }
             }
 
-            // check if this is a merge transaction or not.
-            if node.prev().len() > 1 {
-                // ok, we're merging a set of transactions together.
-                //
-                // we first need to verify this transaction is valid. the best way to do this is to
-                // find the branch that all the to-be-merged transactions have in common, pull out
-                // the identity for that branch, and use it to verify our merge transaction.
-
-                // so first, grab all the ancestors from our previous transactions, and put them
-                // into BTreeSets so they're pre-sorted for us.
-                let ancestry_sets = node
-                    .prev()
-                    .iter()
-                    .map(|tid| {
-                        // note, we `.enumerate()` because this allows our BTreeSet to sort our ids
-                        // in-order properly
-                        branch_tracker
-                            .get(tid)
-                            .map(|ancestors| ancestors.iter().copied().collect::<BTreeSet<_>>())
-                            .ok_or(Error::DagBuildError.into())
-                    })
-                    .collect::<core::result::Result<Vec<BTreeSet<&I>>, E>>()?;
-                // now we're going to run the intersection of all the ancestry sets...
-                let intersected = match ancestry_sets.len() {
-                    0 => BTreeSet::new(),
-                    _ => ancestry_sets[1..].iter().fold(ancestry_sets[0].clone(), |mut acc, set| {
-                        acc.retain(|item| set.contains(item));
-                        acc
-                    }),
-                };
-                let first_ancestry_set = branch_tracker.get(&node.prev()[0]).ok_or_else(|| Error::DagBuildError)?;
-                // and grab the highest-sorted common branch (aka the most recent one)
-                // take any ancestry set in our previous list and walk it *in reverse* (see the
-                // rev()??) until we find a node that's in our intersected set. that's our nearest
-                // common ancestor, and we'll use it to validate this dumb node.
-                let most_recent_common_branch = first_ancestry_set
-                    .iter()
-                    .rev()
-                    .find(|tid| intersected.contains(*tid))
-                    .ok_or_else(|| Error::DagBuildError)?;
-                // now grab the identity associated with this common branch and verify...
-                let most_recent_common_ancestor_state = branch_state.get(most_recent_common_branch).ok_or(Error::DagBuildError)?;
-                validate_fn(most_recent_common_ancestor_state, node)?;
-
-                // verified!
-                //
-                // now apply this transaction to all of its ancestor branches, making sure to only
-                // apply the transaction once-per-branch
-                let mut seen_branch: HashSet<&I> = HashSet::new();
-                for ancestors in ancestry_sets {
-                    // we're kind of going in reverse order here (oldest -> newest) but it
-                    // doesn't really matter.
-                    for branch in &ancestors {
-                        if seen_branch.contains(branch) {
-                            continue;
-                        }
-                        let root_state = branch_state.get(self.head()[0]).ok_or(Error::DagBuildError)?.clone();
+            // now some trickery. if this node is the head of a branch, we want to pre-populate
+            // the state of the following nodes to be a copy of this node so they don't pollute
+            // each other's state.
+            //
+            // if we don't do this, consider:
+            //
+            //     D
+            //    / \
+            //    C  |
+            //    |  B
+            //    \ /
+            //     A
+            //
+            // If A is permissive and allows C, but B is restrictive and denies C, and B runs
+            // before C, then if we allow B to "pollute" the ancestry by sending its updates to
+            // A before C runs, then when we try to run C it'll grab the current state of A and
+            // will not validate (because B's updates propagated back to it).
+            //
+            // So the solve here is for A to say "oh, I'm branching, let me copy my unspoiled
+            // state to both B and C so they can validate against it (because they validate
+            // using the nearest ancestor and if that doesn't exist we copy one ancestor back)
+            // without interfering with each other.
+            if node.next().len() > 1 {
+                let cur_state = branch_state.get(current_ancestor_id).ok_or(Error::DagBuildError)?.clone();
+                for next in node.next() {
+                    // don't override an existing state entry
+                    //
+                    // this is possible if we add transactions in multiple stages
+                    if !branch_state.contains_key(next) {
                         #[allow(suspicious_double_ref_op)]
-                        let state = branch_state.entry(branch.clone().clone()).or_insert_with(|| root_state.clone());
-                        apply_fn(state, node)?;
-                        seen_branch.insert(*branch);
+                        branch_state.insert(next.clone().clone(), cur_state.clone());
                     }
                 }
-            } else if node.prev().len() == 1 {
-                // this is NOT a merge transaction, so we can simply verify the transaction against
-                // the current branch identity and if all goes well, apply it to all the ancestor
-                // identities.
-                let current_ancestor_id = ancestry.last().expect("ancestry is not empty");
-                let current_branch_state = if branch_state.contains_key(current_ancestor_id) {
-                    branch_state.get_mut(current_ancestor_id).ok_or(Error::DagBuildError)?
-                } else {
-                    let ancestor_before_id = ancestry.iter().rev().skip(1).next().ok_or(Error::DagBuildError)?;
-                    let ancestor_before = branch_state.get(ancestor_before_id).ok_or(Error::DagBuildError)?.clone();
-                    #[allow(suspicious_double_ref_op)]
-                    branch_state.insert(current_ancestor_id.clone().clone(), ancestor_before);
-                    branch_state.get_mut(current_ancestor_id).ok_or(Error::DagBuildError)?
-                };
-                // first verify the transaction is valid against the CURRENT branch state.
-                validate_fn(&current_branch_state, node)?;
-                // now apply this transaction to all of its ancestor branches
-                for branch in ancestry {
-                    #[allow(suspicious_double_ref_op)]
-                    let state = branch_state.get_mut(branch).ok_or(Error::DagBuildError)?;
-                    apply_fn(state, node)?;
-                }
-            } else {
-                // we're processing our genesis transaction
-                let state = new_initial_state_fn(node)?;
-                validate_fn(&state, node)?;
-                #[allow(suspicious_double_ref_op)]
-                branch_state.insert(ancestry.last().ok_or(Error::DagBuildError)?.clone().clone(), state);
             }
             Ok::<(), E>(())
         })?;
@@ -1135,15 +1168,13 @@ mod tests {
         // now test what happens if validation takes competing branches/paths and our state
         // diverges as a result. what then?!?!
         fn run<R: crate::crypto::base::rng::RngCore + crate::crypto::base::rng::CryptoRng>(rng: &mut R) {
-            let trans_a = Trans::new(rng, "2047-12-01T00:00:00Z", vec![], TransOp::BlockEven);
-            let trans_b = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::AllowEven);
-            let trans_c = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::BlockEven);
-            let trans_d = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_b], TransOp::Inc(2));
-            let trans_e = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_b], TransOp::Inc(6));
-            let trans_f = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_d, &trans_e], TransOp::Inc(2));
-            let trans_g = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_f, &trans_c], TransOp::Inc(7));
+            let trans_a = Trans::new(rng, "2047-12-01T00:00:00Z", vec![], TransOp::AllowEven);
+            let trans_b = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::BlockEven);
+            let trans_c = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::Inc(4));
+            let trans_d = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_c], TransOp::Inc(6));
+            let trans_e = Trans::new(rng, "2047-12-01T00:00:02Z", vec![&trans_b, &trans_d], TransOp::Inc(7));
 
-            let transactions = vec![trans_a, trans_b, trans_c, trans_d, trans_e, trans_f, trans_g];
+            let transactions = vec![trans_a, trans_b, trans_c, trans_d, trans_e];
             let nodes = transactions.iter().map(|x| x.into()).collect::<Vec<_>>();
             let dag: Dag<TransactionID, Trans> = Dag::from_nodes(&[&nodes]);
 
