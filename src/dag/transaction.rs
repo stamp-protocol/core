@@ -615,7 +615,7 @@ impl Transaction {
     /// directly because the official functions don't allow modifications of the `Transaction` or
     /// inner fields.
     ///
-    /// We can do the same by cloning a bunch of garbage and using [`create_raw_with_id`] but this
+    /// We can do the same by cloning a bunch of garbage and using [`Transaction::create_raw`] but this
     /// allows the same without copy.
     pub fn try_mod_ext_previous_transaction(&mut self, new_ext_previous_transactions: Vec<TransactionID>) -> Result<()> {
         match self.entry_mut().body_mut() {
