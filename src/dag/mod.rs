@@ -119,6 +119,12 @@ where
     /// we make the interface slightly more awkward by forcing you to wrap your collection in an
     /// extra `&[...]` but ultimately it gives us more performance because you don't have to clone
     /// your nodes to all be in one vec.
+    ///
+    /// Note that the *order of the node collections matters*. Nodes in later collections will
+    /// override nodes in previous collections, both in data and in previous node relationships.
+    /// Later nodes always take precedence. This allows creating a DAG with modified nodes without
+    /// having to modify/clone the original list and instead passing the original list first, and
+    /// the list with *only* the modified nodes after.
     pub fn from_nodes(node_collections: &[&[DagNode<'a, I, T>]]) -> Dag<'a, I, T> {
         // create our DAG object.
         let mut dag = Dag::new();
@@ -148,23 +154,39 @@ where
 
         // now loop over our nodes again and update our .next[] references.
         // after this, we'll have both forward and backward links for all available nodes.
-        for nodes in node_collections {
-            for node in nodes.iter() {
-                trans_created_idx.insert(node.id(), node.timestamp().timestamp_millis());
-                let prev = node.prev();
-                if prev.is_empty() {
-                    // cool, we found a head node. track it.
-                    head_nodes.push((node.timestamp(), node.id()));
-                } else {
-                    for prev_id in prev {
-                        match dag.index_mut().get_mut(prev_id) {
-                            Some(previous_node) => {
-                                previous_node.next_mut().push(node.id());
-                            }
-                            None => {
-                                // we're referencing a node we cannot find. this means we have a break in
-                                // our DAG chain
-                                missing_nodes.insert(prev_id);
+        //
+        // order is important here! we're looping over our collections in *reverse order* and
+        // tracking which nodes we've seen previously, skipping already visited ones.
+        //
+        // the idea here is nodes later in the collection can override nodes (by id) earlier in the
+        // collection, including the prev list.
+        {
+            let mut seen: HashSet<&I> = HashSet::new();
+            // reverse our collections
+            for node_collection in node_collections.iter().rev() {
+                for node in *node_collection {
+                    // track which nodes we've seen, so we can ignore already visited ones. this
+                    // allows using *only the latest* version of a node.
+                    if seen.contains(node.id()) {
+                        continue;
+                    }
+                    seen.insert(node.id());
+                    trans_created_idx.insert(node.id(), node.timestamp().timestamp_millis());
+                    let prev = node.prev();
+                    if prev.is_empty() {
+                        // cool, we found a head node. track it.
+                        head_nodes.push((node.timestamp(), node.id()));
+                    } else {
+                        for prev_id in prev {
+                            match dag.index_mut().get_mut(prev_id) {
+                                Some(previous_node) => {
+                                    previous_node.next_mut().push(node.id());
+                                }
+                                None => {
+                                    // we're referencing a node we cannot find. this means we have a break in
+                                    // our DAG chain
+                                    missing_nodes.insert(prev_id);
+                                }
                             }
                         }
                     }
@@ -1135,6 +1157,44 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn dag_multiple_node_sources_order_precedence() {
+        let mut rng = crate::util::test::rng_seeded(b"i got a question about you, mortician...");
+        //   A
+        //  / \
+        // B   C
+        //  \ /
+        //   D
+        let trans_a = Trans::new(&mut rng, "2047-12-01T00:00:00Z", vec![], TransOp::BlockEven);
+        let trans_b = Trans::new(&mut rng, "2047-12-02T00:00:00Z", vec![&trans_a], TransOp::Inc(3));
+        let trans_c = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::Inc(7));
+        let trans_d = Trans::new(&mut rng, "2047-12-03T00:00:03Z", vec![&trans_c, &trans_b], TransOp::Inc(4));
+
+        let mut trans_c_mod = trans_c.clone();
+        //   A
+        //   |
+        //   B
+        //  / \
+        // C   |
+        //  \ /
+        //   D
+        trans_c_mod.prev = vec![trans_b.id.clone()];
+        let list1 = vec![trans_a.clone(), trans_b.clone(), trans_c.clone()];
+        let list2 = vec![trans_c_mod.clone(), trans_d.clone()];
+
+        let nodes1 = list1.iter().map(|x| x.into()).collect::<Vec<_>>();
+        let nodes2 = list2.iter().map(|x| x.into()).collect::<Vec<_>>();
+        // dag1 should have order A, C, B, D
+        let dag1: Dag<TransactionID, Trans> = Dag::from_nodes(&[&nodes2, &nodes1]);
+        // dag2 should have order A, B, C, D
+        let dag2: Dag<TransactionID, Trans> = Dag::from_nodes(&[&nodes1, &nodes2]);
+
+        assert_eq!(dag1.visited(), &vec![&trans_a.id, &trans_c.id, &trans_b.id, &trans_d.id]);
+        assert_eq!(dag1.index().get(&trans_c.id).unwrap().prev(), &vec![&trans_a.id]);
+        assert_eq!(dag2.visited(), &vec![&trans_a.id, &trans_b.id, &trans_c.id, &trans_d.id]);
+        assert_eq!(dag2.index().get(&trans_c.id).unwrap().prev(), &vec![&trans_b.id]);
     }
 
     #[test]
