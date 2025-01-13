@@ -23,7 +23,7 @@ macro_rules! object_id {
         $(#[$meta:meta])*
         $name:ident
     ) => {
-        #[derive(Debug, Clone, rasn::AsnType, rasn::Encode, rasn::Decode, PartialEq, Eq, Hash, serde_derive::Serialize, serde_derive::Deserialize)]
+        #[derive(Debug, Clone, rasn::AsnType, rasn::Encode, rasn::Decode, PartialEq, Eq, Hash, PartialOrd, Ord, serde_derive::Serialize, serde_derive::Deserialize)]
         #[rasn(delegate)]
         $(#[$meta])*
         pub struct $name(pub(crate) crate::dag::TransactionID);
