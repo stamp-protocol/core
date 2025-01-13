@@ -486,6 +486,8 @@ impl std::cmp::Ord for TransactionID {
     }
 }
 
+impl SerdeBinary for TransactionID {}
+
 #[cfg(test)]
 impl TransactionID {
     pub(crate) fn random() -> Self {
