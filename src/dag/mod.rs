@@ -483,7 +483,7 @@ where
         apply_fn: FA,
     ) -> core::result::Result<&'b S, E>
     where
-        I: Clone,
+        I: Clone + std::fmt::Debug,
         E: From<Error>,
         S: Clone,
         FN: Fn(&DagNode<'a, I, T>) -> core::result::Result<S, E>,
@@ -519,12 +519,12 @@ where
                         .prev()
                         .iter()
                         .map(|tid| {
-                            // note, we `.enumerate()` because this allows our BTreeSet to sort our ids
-                            // in-order properly
                             branch_tracker
                                 .get(tid)
                                 .map(|ancestors| ancestors.iter().copied().collect::<BTreeSet<_>>())
-                                .ok_or_else(|| Error::DagBuildError.into())
+                                .ok_or_else(|| {
+                                    Error::DagBuildError(format!("apply() -- {:?} merge: collect ancestors: {:?}", node.id(), tid)).into()
+                                })
                         })
                         .collect::<core::result::Result<Vec<BTreeSet<&I>>, E>>()?;
                     // now we're going to run the intersection of all the ancestry sets...
@@ -535,7 +535,9 @@ where
                             acc
                         }),
                     };
-                    let first_ancestry_set = branch_tracker.get(&node.prev()[0]).ok_or_else(|| Error::DagBuildError)?;
+                    let first_ancestry_set = branch_tracker.get(&node.prev()[0]).ok_or_else(|| {
+                        Error::DagBuildError(format!("apply() -- {:?} merge: grab first ancestor: {:?}", node.id(), node.prev()[0]))
+                    })?;
                     // and grab the highest-sorted common branch (aka the most recent one)
                     // take any ancestry set in our previous list and walk it *in reverse* (see the
                     // rev()??) until we find a node that's in our intersected set. that's our nearest
@@ -544,9 +546,11 @@ where
                         .iter()
                         .rev()
                         .find(|tid| intersected.contains(*tid))
-                        .ok_or_else(|| Error::DagBuildError)?;
+                        .ok_or_else(|| Error::DagBuildError(format!("apply() -- {:?} merge: no nearest common ancestor", node.id())))?;
                     // now grab the identity associated with this common branch and verify...
-                    let most_recent_common_ancestor_state = branch_state.get(most_recent_common_branch).ok_or(Error::DagBuildError)?;
+                    let most_recent_common_ancestor_state = branch_state.get(most_recent_common_branch).ok_or_else(|| {
+                        Error::DagBuildError(format!("apply() -- {:?} merge: missing nearest common ancestor", node.id()))
+                    })?;
                     validate_fn(most_recent_common_ancestor_state, node)?;
 
                     // verified!
@@ -561,32 +565,74 @@ where
                             if seen_branch.contains(branch) {
                                 continue;
                             }
-                            let root_state = branch_state.get(self.head()[0]).ok_or(Error::DagBuildError)?.clone();
+                            let root_state = branch_state
+                                .get(self.head()[0])
+                                .ok_or_else(|| {
+                                    Error::DagBuildError(format!(
+                                        "apply() -- {:?} merge: missing root state {:?}",
+                                        node.id(),
+                                        self.head()[0]
+                                    ))
+                                })?
+                                .clone();
                             #[allow(suspicious_double_ref_op)]
                             let state = branch_state.entry(branch.clone().clone()).or_insert_with(|| root_state.clone());
                             apply_fn(state, node)?;
                             seen_branch.insert(*branch);
                         }
                     }
+                    // lastly, save our current merged state into the branch state tracker. this
+                    // allows a branch operation to happen directly after this merge (which
+                    // requires the state to exist in branch tracker to copy into the next nodes).
+                    let state = branch_state.get(most_recent_common_branch).ok_or_else(|| {
+                        Error::DagBuildError(format!("apply() -- {:?} merge: missing nearest common ancestor 2", node.id()))
+                    })?;
+                    #[allow(suspicious_double_ref_op)]
+                    branch_state.insert(node.id().clone().clone(), state.clone());
                 } else if node.prev().len() == 1 {
                     // this is NOT a merge transaction, so we can simply verify the transaction against
                     // the current branch identity and if all goes well, apply it to all the ancestor
                     // identities.
                     let current_branch_state = if branch_state.contains_key(current_ancestor_id) {
-                        branch_state.get_mut(current_ancestor_id).ok_or(Error::DagBuildError)?
+                        branch_state.get_mut(current_ancestor_id).ok_or_else(|| {
+                            Error::DagBuildError(format!(
+                                "apply() -- {:?} next: missing ancestor branch state: {:?}",
+                                node.id(),
+                                current_ancestor_id
+                            ))
+                        })?
                     } else {
-                        let ancestor_before_id = ancestry.iter().rev().skip(1).next().ok_or(Error::DagBuildError)?;
-                        let ancestor_before = branch_state.get(ancestor_before_id).ok_or(Error::DagBuildError)?.clone();
+                        let ancestor_before_id = ancestry.iter().rev().skip(1).next().ok_or_else(|| {
+                            Error::DagBuildError(format!("apply() -- {:?} next: missing next nearest ancestor id", node.id()))
+                        })?;
+                        let ancestor_before = branch_state
+                            .get(ancestor_before_id)
+                            .ok_or_else(|| {
+                                Error::DagBuildError(format!(
+                                    "apply() -- {:?} next: missing next nearest ancestor in branch state: {:?}",
+                                    node.id(),
+                                    ancestor_before_id,
+                                ))
+                            })?
+                            .clone();
                         #[allow(suspicious_double_ref_op)]
                         branch_state.insert(current_ancestor_id.clone().clone(), ancestor_before);
-                        branch_state.get_mut(current_ancestor_id).ok_or(Error::DagBuildError)?
+                        branch_state.get_mut(current_ancestor_id).ok_or_else(|| {
+                            Error::DagBuildError(format!(
+                                "apply() -- {:?} next: missing ancestor in branch state: {:?}",
+                                node.id(),
+                                current_ancestor_id
+                            ))
+                        })?
                     };
                     // first verify the transaction is valid against the CURRENT branch state.
                     validate_fn(&current_branch_state, node)?;
                     // now apply this transaction to all of its ancestor branches
                     for branch in ancestry {
                         #[allow(suspicious_double_ref_op)]
-                        let state = branch_state.get_mut(branch).ok_or(Error::DagBuildError)?;
+                        let state = branch_state.get_mut(branch).ok_or_else(|| {
+                            Error::DagBuildError(format!("apply() -- {:?} next: missing branch state: {:?}", node.id(), branch))
+                        })?;
                         apply_fn(state, node)?;
                     }
                 } else {
@@ -594,7 +640,14 @@ where
                     let state = new_initial_state_fn(node)?;
                     validate_fn(&state, node)?;
                     #[allow(suspicious_double_ref_op)]
-                    branch_state.insert(ancestry.last().ok_or(Error::DagBuildError)?.clone().clone(), state);
+                    branch_state.insert(
+                        ancestry
+                            .last()
+                            .ok_or_else(|| Error::DagBuildError(format!("apply() -- {:?} genesis: ancestry chain is blank", node.id())))?
+                            .clone()
+                            .clone(),
+                        state,
+                    );
                 }
             }
 
@@ -621,7 +674,17 @@ where
             // using the nearest ancestor and if that doesn't exist we copy one ancestor back)
             // without interfering with each other.
             if node.next().len() > 1 {
-                let cur_state = branch_state.get(current_ancestor_id).ok_or(Error::DagBuildError)?.clone();
+                let cur_state = branch_state
+                    .get(current_ancestor_id)
+                    .ok_or_else(|| {
+                        Error::DagBuildError(format!(
+                            "apply() -- {:?} branch: missing branch state for ancestor: (ancestor: {:?}) {:?}",
+                            node.id(),
+                            current_ancestor_id,
+                            branch_state.keys().collect::<Vec<_>>()
+                        ))
+                    })?
+                    .clone();
                 for next in node.next() {
                     // don't override an existing state entry
                     //
@@ -634,7 +697,9 @@ where
             }
             Ok::<(), E>(())
         })?;
-        Ok(branch_state.get(&self.head()[0]).ok_or(Error::DagBuildError)?)
+        Ok(branch_state
+            .get(&self.head()[0])
+            .ok_or_else(|| Error::DagBuildError(format!("apply() -- return: missing root state: {:?}", self.head()[0])))?)
     }
 
     /// Given a set of nodes visited from [`Dag::walk()`], find the nodes that are unvisited from
@@ -1315,6 +1380,36 @@ mod tests {
                 .expect("dag applies properly");
             assert_eq!(state.val, 17);
             assert_eq!(num_validate.take(), 3);
+        }
+    }
+
+    #[test]
+    fn dag_apply_merge_then_branch() {
+        let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
+        let trans_a = Trans::new(&mut rng, "2047-12-01T00:00:00Z", vec![], TransOp::AllowEven);
+        let trans_b = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::Inc(1));
+        let trans_c = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::Inc(1));
+        // merge, then immediately branch.
+        let trans_d = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_b, &trans_c], TransOp::Inc(2));
+        let trans_e = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_d], TransOp::Inc(6));
+        let trans_f = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_d], TransOp::Inc(2));
+
+        let transactions = vec![trans_a, trans_b, trans_c, trans_d, trans_e, trans_f];
+        let mut state_tracker: HashMap<TransactionID, State> = HashMap::new();
+
+        {
+            let nodes = transactions.iter().map(|x| x.into()).collect::<Vec<_>>();
+            let dag: Dag<TransactionID, Trans> = Dag::from_nodes(&[&nodes]);
+            let state = dag
+                .apply(
+                    &mut state_tracker,
+                    |node| Ok(State::from_trans(node.node())),
+                    |_| false,
+                    |state, node| state.validate(node.node()),
+                    |state, node| state.apply(node.node()),
+                )
+                .expect("dag should allow branch after merge");
+            assert_eq!(state.val, 12);
         }
     }
 }
