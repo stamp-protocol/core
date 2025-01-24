@@ -504,7 +504,8 @@ where
 
         self.walk(|node, ancestry, branch_tracker| {
             let current_ancestor_id = ancestry.last().expect("ancestry is not empty");
-            if !skip_fn(node) {
+            let skip_current_node = skip_fn(node);
+            if !skip_current_node {
                 // check if this is a merge transaction or not.
                 if node.prev().len() > 1 {
                     // ok, we're merging a set of transactions together.
@@ -603,7 +604,7 @@ where
                         })?
                     } else {
                         let ancestor_before_id = ancestry.iter().rev().skip(1).next().ok_or_else(|| {
-                            Error::DagBuildError(format!("apply() -- {:?} next: missing next nearest ancestor id", node.id()))
+                            Error::DagBuildError(format!("apply() -- {:?} next: missing next nearest ancestor id: {:?}", node.id(), ancestry))
                         })?;
                         let ancestor_before = branch_state
                             .get(ancestor_before_id)
@@ -657,12 +658,12 @@ where
             //
             // if we don't do this, consider:
             //
-            //     D
-            //    / \
-            //    C  |
-            //    |  B
-            //    \ /
             //     A
+            //    / \
+            //   B   |
+            //   |   C
+            //    \ /
+            //     D
             //
             // If A is permissive and allows C, but B is restrictive and denies C, and B runs
             // before C, then if we allow B to "pollute" the ancestry by sending its updates to
