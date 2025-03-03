@@ -17,7 +17,7 @@ pub use crate::dag::{
 };
 use crate::{error::Error, util::Timestamp};
 use getset::{Getters, MutGetters};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 
 /// Defines a node in a DAG. Each node can have multiple previous nodes and multiple next nodes.
@@ -604,7 +604,11 @@ where
                         })?
                     } else {
                         let ancestor_before_id = ancestry.iter().rev().skip(1).next().ok_or_else(|| {
-                            Error::DagBuildError(format!("apply() -- {:?} next: missing next nearest ancestor id: {:?}", node.id(), ancestry))
+                            Error::DagBuildError(format!(
+                                "apply() -- {:?} next: missing next nearest ancestor id: {:?}",
+                                node.id(),
+                                ancestry
+                            ))
                         })?;
                         let ancestor_before = branch_state
                             .get(ancestor_before_id)
@@ -701,6 +705,32 @@ where
         Ok(branch_state
             .get(&self.head()[0])
             .ok_or_else(|| Error::DagBuildError(format!("apply() -- return: missing root state: {:?}", self.head()[0])))?)
+    }
+
+    /// Given the id of a node in this DAG, find all the ancestor nodes within the node's causal
+    /// chain. This order of nodes returned cannot be relied upon.
+    pub fn get_causal_chain(&'a self, node_id: &'a I) -> HashSet<&'a I> {
+        let mut walk_queue = VecDeque::new();
+        let mut seen = HashSet::new();
+        walk_queue.push_back(node_id);
+        while let Some(id) = walk_queue.pop_front() {
+            if seen.contains(id) {
+                continue;
+            }
+            let tx = if let Some(x) = self.index().get(id) {
+                x
+            } else {
+                continue;
+            };
+            seen.insert(id);
+            for prev in tx.prev() {
+                if seen.contains(prev) {
+                    continue;
+                }
+                walk_queue.push_back(prev);
+            }
+        }
+        seen
     }
 
     /// Given a set of nodes visited from [`Dag::walk()`], find the nodes that are unvisited from
@@ -1135,6 +1165,47 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["A", "D", "B", "C", "E", "F"],
         )
+    }
+
+    #[test]
+    fn dag_get_causal_chain() {
+        let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
+        let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
+        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
+        #[allow(non_snake_case, unused_mut)]
+        let (transaction_list, tid_to_name, name_to_tid) = make_dag_chain! {
+           transactions,
+           [A(0), B(10), C(20), D(30), E(29), F(40), G(42), H(69)],
+           [
+               [A] <- [B, C],
+               [B] <- [C],
+               [B] <- [D],
+               [D] <- [E, F],
+               [A] <- [G],
+               [F, G] <- [H],
+           ],
+           []
+        };
+        let nodes = transaction_list.iter().map(|x| x.into()).collect::<Vec<_>>();
+        let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&[&nodes]);
+
+        macro_rules! get_chain {
+            ($node_name:expr) => {{
+                dag.get_causal_chain(name_to_tid.get($node_name).unwrap())
+                    .into_iter()
+                    .map(|id| tid_to_name.get(id).unwrap())
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            }};
+        }
+
+        assert_eq!(get_chain!("A"), vec!["A"]);
+        assert_eq!(get_chain!("G"), vec!["A", "G"]);
+        assert_eq!(get_chain!("H"), vec!["A", "B", "D", "F", "G", "H"]);
+        assert_eq!(get_chain!("E"), vec!["A", "B", "D", "E"]);
+        assert_eq!(get_chain!("C"), vec!["A", "B", "C"]);
     }
 
     /// A simple transaction operation. Can allow even numbers, block even numbers, and increment
