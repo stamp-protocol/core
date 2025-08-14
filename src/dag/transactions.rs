@@ -66,6 +66,9 @@ impl Transactions {
 
     /// Run a transaction and return the output
     fn apply_transaction(identity: Option<Identity>, transaction: &Transaction) -> Result<Identity> {
+        if identity.as_ref().map(|i| *i.revoked()).unwrap_or(false) {
+            Err(Error::IdentityRevoked)?;
+        }
         match transaction.entry().body().clone() {
             TransactionBody::CreateIdentityV1 { admin_keys, policies } => {
                 if identity.is_some() {
@@ -91,6 +94,10 @@ impl Transactions {
                     None
                 };
                 let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.reset(admin_keys, policies_con)?;
+                Ok(identity_mod)
+            }
+            TransactionBody::RevokeIdentityV1 => {
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.revoke()?;
                 Ok(identity_mod)
             }
             TransactionBody::AddAdminKeyV1 { admin_key } => {
@@ -666,7 +673,11 @@ impl Transactions {
         body_hash_with: &HashAlgo,
         body: &[u8],
     ) -> Result<Transaction> {
-        let creator = self.identity_id().ok_or(Error::DagEmpty)?;
+        let identity = self.build_identity()?;
+        if *identity.revoked() {
+            Err(Error::IdentityRevoked)?;
+        }
+        let creator = identity.id().clone();
         let body_hash = match body_hash_with {
             HashAlgo::Blake3 => Hash::new_blake3(body)?,
         };
@@ -684,7 +695,11 @@ impl Transactions {
         context: Option<K>,
         payload: BinaryVec,
     ) -> Result<Transaction> {
-        let creator = self.identity_id().ok_or(Error::DagEmpty)?;
+        let identity = self.build_identity()?;
+        if *identity.revoked() {
+            Err(Error::IdentityRevoked)?;
+        }
+        let creator = identity.id().clone();
         let body = TransactionBody::ExtV1 {
             creator,
             ty,
@@ -1228,6 +1243,11 @@ mod tests {
             identity2.policies()[1].id(),
             &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 1).unwrap()
         );
+    }
+
+    #[test]
+    fn transactions_revoke_identity() {
+        todo!("Revoked identities should bar any changes/updates");
     }
 
     #[test]

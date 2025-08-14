@@ -42,42 +42,44 @@ pub enum TransactionBodyType {
     #[rasn(tag(explicit(1)))]
     ResetIdentityV1,
     #[rasn(tag(explicit(2)))]
-    AddAdminKeyV1,
+    RevokeIdentityV1,
     #[rasn(tag(explicit(3)))]
-    EditAdminKeyV1,
+    AddAdminKeyV1,
     #[rasn(tag(explicit(4)))]
-    RevokeAdminKeyV1,
+    EditAdminKeyV1,
     #[rasn(tag(explicit(5)))]
-    AddPolicyV1,
+    RevokeAdminKeyV1,
     #[rasn(tag(explicit(6)))]
-    DeletePolicyV1,
+    AddPolicyV1,
     #[rasn(tag(explicit(7)))]
-    MakeClaimV1,
+    DeletePolicyV1,
     #[rasn(tag(explicit(8)))]
-    EditClaimV1,
+    MakeClaimV1,
     #[rasn(tag(explicit(9)))]
-    DeleteClaimV1,
+    EditClaimV1,
     #[rasn(tag(explicit(10)))]
-    MakeStampV1,
+    DeleteClaimV1,
     #[rasn(tag(explicit(11)))]
-    RevokeStampV1,
+    MakeStampV1,
     #[rasn(tag(explicit(12)))]
-    AcceptStampV1,
+    RevokeStampV1,
     #[rasn(tag(explicit(13)))]
-    DeleteStampV1,
+    AcceptStampV1,
     #[rasn(tag(explicit(14)))]
-    AddSubkeyV1,
+    DeleteStampV1,
     #[rasn(tag(explicit(15)))]
-    EditSubkeyV1,
+    AddSubkeyV1,
     #[rasn(tag(explicit(16)))]
-    RevokeSubkeyV1,
+    EditSubkeyV1,
     #[rasn(tag(explicit(17)))]
-    DeleteSubkeyV1,
+    RevokeSubkeyV1,
     #[rasn(tag(explicit(18)))]
-    PublishV1,
+    DeleteSubkeyV1,
     #[rasn(tag(explicit(19)))]
-    SignV1,
+    PublishV1,
     #[rasn(tag(explicit(20)))]
+    SignV1,
+    #[rasn(tag(explicit(21)))]
     ExtV1,
 }
 
@@ -88,6 +90,7 @@ impl From<&TransactionBody> for TransactionBodyType {
         match *body {
             TransactionBody::CreateIdentityV1 { .. } => Self::CreateIdentityV1,
             TransactionBody::ResetIdentityV1 { .. } => Self::ResetIdentityV1,
+            TransactionBody::RevokeIdentityV1 => Self::RevokeIdentityV1,
             TransactionBody::AddAdminKeyV1 { .. } => Self::AddAdminKeyV1,
             TransactionBody::EditAdminKeyV1 { .. } => Self::EditAdminKeyV1,
             TransactionBody::RevokeAdminKeyV1 { .. } => Self::RevokeAdminKeyV1,
@@ -296,6 +299,7 @@ impl Context {
         match transaction_body {
             TransactionBody::CreateIdentityV1 { .. } => {}
             TransactionBody::ResetIdentityV1 { .. } => {}
+            TransactionBody::RevokeIdentityV1 => {}
             TransactionBody::AddAdminKeyV1 { admin_key } => {
                 contexts.push(Self::AdminKeyID(admin_key.key_id()));
                 contexts.push(Self::KeyID(admin_key.key_id().into()));
@@ -336,6 +340,7 @@ impl Context {
             TransactionBody::MakeStampV1 { stamp } => {
                 contexts.push(Self::ObjectID(stamp.claim_id().deref().clone()));
                 contexts.push(Self::IdentityID(stamp.stampee().clone()));
+                // TODO: look up the claim and grab its ContextClaimType
             }
             TransactionBody::RevokeStampV1 { stamp_id, .. } => {
                 contexts.push(Self::ObjectID(stamp_id.deref().clone()));
@@ -345,6 +350,7 @@ impl Context {
                     contexts.push(Self::IdentityID(stamp.entry().stampee().clone()));
                     contexts.push(Self::ObjectID(stamp.entry().claim_id().deref().clone()));
                 }
+                // TODO: look up the claim and grab its ContextClaimType
             }
             TransactionBody::AcceptStampV1 { stamp_transaction } => {
                 if let TransactionBody::MakeStampV1 { stamp } = stamp_transaction.entry().body() {

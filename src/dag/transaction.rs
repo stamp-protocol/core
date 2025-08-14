@@ -55,14 +55,20 @@ pub enum TransactionBody {
         #[rasn(tag(explicit(1)))]
         policies: Option<Vec<Policy>>,
     },
-    /// Add a new [admin key][AdminKey] to the [Keychain][crate::identity::keychain::Keychain].
+    /// Revoke an identity. Makes any future transactions not apply, and makes anything signed by
+    /// the identity after the revocation invalid.
+    ///
+    /// The only valid action after revocation is publishing.
     #[rasn(tag(explicit(2)))]
+    RevokeIdentityV1,
+    /// Add a new [admin key][AdminKey] to the [Keychain][crate::identity::keychain::Keychain].
+    #[rasn(tag(explicit(3)))]
     AddAdminKeyV1 {
         #[rasn(tag(explicit(0)))]
         admin_key: AdminKey,
     },
     /// Edit an admin key
-    #[rasn(tag(explicit(3)))]
+    #[rasn(tag(explicit(4)))]
     EditAdminKeyV1 {
         #[rasn(tag(explicit(0)))]
         id: AdminKeyID,
@@ -73,7 +79,7 @@ pub enum TransactionBody {
     },
     /// Revokes an [AdminKey] key and moves it into the subkeys, optionally
     /// renaming it.
-    #[rasn(tag(explicit(4)))]
+    #[rasn(tag(explicit(5)))]
     RevokeAdminKeyV1 {
         #[rasn(tag(explicit(0)))]
         id: AdminKeyID,
@@ -83,20 +89,20 @@ pub enum TransactionBody {
         new_name: Option<String>,
     },
     /// Add a new [Policy] to the identity.
-    #[rasn(tag(explicit(5)))]
+    #[rasn(tag(explicit(6)))]
     AddPolicyV1 {
         #[rasn(tag(explicit(0)))]
         policy: Policy,
     },
     /// Delete (by name) a capability policy from the identity.
-    #[rasn(tag(explicit(6)))]
+    #[rasn(tag(explicit(7)))]
     DeletePolicyV1 {
         #[rasn(tag(explicit(0)))]
         id: PolicyID,
     },
     /// Make a new claim on this identity. The [ID][TransactionID] of this
     /// transaction will be the claim's ID.
-    #[rasn(tag(explicit(7)))]
+    #[rasn(tag(explicit(8)))]
     MakeClaimV1 {
         #[rasn(tag(explicit(0)))]
         spec: ClaimSpec,
@@ -104,7 +110,7 @@ pub enum TransactionBody {
         name: Option<String>,
     },
     /// Edit a claim's name
-    #[rasn(tag(explicit(8)))]
+    #[rasn(tag(explicit(9)))]
     EditClaimV1 {
         #[rasn(tag(explicit(0)))]
         claim_id: ClaimID,
@@ -112,20 +118,20 @@ pub enum TransactionBody {
         name: Option<String>,
     },
     /// Delete/remove a claim by ID.
-    #[rasn(tag(explicit(9)))]
+    #[rasn(tag(explicit(10)))]
     DeleteClaimV1 {
         #[rasn(tag(explicit(0)))]
         claim_id: ClaimID,
     },
     /// Make a stamp that is saved and advertised with this identity.
-    #[rasn(tag(explicit(10)))]
+    #[rasn(tag(explicit(11)))]
     MakeStampV1 {
         #[rasn(tag(explicit(0)))]
         stamp: StampEntry,
     },
     /// Revoke a stamp we previously created and store this revocation with the
     /// identity.
-    #[rasn(tag(explicit(11)))]
+    #[rasn(tag(explicit(12)))]
     RevokeStampV1 {
         #[rasn(tag(explicit(0)))]
         stamp_id: StampID,
@@ -134,19 +140,19 @@ pub enum TransactionBody {
     },
     /// Accept a stamp on one of our claims into our identity. This allows those
     /// who have our identity to see the trust others have put into us.
-    #[rasn(tag(explicit(12)))]
+    #[rasn(tag(explicit(13)))]
     AcceptStampV1 {
         #[rasn(tag(explicit(0)))]
         stamp_transaction: Box<Transaction>,
     },
     /// Delete a stamp on one of our claims.
-    #[rasn(tag(explicit(13)))]
+    #[rasn(tag(explicit(14)))]
     DeleteStampV1 {
         #[rasn(tag(explicit(0)))]
         stamp_id: StampID,
     },
     /// Add a new subkey to our keychain.
-    #[rasn(tag(explicit(14)))]
+    #[rasn(tag(explicit(15)))]
     AddSubkeyV1 {
         #[rasn(tag(explicit(0)))]
         key: Key,
@@ -156,7 +162,7 @@ pub enum TransactionBody {
         desc: Option<String>,
     },
     /// Edit the name/description of a subkey by its unique name.
-    #[rasn(tag(explicit(15)))]
+    #[rasn(tag(explicit(16)))]
     EditSubkeyV1 {
         #[rasn(tag(explicit(0)))]
         id: KeyID,
@@ -167,7 +173,7 @@ pub enum TransactionBody {
     },
     /// Mark a subkey as revoked, allowing old signatures to be validated but
     /// without permitting new signatures to be created.
-    #[rasn(tag(explicit(16)))]
+    #[rasn(tag(explicit(17)))]
     RevokeSubkeyV1 {
         #[rasn(tag(explicit(0)))]
         id: KeyID,
@@ -177,14 +183,14 @@ pub enum TransactionBody {
         new_name: Option<String>,
     },
     /// Delete a subkey entirely from the identity.
-    #[rasn(tag(explicit(17)))]
+    #[rasn(tag(explicit(18)))]
     DeleteSubkeyV1 {
         #[rasn(tag(explicit(0)))]
         id: KeyID,
     },
     /// Publish this identity. This transaction cannot be saved with the identity, but
     /// rather should be published to a public medium (like StampNet!!!!1)
-    #[rasn(tag(explicit(18)))]
+    #[rasn(tag(explicit(19)))]
     PublishV1 {
         #[rasn(tag(explicit(0)))]
         transactions: Box<Transactions>,
@@ -197,7 +203,7 @@ pub enum TransactionBody {
     /// transaction fairly lightweight while still being reasonably secure.
     ///
     /// `Sign` transactions cannot be applied to the identity!
-    #[rasn(tag(explicit(19)))]
+    #[rasn(tag(explicit(20)))]
     SignV1 {
         #[rasn(tag(explicit(0)))]
         creator: IdentityID,
@@ -218,7 +224,7 @@ pub enum TransactionBody {
     ///
     /// Note that `Ext` transactions cannot be applied to the identity...Stamp allows
     /// their creation but provides no methods for executing them.
-    #[rasn(tag(explicit(20)))]
+    #[rasn(tag(explicit(21)))]
     ExtV1 {
         /// The identity that created this transaction
         #[rasn(tag(explicit(0)))]
@@ -276,6 +282,7 @@ impl TransactionBody {
                     policies,
                 }
             }
+            Self::RevokeIdentityV1 => Self::RevokeIdentityV1,
             Self::AddAdminKeyV1 { admin_key } => Self::AddAdminKeyV1 {
                 admin_key: admin_key.reencrypt(rng, old_master_key, new_master_key)?,
             },
@@ -343,6 +350,7 @@ impl Public for TransactionBody {
                     policies,
                 }
             }
+            Self::RevokeIdentityV1 => Self::RevokeIdentityV1,
             Self::AddAdminKeyV1 { admin_key } => Self::AddAdminKeyV1 {
                 admin_key: admin_key.strip_private(),
             },
@@ -397,6 +405,7 @@ impl Public for TransactionBody {
                 .as_ref()
                 .map(|keys| keys.iter().any(|x| x.key().has_private()))
                 .unwrap_or(false),
+            Self::RevokeIdentityV1 => false,
             Self::AddAdminKeyV1 { admin_key } => admin_key.has_private(),
             Self::EditAdminKeyV1 { .. } => false,
             Self::RevokeAdminKeyV1 { .. } => false,
@@ -926,6 +935,9 @@ mod tests {
                         policies: policies.clone(),
                     };
                     assert!(!body2.has_private());
+                }
+                TransactionBody::RevokeIdentityV1 => {
+                    assert!(!body.has_private());
                 }
                 TransactionBody::AddAdminKeyV1 { admin_key } => {
                     assert!(body.has_private());

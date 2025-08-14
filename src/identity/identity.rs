@@ -67,6 +67,10 @@ pub struct Identity {
     /// for checking of revocation.
     #[rasn(tag(explicit(5)))]
     stamps: Vec<Stamp>,
+    /// Whether or not this identity is revoked. Revoked identities cannot accept
+    /// or create new transactions.
+    #[rasn(tag(explicit(6)))]
+    revoked: bool,
 }
 
 impl Identity {
@@ -83,6 +87,7 @@ impl Identity {
             keychain,
             claims: vec![],
             stamps: vec![],
+            revoked: false,
         }
     }
 
@@ -96,6 +101,11 @@ impl Identity {
         if let Some(policies) = policies_maybe {
             self.set_policies(policies);
         }
+        Ok(self)
+    }
+
+    pub(crate) fn revoke(mut self) -> Result<Self> {
+        self.set_revoked(true);
         Ok(self)
     }
 
@@ -404,6 +414,11 @@ mod tests {
             &vec![admin_key.key()]
         );
         assert_eq!(identity.policies(), &vec![container.clone()]);
+    }
+
+    #[test]
+    fn identity_revoke() {
+        todo!("Revoked identities should bar any changes/updates");
     }
 
     #[test]
