@@ -11,7 +11,7 @@ use crate::{
 };
 use crypto_box::aead::{generic_array::GenericArray, Aead as CryptoboxAead, AeadCore as CryptoboxAeadCore};
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Decode, Encode};
+use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 

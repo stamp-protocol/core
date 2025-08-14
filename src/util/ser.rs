@@ -122,14 +122,15 @@ macro_rules! impl_asn1_binary {
         }
 
         impl<const N: usize> Encode for $name<N> {
-            fn encode_with_tag_and_constraints<E: Encoder>(
+            fn encode_with_tag_and_constraints<'encoder, E: Encoder<'encoder>>(
                 &self,
                 encoder: &mut E,
                 tag: Tag,
                 constraints: rasn::types::constraints::Constraints,
+                identifier: rasn::types::Identifier,
             ) -> std::result::Result<(), E::Error> {
                 // Accepts a closure that encodes the contents of the sequence.
-                encoder.encode_octet_string(tag, constraints, &self.0[..])?;
+                encoder.encode_octet_string(tag, constraints, &self.0[..], identifier)?;
                 Ok(())
             }
         }
@@ -140,8 +141,8 @@ macro_rules! impl_asn1_binary {
                 tag: Tag,
                 constraints: rasn::types::constraints::Constraints,
             ) -> std::result::Result<Self, D::Error> {
-                let vec = decoder.decode_octet_string(tag, constraints)?;
-                let arr = vec
+                let vec: Vec<u8> = decoder.decode_octet_string(tag, constraints)?;
+                let arr: [u8; N] = vec
                     .try_into()
                     .map_err(|_| rasn::de::Error::no_valid_choice("octet string is incorrect length", rasn::Codec::Der))?;
                 Ok(Self(arr))
@@ -280,13 +281,14 @@ impl AsnType for BinaryVec {
 }
 
 impl Encode for BinaryVec {
-    fn encode_with_tag_and_constraints<E: Encoder>(
+    fn encode_with_tag_and_constraints<'encoder, E: Encoder<'encoder>>(
         &self,
         encoder: &mut E,
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
+        identifier: rasn::types::Identifier,
     ) -> std::result::Result<(), E::Error> {
-        encoder.encode_octet_string(tag, constraints, &self.0[..])?;
+        encoder.encode_octet_string(tag, constraints, &self.0[..], identifier)?;
         Ok(())
     }
 }
@@ -383,14 +385,15 @@ impl<K: AsnType, V: AsnType> AsnType for HashMapAsn1<K, V> {
 }
 
 impl<K: Encode, V: Encode> Encode for HashMapAsn1<K, V> {
-    fn encode_with_tag_and_constraints<E: Encoder>(
+    fn encode_with_tag_and_constraints<'encoder, E: Encoder<'encoder>>(
         &self,
         encoder: &mut E,
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
+        identifier: rasn::types::Identifier,
     ) -> std::result::Result<(), E::Error> {
         let entries = self.iter().map(|(k, v)| KeyValEntry::new(k, v)).collect::<Vec<_>>();
-        encoder.encode_sequence_of(tag, &entries[..], constraints)?;
+        encoder.encode_sequence_of(tag, &entries[..], constraints, identifier)?;
         Ok(())
     }
 }

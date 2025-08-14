@@ -18,7 +18,7 @@ use crate::{
     identity::{keychain::Subkey, IdentityID},
     util::ser::{self, BinaryVec},
 };
-use rasn::{AsnType, Decode, Encode};
+use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde_derive::{Deserialize, Serialize};
 
 /// A cryptographic signature.

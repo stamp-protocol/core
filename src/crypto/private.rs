@@ -42,22 +42,27 @@ impl<T> AsnType for Private<T> {
     const TAG: Tag = Tag::SEQUENCE;
 }
 
-impl<T> Constructed for Private<T> {
-    const FIELDS: Fields = Fields::from_static(&[Field::new_required(Sealed::TAG, Sealed::TAG_TREE, "sealed")]);
+impl<T> Constructed<1, 0> for Private<T> {
+    const FIELDS: Fields<1> = Fields::from_static([Field::new_required(0, Sealed::TAG, Sealed::TAG_TREE, "sealed")]);
 }
 
 impl<T: AsnType> Encode for Private<T> {
-    fn encode_with_tag_and_constraints<E: Encoder>(
+    fn encode_with_tag_and_constraints<'encoder, E: Encoder<'encoder>>(
         &self,
         encoder: &mut E,
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
+        identifier: rasn::types::Identifier,
     ) -> std::result::Result<(), E::Error> {
-        encoder.encode_sequence::<Self, _>(tag, |encoder| {
-            self.sealed
-                .encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints)?;
-            Ok(())
-        })?;
+        encoder.encode_sequence::<1, 0, Self, _>(
+            tag,
+            |encoder| {
+                self.sealed
+                    .encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints, identifier)?;
+                Ok(())
+            },
+            identifier,
+        )?;
         Ok(())
     }
 }
@@ -149,22 +154,27 @@ impl<T> AsnType for SealedTyped<T> {
     const TAG: Tag = Tag::SEQUENCE;
 }
 
-impl<T> Constructed for SealedTyped<T> {
-    const FIELDS: Fields = Fields::from_static(&[Field::new_required(Sealed::TAG, Sealed::TAG_TREE, "sealed")]);
+impl<T> Constructed<1, 0> for SealedTyped<T> {
+    const FIELDS: Fields<1> = Fields::from_static([Field::new_required(0, Sealed::TAG, Sealed::TAG_TREE, "sealed")]);
 }
 
 impl<T: AsnType> Encode for SealedTyped<T> {
-    fn encode_with_tag_and_constraints<E: Encoder>(
+    fn encode_with_tag_and_constraints<'encoder, E: Encoder<'encoder>>(
         &self,
         encoder: &mut E,
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
+        identifier: rasn::types::Identifier,
     ) -> std::result::Result<(), E::Error> {
-        encoder.encode_sequence::<Self, _>(tag, |encoder| {
-            self.sealed
-                .encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints)?;
-            Ok(())
-        })?;
+        encoder.encode_sequence::<1, 0, Self, _>(
+            tag,
+            |encoder| {
+                self.sealed
+                    .encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints, identifier)?;
+                Ok(())
+            },
+            identifier,
+        )?;
         Ok(())
     }
 }

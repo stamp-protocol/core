@@ -8,7 +8,7 @@ pub mod seal;
 pub mod sign;
 
 use crate::{crypto::base::KeyID, identity::IdentityID};
-use rasn::{AsnType, Decode, Encode};
+use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde_derive::{Deserialize, Serialize};
 
 /// A signature or object containing a signature that lists the identity and key

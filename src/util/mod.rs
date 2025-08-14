@@ -120,14 +120,15 @@ impl AsnType for Timestamp {
 }
 
 impl Encode for Timestamp {
-    fn encode_with_tag_and_constraints<E: rasn::Encoder>(
+    fn encode_with_tag_and_constraints<'encoder, E: rasn::Encoder<'encoder>>(
         &self,
         encoder: &mut E,
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
+        identifier: rasn::types::Identifier,
     ) -> std::result::Result<(), E::Error> {
         let ts = self.timestamp_millis();
-        ts.encode_with_tag_and_constraints(encoder, tag, constraints)?;
+        ts.encode_with_tag_and_constraints(encoder, tag, constraints, identifier)?;
         Ok(())
     }
 }
@@ -200,14 +201,15 @@ impl AsnType for Date {
 }
 
 impl Encode for Date {
-    fn encode_with_tag_and_constraints<E: Encoder>(
+    fn encode_with_tag_and_constraints<'encoder, E: Encoder<'encoder>>(
         &self,
         encoder: &mut E,
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
+        identifier: rasn::types::Identifier,
     ) -> std::result::Result<(), E::Error> {
         let ts: Timestamp = self.clone().into();
-        ts.encode_with_tag_and_constraints(encoder, tag, constraints)?;
+        ts.encode_with_tag_and_constraints(encoder, tag, constraints, identifier)?;
         Ok(())
     }
 }
@@ -290,14 +292,15 @@ impl AsnType for Url {
 }
 
 impl Encode for Url {
-    fn encode_with_tag_and_constraints<E: Encoder>(
+    fn encode_with_tag_and_constraints<'encoder, E: Encoder<'encoder>>(
         &self,
         encoder: &mut E,
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
+        identifier: rasn::types::Identifier,
     ) -> std::result::Result<(), E::Error> {
         let url_str: &str = self.deref().as_ref();
-        url_str.encode_with_tag_and_constraints(encoder, tag, constraints)?;
+        url_str.encode_with_tag_and_constraints(encoder, tag, constraints, identifier)?;
         Ok(())
     }
 }
