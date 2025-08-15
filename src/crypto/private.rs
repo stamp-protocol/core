@@ -546,9 +546,9 @@ mod tests {
         let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
         let maybe3: MaybePrivate<String> = maybe2.strip_private();
 
-        assert_eq!(maybe1.has_private(), false);
-        assert_eq!(maybe2.has_private(), true);
-        assert_eq!(maybe3.has_private(), false);
+        assert!(!maybe1.has_private());
+        assert!(maybe2.has_private());
+        assert!(!maybe3.has_private());
     }
 
     #[test]
@@ -576,17 +576,17 @@ mod tests {
         assert_eq!(maybe1.open(&seal_key).unwrap(), String::from("hello"));
         // fake key can open public data, nobody cares
         assert_eq!(maybe1.open(&fake_key).unwrap(), String::from("hello"));
-        assert_eq!(maybe1.has_data(), true);
+        assert!(maybe1.has_data());
 
         assert_eq!(maybe2.open(&seal_key), Ok(String::from("omg")));
         assert_eq!(maybe2_tampered.open(&seal_key), Err(Error::CryptoHmacVerificationFailed));
         // fake key cannot open
         assert_eq!(maybe2.open(&fake_key), Err(Error::CryptoOpenFailed));
-        assert_eq!(maybe2.has_data(), true);
+        assert!(maybe2.has_data());
 
         assert_eq!(maybe3.open(&seal_key), Err(Error::PrivateDataMissing));
         assert_eq!(maybe3.open(&fake_key), Err(Error::PrivateDataMissing));
-        assert_eq!(maybe3.has_data(), false);
+        assert!(!maybe3.has_data());
     }
 
     #[test]

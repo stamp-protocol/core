@@ -206,7 +206,7 @@ impl PartialEq for Error {
         //
         // TODO: implement a real PartialEq. cannot derive because
         // std::io::Error et al are not eq-able. tonight we dine in hell.
-        format!("{:?}", self) == format!("{:?}", other)
+        format!("{self:?}") == format!("{other:?}")
     }
 }
 

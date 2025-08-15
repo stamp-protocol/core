@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(identity5.keychain().admin_keys().len(), 2);
         assert_eq!(identity5.keychain().admin_keys()[1].name(), "thank-you-parker");
         assert_eq!(identity5.keychain().admin_keys()[1].description(), &Some("send me messages".into()));
-        assert_eq!(identity5.keychain().admin_keys()[1].revocation().is_some(), true);
+        assert!(identity5.keychain().admin_keys()[1].revocation().is_some());
         assert_eq!(identity5.keychain().subkeys().len(), 0);
 
         let identity6 = identity5
@@ -580,7 +580,7 @@ mod tests {
         assert_eq!(identity6.keychain().admin_keys().len(), 2);
         assert_eq!(identity6.keychain().admin_keys()[1].name(), "alright-shutup");
         assert_eq!(identity6.keychain().admin_keys()[1].description(), &Some("send me messages".into()));
-        assert_eq!(identity6.keychain().admin_keys()[1].revocation().is_some(), true);
+        assert!(identity6.keychain().admin_keys()[1].revocation().is_some());
         assert_eq!(identity6.keychain().subkeys().len(), 0);
     }
 
@@ -597,12 +597,12 @@ mod tests {
         assert_eq!(identity.keychain().subkeys()[0].name(), "default:sign");
         assert_eq!(identity.keychain().subkeys()[0].description(), &Some("get a job".into()));
         assert_eq!(identity.keychain().subkeys()[0].key().as_signkey(), Some(&signkey));
-        assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), false);
+        assert!(!identity.keychain().subkeys()[0].revocation().is_some());
 
         let key_id = key.key_id();
         let res = identity.clone().add_subkey(key, "default:sign", Some("get a job"));
         assert_eq!(res.err(), None);
-        assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), false);
+        assert!(!identity.keychain().subkeys()[0].revocation().is_some());
 
         let identity = identity
             .edit_subkey(&key_id, Some("sign:shutup-parker-thank-you-shutup"), None)
@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(identity.keychain().subkeys()[0].name(), "sign:shutup-parker-thank-you-shutup");
         assert_eq!(identity.keychain().subkeys()[0].description(), &Some("get a job".into()));
         assert_eq!(identity.keychain().subkeys()[0].key().as_signkey(), Some(&signkey));
-        assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), false);
+        assert!(!identity.keychain().subkeys()[0].revocation().is_some());
 
         let identity = identity
             .revoke_subkey(&key_id, RevocationReason::Superseded, Some("thank-you".into()))
@@ -620,7 +620,7 @@ mod tests {
         assert_eq!(identity.keychain().subkeys()[0].name(), "thank-you");
         assert_eq!(identity.keychain().subkeys()[0].description(), &Some("get a job".into()));
         assert_eq!(identity.keychain().subkeys()[0].key().as_signkey(), Some(&signkey));
-        assert_eq!(identity.keychain().subkeys()[0].revocation().is_some(), true);
+        assert!(identity.keychain().subkeys()[0].revocation().is_some());
 
         let identity2 = identity
             .clone()
@@ -630,7 +630,7 @@ mod tests {
         assert_eq!(identity2.keychain().subkeys()[0].name(), "thank-you");
         assert_eq!(identity2.keychain().subkeys()[0].description(), &Some("get a job".into()));
         assert_eq!(identity2.keychain().subkeys()[0].key().as_signkey(), Some(&signkey));
-        assert_eq!(identity2.keychain().subkeys()[0].revocation().is_some(), true);
+        assert!(identity2.keychain().subkeys()[0].revocation().is_some());
 
         let identity = identity.delete_subkey(&key_id).unwrap();
         assert_eq!(identity.keychain().subkeys().len(), 0);
@@ -746,7 +746,7 @@ mod tests {
                 participants: vec![admin.into()],
             },
         );
-        let container = PolicyContainer::from_policy_transaction(&id.deref(), 0, capability).unwrap();
+        let container = PolicyContainer::from_policy_transaction(id.deref(), 0, capability).unwrap();
         let identity = Identity::create(id.clone(), vec![admin_key], vec![container], now);
         let ser = identity.serialize_text().unwrap();
         assert_eq!(
@@ -802,6 +802,6 @@ revoked: false"#
         let identity2 = identity.strip_private();
         assert!(!identity2.has_private());
         assert!(!identity2.keychain().has_private());
-        assert!(!identity2.claims().iter().find(|c| c.has_private()).is_some());
+        assert!(identity2.claims().iter().find(|c| c.has_private()).is_none());
     }
 }

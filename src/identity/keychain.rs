@@ -924,15 +924,9 @@ mod tests {
         let mut rng = crate::util::test::rng();
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let mut keychain = Keychain::new(vec![]);
-        assert_eq!(keychain.subkey_by_keyid(&KeyID::random_sign().into()).as_ref().map(|x| x.key_id()), None);
+        assert_eq!(keychain.subkey_by_keyid(&KeyID::random_sign()).as_ref().map(|x| x.key_id()), None);
         assert_eq!(keychain.subkey_by_keyid_str("abcdefg").as_ref().map(|x| x.key_id()), None);
-        assert_eq!(
-            keychain
-                .subkey_by_keyid_mut(&KeyID::random_sign().into())
-                .as_ref()
-                .map(|x| x.key_id()),
-            None
-        );
+        assert_eq!(keychain.subkey_by_keyid_mut(&KeyID::random_sign()).as_ref().map(|x| x.key_id()), None);
         assert_eq!(keychain.subkey_by_name("Alpha").as_ref().map(|x| x.key_id()), None);
 
         let subkey1 = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
@@ -950,10 +944,7 @@ mod tests {
             .add_subkey(subkey4.clone(), "Alpha", None)
             .unwrap();
 
-        assert_eq!(
-            keychain2.subkey_by_keyid(&subkey1.key_id().into()).as_ref().map(|x| x.key_id()),
-            Some(subkey1.key_id())
-        );
+        assert_eq!(keychain2.subkey_by_keyid(&subkey1.key_id()).as_ref().map(|x| x.key_id()), Some(subkey1.key_id()));
         assert_eq!(
             keychain2
                 .subkey_by_keyid_str(subkey2.key_id().as_string().as_str())
@@ -962,7 +953,7 @@ mod tests {
             Some(subkey2.key_id())
         );
         assert_eq!(
-            keychain2.subkey_by_keyid_mut(&subkey3.key_id().into()).as_ref().map(|x| x.key_id()),
+            keychain2.subkey_by_keyid_mut(&subkey3.key_id()).as_ref().map(|x| x.key_id()),
             Some(subkey3.key_id())
         );
         assert_eq!(keychain2.subkey_by_name("Alpha").as_ref().map(|x| x.key_id()), Some(subkey4.key_id()));
@@ -1120,16 +1111,16 @@ mod tests {
             .unwrap()
             .add_subkey(secret, "secret", None)
             .unwrap();
-        assert_eq!(keychain.admin_keys().iter().fold(false, |acc, x| acc || x.has_private()), true);
-        assert_eq!(keychain.subkey_by_name("sign").unwrap().key().has_private(), true);
-        assert_eq!(keychain.subkey_by_name("crypto").unwrap().key().has_private(), true);
+        assert!(keychain.admin_keys().iter().any(|x| x.has_private()));
+        assert!(keychain.subkey_by_name("sign").unwrap().key().has_private());
+        assert!(keychain.subkey_by_name("crypto").unwrap().key().has_private());
         assert!(keychain.subkey_by_name("secret").is_some());
 
         let keychain = keychain.strip_private();
 
-        assert_eq!(keychain.admin_keys().iter().fold(false, |acc, x| acc || x.has_private()), false);
-        assert_eq!(keychain.subkey_by_name("sign").unwrap().key().has_private(), false);
-        assert_eq!(keychain.subkey_by_name("crypto").unwrap().key().has_private(), false);
-        assert_eq!(keychain.subkey_by_name("secret").unwrap().key().has_private(), false);
+        assert!(!keychain.admin_keys().iter().any(|x| x.has_private()));
+        assert!(!keychain.subkey_by_name("sign").unwrap().key().has_private());
+        assert!(!keychain.subkey_by_name("crypto").unwrap().key().has_private());
+        assert!(!keychain.subkey_by_name("secret").unwrap().key().has_private());
     }
 }

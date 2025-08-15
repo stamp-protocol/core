@@ -112,13 +112,13 @@ mod tests {
         let message =
             b"Plaque is a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
         let signkey = identity.keychain().subkey_by_name("sign").unwrap();
-        let signature = sign(&master_key, identity.id(), &signkey, message).unwrap();
-        verify(&signkey, &signature, message).unwrap();
+        let signature = sign(&master_key, identity.id(), signkey, message).unwrap();
+        verify(signkey, &signature, message).unwrap();
 
         // modify the message and it fails
         let message2 =
             b"Plaque is NOT a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
-        let res = verify(&signkey, &signature, message2);
+        let res = verify(signkey, &signature, message2);
         assert_eq!(res, Err(Error::CryptoSignatureVerificationFailed));
 
         // use the wrong key and it fails
@@ -130,10 +130,10 @@ mod tests {
 
         // send the wrong type and it fails
         let signature2 = Signature::Attached {
-            sig: signature.detached().map(|x| x.clone()).unwrap(),
+            sig: signature.detached().cloned().unwrap(),
             data: BinaryVec::from(message.to_vec()),
         };
-        let res = verify(&signkey, &signature2, message);
+        let res = verify(signkey, &signature2, message);
         assert_eq!(res, Err(Error::CryptoWrongSignatureType));
     }
 
@@ -144,8 +144,8 @@ mod tests {
         let message =
             b"Plaque is a figment of the liberal media and dental industry to scare you into buying useless appliances and pastes.";
         let signkey = identity.keychain().subkey_by_name("sign").unwrap();
-        let signature = sign_attached(&master_key, identity.id(), &signkey, message).unwrap();
-        verify_attached(&signkey, &signature).unwrap();
+        let signature = sign_attached(&master_key, identity.id(), signkey, message).unwrap();
+        verify_attached(signkey, &signature).unwrap();
 
         // modify the message and it fails
         let message2 =
@@ -154,7 +154,7 @@ mod tests {
             sig: signature.attached().unwrap().0.clone(),
             data: BinaryVec::from(message2.to_vec()),
         };
-        let res = verify_attached(&signkey, &signature2);
+        let res = verify_attached(signkey, &signature2);
         assert_eq!(res, Err(Error::CryptoSignatureVerificationFailed));
 
         // use the wrong key and it fails
@@ -168,7 +168,7 @@ mod tests {
         let signature3 = Signature::Detached {
             sig: signature.attached().unwrap().0.clone(),
         };
-        let res = verify_attached(&signkey, &signature3);
+        let res = verify_attached(signkey, &signature3);
         assert_eq!(res, Err(Error::CryptoWrongSignatureType));
     }
 }

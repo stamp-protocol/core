@@ -139,7 +139,7 @@ pub(crate) mod tests {
         }
         let bytes = ser::serialize(&hash).unwrap();
         assert_eq!(ser::base64_encode(&bytes[..]), String::from("oCIEIFmbUZVt-80VwjM1_eYVJlT1NDQq39FPB6JzHPtG2_j4"));
-        assert_eq!(format!("{}", hash), String::from("WZtRlW37zRXCMzX95hUmVPU0NCrf0U8HonMc-0bb-PgA"));
+        assert_eq!(format!("{hash}"), String::from("WZtRlW37zRXCMzX95hUmVPU0NCrf0U8HonMc-0bb-PgA"));
         let hash2: Hash = ser::deserialize(&bytes).unwrap();
         match &hash2 {
             Hash::Blake3(bin) => {

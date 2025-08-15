@@ -174,7 +174,7 @@ pub(crate) mod tests {
         let id = Hash::new_blake3("my key".as_bytes()).unwrap();
         let salt = Hash::new_blake3(id.as_bytes()).unwrap();
         let master_key =
-            derive_secret_key("ZONING IS COMMUNISM".as_bytes(), &salt.as_bytes(), KDF_OPS_INTERACTIVE, KDF_MEM_INTERACTIVE).unwrap();
+            derive_secret_key("ZONING IS COMMUNISM".as_bytes(), salt.as_bytes(), KDF_OPS_INTERACTIVE, KDF_MEM_INTERACTIVE).unwrap();
         assert_eq!(
             master_key.as_ref(),
             &[

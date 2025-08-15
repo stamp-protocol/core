@@ -95,7 +95,7 @@ pub(crate) fn generate_combinations<T: Clone>(vals: &[T]) -> Vec<Vec<T>> {
             if bits & 1 > 0 {
                 combo.push(vals[idx].clone());
             }
-            bits = bits >> 1;
+            bits >>= 1;
         }
         out.push(combo);
     }

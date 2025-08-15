@@ -145,7 +145,7 @@ impl TrustAlgoDefault {
     }
 
     fn average(trust_values: &[i8]) -> i8 {
-        if trust_values.len() == 0 {
+        if trust_values.is_empty() {
             return 0;
         }
 
@@ -192,7 +192,7 @@ impl TrustAlgo for TrustAlgoDefault {
     }
 
     fn max_distance(&self) -> usize {
-        self.max_distance.clone()
+        self.max_distance
     }
 }
 
@@ -321,7 +321,7 @@ impl<'a> Network<'a> {
                     });
 
                 'recurse: for stamps in stamps_grouped.into_values() {
-                    let this_node = match stamps.get(0) {
+                    let this_node = match stamps.first() {
                         Some(x) => x.stampee().deref(),
                         None => continue 'recurse,
                     };
@@ -331,7 +331,7 @@ impl<'a> Network<'a> {
                         continue 'recurse;
                     }
                     for path_stamp in &current_path {
-                        if path_stamp.get(0).map(|x| x.stampee().deref()) == Some(this_node) {
+                        if path_stamp.first().map(|x| x.stampee().deref()) == Some(this_node) {
                             continue 'recurse;
                         }
                     }
@@ -446,7 +446,7 @@ impl std::fmt::Display for TrustReport {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(f, ">> Trust report")?;
         for (i, path_report) in self.paths().iter().enumerate() {
-            writeln!(f, "  -- path {}", i)?;
+            writeln!(f, "  -- path {i}")?;
             for entry in path_report {
                 writeln!(f, "    ID {} -> ID {}", entry.from().deref(), entry.to().deref())?;
                 writeln!(f, "      trust incoming:      {}", entry.trust_previous_node())?;
@@ -503,12 +503,12 @@ pub fn trust_score<T: TrustAlgo>(
     identity_network: &[&Identity],
     trust_algo: &T,
 ) -> Option<(i8, TrustReport)> {
-    if trust_mapping.len() == 0 {
+    if trust_mapping.is_empty() {
         return None;
     }
     let paths = find_paths(trust_mapping, subject, identity_network, trust_algo.max_distance());
 
-    if paths.len() == 0 {
+    if paths.is_empty() {
         return None;
     }
 
@@ -517,7 +517,7 @@ pub fn trust_score<T: TrustAlgo>(
     let mut report = TrustReport::new();
     let mut trust_values: Vec<i8> = Vec::new();
     for path in paths {
-        if path.len() == 0 || path[0].len() == 0 {
+        if path.is_empty() || path[0].is_empty() {
             continue;
         }
         let mut prev_node_trust = trust_mapping
@@ -540,8 +540,8 @@ pub fn trust_score<T: TrustAlgo>(
                 })
                 .collect::<Vec<_>>();
             let trust_report_entry = TrustReportPathEntry::new(
-                IdentityID::from(stamps[0].stamper().clone()),
-                IdentityID::from(stamps[0].stampee().clone()),
+                stamps[0].stamper().clone(),
+                stamps[0].stampee().clone(),
                 report_stamps,
                 prev_node_trust,
                 dist,
@@ -553,7 +553,7 @@ pub fn trust_score<T: TrustAlgo>(
             // pull out the direct trust value. we'll use this to check if we have a negative trust
             // value, at which point we stop processing this path.
             let trust_direct = stamps
-                .get(0)
+                .first()
                 .and_then(|stamp| trust_mapping.get(stamp.stampee()))
                 .map(|t| t.trust_value())
                 .unwrap_or(0);
@@ -742,7 +742,7 @@ mod tests {
         let mut network = Network::new();
         let identities = identity_network.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
         for id in &identities {
-            network.add_node(&id);
+            network.add_node(id);
         }
         let from = identity_network.get(from).unwrap().identity_id().unwrap();
         let to = identity_network.get(to).unwrap().identity_id().unwrap();
@@ -752,7 +752,7 @@ mod tests {
             .map(|path| {
                 path.into_vec()
                     .into_iter()
-                    .map(|stamps| stamps.into_iter().map(|stamp| stamp.clone()).collect::<Vec<_>>())
+                    .map(|stamps| stamps.into_iter().cloned().collect::<Vec<_>>())
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>()

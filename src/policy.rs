@@ -822,7 +822,7 @@ mod tests {
                     match round1.test(round2) {
                         Ok(_) => {}
                         Err(e) => {
-                            panic!("Test failed comparing {:?} to {:?}: {:?}", round1, round2, e)
+                            panic!("Test failed comparing {round1:?} to {round2:?}: {e:?}")
                         }
                     }
                 } else {
@@ -1152,7 +1152,7 @@ mod tests {
 
         let people = vec![&gus, &marty, &jackie, &rosarita, &dirk, &twinkee, &syd, &scurvy, &kitty];
         let combinations =
-            util::test::generate_combinations(&vec!["gus", "marty", "jackie", "rosarita", "dirk", "twinkee", "syd", "scurvy", "kitty"]);
+            util::test::generate_combinations(&["gus", "marty", "jackie", "rosarita", "dirk", "twinkee", "syd", "scurvy", "kitty"]);
         let obj = "Pretend entry";
         let possible_signatures = people
             .into_iter()
@@ -1192,7 +1192,7 @@ mod tests {
             vec!["gus", "marty", "dirk"],
         ];
         let should_pass = |names: &[&str]| -> bool {
-            if names.len() == 0 {
+            if names.is_empty() {
                 return false;
             }
             for entry in &passing_combinations {
@@ -1215,12 +1215,12 @@ mod tests {
             match res {
                 Ok(_) => {
                     if !should_pass(&combo) {
-                        panic!("Combination passed but should not have: {:?}", combo);
+                        panic!("Combination passed but should not have: {combo:?}");
                     }
                 }
                 Err(_) => {
                     if should_pass(&combo) {
-                        panic!("Combination errored but should have passed: {:?}", combo);
+                        panic!("Combination errored but should have passed: {combo:?}");
                     }
                 }
             }

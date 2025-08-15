@@ -1147,7 +1147,7 @@ mod tests {
         assert!(matches!(trans2.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
 
         let mut trans3 = transactions.transactions()[0].clone();
-        let then = Timestamp::from(now.deref().clone() - chrono::Duration::seconds(2));
+        let then = Timestamp::from(*now.deref() - chrono::Duration::seconds(2));
         trans3.entry_mut().set_created(then);
         assert!(matches!(trans3.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
 

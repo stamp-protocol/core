@@ -299,7 +299,7 @@ impl Transactions {
 
     /// Find any transactions that are not referenced as previous transactions.
     /// Effectively, the leaves of our graph.
-    fn find_leaf_transactions<'a>(transaction_list: &'a [Transaction]) -> Vec<&'a TransactionID> {
+    fn find_leaf_transactions(transaction_list: &[Transaction]) -> Vec<&TransactionID> {
         let mut seen: HashSet<&TransactionID> = HashSet::new();
         for trans in transaction_list {
             for prev in trans.entry().previous_transactions() {
@@ -964,7 +964,7 @@ mod tests {
             for tx in transactions {
                 println!("-- {}: {}", id_to_name.get(tx.id()).unwrap(), tx.id());
                 for prev in tx.entry().previous_transactions() {
-                    println!("   prev: {}", prev);
+                    println!("   prev: {prev}");
                 }
             }
         };
@@ -1955,7 +1955,7 @@ mod tests {
                 assert_eq!(published_trans.transactions()[1].id(), transactions2.transactions()[1].id());
                 assert_eq!(published_trans.transactions()[2].id(), transactions2.transactions()[2].id());
             }
-            _ => panic!("Unexpected transaction: {:?}", published),
+            _ => panic!("Unexpected transaction: {published:?}"),
         }
 
         let identity = transactions2.build_identity().unwrap();
@@ -1971,7 +1971,7 @@ mod tests {
                     .retain(|x| x.id() != transactions2.transactions()[1].id());
                 assert_eq!(published_trans2.transactions().len(), 2);
             }
-            _ => panic!("Unexpected transaction: {:?}", published2),
+            _ => panic!("Unexpected transaction: {published2:?}"),
         }
 
         assert!(matches!(published2.verify(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
@@ -2001,7 +2001,7 @@ mod tests {
             } => {
                 *body_hash = Hash::new_blake3(b"hold on...").unwrap();
             }
-            _ => panic!("Unexpected transaction: {:?}", sig_mod),
+            _ => panic!("Unexpected transaction: {sig_mod:?}"),
         }
         assert!(matches!(sig_mod.verify(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
     }
@@ -2035,7 +2035,7 @@ mod tests {
                 // NICE TRY, SALLY. UGH.
                 *body = BinaryVec::from(Vec::from("SEND $6 TO SALLY".as_bytes()));
             }
-            _ => panic!("Unexpected transaction: {:?}", ext_mod),
+            _ => panic!("Unexpected transaction: {ext_mod:?}"),
         }
         assert!(matches!(ext_mod.verify(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
     }
@@ -2529,7 +2529,7 @@ mod tests {
         let ext = |now, prev, ref_id: &[&TransactionID], data: &[u8]| {
             let mut ref_str = Vec::new();
             for id in ref_id {
-                ref_str.push(format!("{}", id));
+                ref_str.push(format!("{id}"));
             }
             transactions
                 .ext(
@@ -2578,7 +2578,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             datas,
-            vec!["pardon", "me", "may", "i", "use", "your", "bathroom??!"]
+            ["pardon", "me", "may", "i", "use", "your", "bathroom??!"]
                 .iter()
                 .map(|x| BinaryVec::from(Vec::from(x.as_bytes())))
                 .collect::<Vec<_>>()

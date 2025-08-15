@@ -320,7 +320,7 @@ impl<'de> serde::Deserialize<'de> for BinaryVec {
 
 impl std::fmt::Debug for BinaryVec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", base64_encode(&self.deref()))
+        write!(f, "{}", base64_encode(self.deref()))
     }
 }
 

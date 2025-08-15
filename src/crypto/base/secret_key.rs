@@ -34,7 +34,7 @@ impl<'msg> From<&'msg Vec<u8>> for DataWithAAD<'msg> {
 
 impl<'msg> From<&'msg [u8]> for DataWithAAD<'msg> {
     fn from(data: &'msg [u8]) -> Self {
-        Self { data: data, aad: None }
+        Self { data, aad: None }
     }
 }
 
@@ -198,7 +198,7 @@ impl SecretKey {
 impl Clone for SecretKey {
     fn clone(&self) -> Self {
         match self {
-            Self::XChaCha20Poly1305(secret) => Self::XChaCha20Poly1305(BinarySecret::new(secret.expose_secret().clone())),
+            Self::XChaCha20Poly1305(secret) => Self::XChaCha20Poly1305(BinarySecret::new(*secret.expose_secret())),
         }
     }
 }

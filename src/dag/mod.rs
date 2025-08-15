@@ -42,7 +42,7 @@ impl<'a, I, T> DagNode<'a, I, T> {
     pub fn new(id: &'a I, node: &'a T, prev: Vec<&'a I>, timestamp: &'a Timestamp) -> Self {
         Self {
             id,
-            prev: prev,
+            prev,
             next: Vec::new(),
             node,
             timestamp,
@@ -228,7 +228,7 @@ where
             })
             .expect("Dag::from_nodes()::walk() returned without error");
         for entry in missing {
-            missing_nodes.insert(&entry);
+            missing_nodes.insert(entry);
         }
         dag.visited = visited;
         dag.unvisited = dag.find_unvisited();
@@ -388,7 +388,7 @@ where
                 if node.prev().len() > 1 {
                     // push the ancestors we were given for the previous node into our merge
                     // tracker for THIS node.
-                    let entry = branch_merge_tracker.entry(&tid).or_default();
+                    let entry = branch_merge_tracker.entry(tid).or_default();
                     (*entry).push(ancestry.clone());
 
                     if entry.len() < node.prev().len() {
@@ -407,7 +407,7 @@ where
                             }
                         }
                         None => {
-                            missing_nodes.insert(&tid);
+                            missing_nodes.insert(tid);
                             continue;
                         }
                     }
@@ -422,11 +422,11 @@ where
                 }
 
                 let ancestry_flat = ancestry.iter().map(|(_, x)| *x).collect::<Vec<_>>();
-                branch_tracker.insert(&tid, ancestry_flat.clone());
+                branch_tracker.insert(tid, ancestry_flat.clone());
 
                 // track that we've seen this node
-                visited.push(&tid);
-                visited_set.insert(&tid);
+                visited.push(tid);
+                visited_set.insert(tid);
 
                 // run our user-supplied operation
                 opfn(node, &ancestry_flat, &branch_tracker)?;
@@ -603,7 +603,7 @@ where
                             ))
                         })?
                     } else {
-                        let ancestor_before_id = ancestry.iter().rev().skip(1).next().ok_or_else(|| {
+                        let ancestor_before_id = ancestry.iter().rev().nth(1).ok_or_else(|| {
                             Error::DagBuildError(format!(
                                 "apply() -- {:?} next: missing next nearest ancestor id: {:?}",
                                 node.id(),
@@ -631,7 +631,7 @@ where
                         })?
                     };
                     // first verify the transaction is valid against the CURRENT branch state.
-                    validate_fn(&current_branch_state, node)?;
+                    validate_fn(current_branch_state, node)?;
                     // now apply this transaction to all of its ancestor branches
                     for branch in ancestry {
                         #[allow(suspicious_double_ref_op)]
@@ -703,7 +703,7 @@ where
             Ok::<(), E>(())
         })?;
         Ok(branch_state
-            .get(&self.head()[0])
+            .get(self.head()[0])
             .ok_or_else(|| Error::DagBuildError(format!("apply() -- return: missing root state: {:?}", self.head()[0])))?)
     }
 
@@ -1062,7 +1062,7 @@ mod tests {
         assert_eq!(
             visited
                 .into_iter()
-                .map(|(tid, ancestry, eq)| (*tid_to_name.get(&tid).unwrap(), ancestry, eq))
+                .map(|(tid, ancestry, eq)| (*tid_to_name.get(tid).unwrap(), ancestry, eq))
                 .collect::<Vec<_>>(),
             vec![
                 ("A", vec!["A"], true),
@@ -1122,7 +1122,7 @@ mod tests {
             visited
                 .into_iter()
                 .map(|(tid, ancestry, eq)| (
-                    *tid_to_name.get(&tid).unwrap(),
+                    *tid_to_name.get(tid).unwrap(),
                     ancestry.iter().map(|x| *tid_to_name.get(x).unwrap()).collect::<Vec<_>>(),
                     eq
                 ))
@@ -1269,13 +1269,10 @@ mod tests {
         }
 
         fn validate(&self, transaction: &Trans) -> crate::error::Result<()> {
-            match transaction.op {
-                TransOp::Inc(val) => {
-                    if !self.allow_even && (val & 1) == 0 {
-                        Err(crate::error::Error::TransactionInvalid(transaction.id.clone(), String::from("no evens!")))?;
-                    }
+            if let TransOp::Inc(val) = transaction.op {
+                if !self.allow_even && (val & 1) == 0 {
+                    Err(crate::error::Error::TransactionInvalid(transaction.id.clone(), String::from("no evens!")))?;
                 }
-                _ => {}
             }
             Ok(())
         }
@@ -1319,7 +1316,7 @@ mod tests {
         //   D
         trans_c_mod.prev = vec![trans_b.id.clone()];
         let list1 = vec![trans_a.clone(), trans_b.clone(), trans_c.clone()];
-        let list2 = vec![trans_c_mod.clone(), trans_d.clone()];
+        let list2 = [trans_c_mod.clone(), trans_d.clone()];
 
         let nodes1 = list1.iter().map(|x| x.into()).collect::<Vec<_>>();
         let nodes2 = list2.iter().map(|x| x.into()).collect::<Vec<_>>();
@@ -1358,7 +1355,7 @@ mod tests {
                 Err(Error::TransactionInvalid(ref id, ..)) => {
                     assert_eq!(id, &trans_c.id);
                 }
-                _ => panic!("unexpected error: {:?}", res),
+                _ => panic!("unexpected error: {res:?}"),
             }
         }
 
