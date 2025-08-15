@@ -780,7 +780,8 @@ keychain:
       revocation: ~
   subkeys: []
 claims: []
-stamps: []"#
+stamps: []
+revoked: false"#
         );
     }
 
