@@ -10,6 +10,7 @@ use std::ops::Deref;
 
 /// An enum we can pass to various signing functions to tell them which hashing
 /// algorithm to use.
+#[derive(Clone, Debug)]
 pub enum HashAlgo {
     /// Blake3
     Blake3,
