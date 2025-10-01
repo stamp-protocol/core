@@ -643,11 +643,7 @@ impl Transaction {
 
     /// Sign this transaction. This consumes the transaction, adds the signature
     /// to the `signatures` list, then returns the new transaction.
-    pub fn sign<K>(mut self, master_key: &SecretKey, admin_key: &K) -> Result<Self>
-    where
-        K: Deref<Target = AdminKeypair>,
-    {
-        let admin_key = admin_key.deref();
+    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair) -> Result<Self> {
         let admin_key_pub: AdminKeypairPublic = admin_key.clone().into();
         let sig_exists = self.signatures().iter().find(|sig| match sig {
             MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
@@ -789,11 +785,8 @@ impl Transaction {
     }
 
     /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
-    /// [`Transaction::verify`], and returns the contained [`crate::dag::Transactions`] and
-    /// [`crate::identity::Identity`].
-    pub fn validate_publish_transaction(self) -> Result<(Transactions, Identity)> {
-        // first, do a borrowed verification of the full published identity. this lets us verify
-        // without cloning.
+    pub fn validate_publish_transaction(&self) -> Result<Identity> {
+        // do a verification of the full published identity.
         let identity = match self.entry().body() {
             TransactionBody::PublishV1 { transactions } => {
                 let identity = transactions.build_identity()?;
@@ -802,6 +795,15 @@ impl Transaction {
             }
             _ => Err(Error::TransactionMismatch)?,
         };
+        Ok(identity)
+    }
+
+    /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
+    /// [`Transaction::verify`], and returns the contained [`crate::dag::Transactions`] and
+    /// [`crate::identity::Identity`].
+    pub fn validate_and_open_publish_transaction(self) -> Result<(Transactions, Identity)> {
+        // first, do a borrowed verification of the full published identity.
+        let identity = self.validate_publish_transaction()?;
 
         // now we can fully deconstuct the transaction, get the inner identity, and return it
         match self {
@@ -813,6 +815,48 @@ impl Transaction {
                     },
                 ..
             } => Ok((*transactions, identity)),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `creator` field.
+    pub fn get_ext_creator(&self) -> Result<&IdentityID> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref creator, .. } => Ok(creator),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `ty` field.
+    pub fn get_ext_ty(&self) -> Result<&Option<BinaryVec>> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref ty, .. } => Ok(ty),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `previous_transactions` field.
+    pub fn get_ext_previous_transactions(&self) -> Result<&Vec<TransactionID>> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 {
+                ref previous_transactions, ..
+            } => Ok(previous_transactions),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `context` field.
+    pub fn get_ext_context(&self) -> Result<&Option<HashMapAsn1<BinaryVec, BinaryVec>>> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref context, .. } => Ok(context),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `payload` field.
+    pub fn get_ext_payload(&self) -> Result<&BinaryVec> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref payload, .. } => Ok(payload),
             _ => Err(Error::TransactionMismatch),
         }
     }
@@ -1176,6 +1220,12 @@ mod tests {
     #[ignore]
     #[test]
     fn trans_validate_publish_transaction() {
+        todo!();
+    }
+
+    #[ignore]
+    #[test]
+    fn trans_validate_and_open_publish_transaction() {
         todo!();
     }
 
