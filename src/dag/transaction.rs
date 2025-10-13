@@ -26,8 +26,9 @@ use getset;
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde_derive::{Deserialize, Serialize};
+use std::convert::TryFrom;
 use std::hash::{Hash as StdHash, Hasher};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 /// This is all of the possible transactions that can be performed on an
 /// identity, including the data they require.
@@ -641,9 +642,8 @@ impl Transaction {
         }
     }
 
-    /// Sign this transaction. This consumes the transaction, adds the signature
-    /// to the `signatures` list, then returns the new transaction.
-    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair) -> Result<Self> {
+    /// Sign this transaction in-place.
+    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair) -> Result<()> {
         let admin_key_pub: AdminKeypairPublic = admin_key.clone().into();
         let sig_exists = self.signatures().iter().find(|sig| match sig {
             MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
@@ -658,6 +658,13 @@ impl Transaction {
             signature: sig,
         };
         self.signatures_mut().push(policy_sig);
+        Ok(())
+    }
+
+    /// Sign this transaction. This consumes the transaction, adds the signature
+    /// to the `signatures` list, then returns the new transaction.
+    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair) -> Result<Self> {
+        self.sign_mut(master_key, admin_key)?;
         Ok(self)
     }
 
@@ -684,7 +691,7 @@ impl Transaction {
     ///
     /// This is useful if you need to validate a transaction is "valid" up until the point where
     /// you need a copy of the full identity (so that the policies can be checked). In other words,
-    /// if you need a verify a transaction but don't have all the information you need to run
+    /// if you need to verify a transaction but don't have all the information you need to run
     /// `Transaction.verify()` then you can run this as a self-contained way of verification, as
     /// long as you keep in mind that the transaction ultimately needs to be checked against a
     /// built identity.
@@ -783,83 +790,6 @@ impl Transaction {
         self.entry_mut().set_body(new_body);
         Ok(self)
     }
-
-    /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
-    pub fn validate_publish_transaction(&self) -> Result<Identity> {
-        // do a verification of the full published identity.
-        let identity = match self.entry().body() {
-            TransactionBody::PublishV1 { transactions } => {
-                let identity = transactions.build_identity()?;
-                self.verify(Some(&identity))?;
-                identity
-            }
-            _ => Err(Error::TransactionMismatch)?,
-        };
-        Ok(identity)
-    }
-
-    /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
-    /// [`Transaction::verify`], and returns the contained [`crate::dag::Transactions`] and
-    /// [`crate::identity::Identity`].
-    pub fn validate_and_open_publish_transaction(self) -> Result<(Transactions, Identity)> {
-        // first, do a borrowed verification of the full published identity.
-        let identity = self.validate_publish_transaction()?;
-
-        // now we can fully deconstuct the transaction, get the inner identity, and return it
-        match self {
-            Transaction {
-                entry:
-                    TransactionEntry {
-                        body: TransactionBody::PublishV1 { transactions },
-                        ..
-                    },
-                ..
-            } => Ok((*transactions, identity)),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `creator` field.
-    pub fn get_ext_creator(&self) -> Result<&IdentityID> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref creator, .. } => Ok(creator),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `ty` field.
-    pub fn get_ext_ty(&self) -> Result<&Option<BinaryVec>> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref ty, .. } => Ok(ty),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `previous_transactions` field.
-    pub fn get_ext_previous_transactions(&self) -> Result<&Vec<TransactionID>> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 {
-                ref previous_transactions, ..
-            } => Ok(previous_transactions),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `context` field.
-    pub fn get_ext_context(&self) -> Result<&Option<HashMapAsn1<BinaryVec, BinaryVec>>> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref context, .. } => Ok(context),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `payload` field.
-    pub fn get_ext_payload(&self) -> Result<&BinaryVec> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref payload, .. } => Ok(payload),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
 }
 
 impl std::cmp::PartialEq for Transaction {
@@ -909,6 +839,171 @@ impl Public for Transaction {
 impl SerdeBinary for Transaction {}
 impl SerText for Transaction {}
 impl DeText for Transaction {}
+
+/// Makes it easy to define wrapper transactions
+macro_rules! define_wrapper_tx {
+    ( $name:ident, $body_type:path ) => {
+        impl $name {
+            /// Convert this into a [`Transaction`]
+            pub fn into_inner(self) -> Transaction {
+                let Self(tx) = self;
+                tx
+            }
+        }
+
+        impl TryFrom<Transaction> for $name {
+            type Error = Error;
+            fn try_from(val: Transaction) -> std::result::Result<Self, Self::Error> {
+                if matches!(val.entry().body(), $body_type { .. }) {
+                    Ok(Self(val))
+                } else {
+                    Err(Error::TransactionMismatch)
+                }
+            }
+        }
+
+        impl Deref for $name {
+            type Target = Transaction;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl DerefMut for $name {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+
+        // when deserializing, when that we actually have the proper type
+        impl crate::util::ser::SerdeBinary for $name {
+            fn deserialize_binary(slice: &[u8]) -> Result<Self> {
+                let tx: Transaction = crate::util::ser::SerdeBinary::deserialize_binary(slice)?;
+                Self::try_from(tx)
+            }
+        }
+    };
+}
+
+/// A wrapper around `Publish` transactions
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(delegate)]
+pub struct PublishTransaction(Transaction);
+
+define_wrapper_tx!(PublishTransaction, TransactionBody::PublishV1);
+
+impl PublishTransaction {
+    /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
+    pub fn validate_publish_transaction(&self) -> Result<Identity> {
+        // do a verification of the full published identity.
+        let identity = match self.entry().body() {
+            TransactionBody::PublishV1 { transactions } => {
+                let identity = transactions.build_identity()?;
+                self.verify(Some(&identity))?;
+                identity
+            }
+            _ => Err(Error::TransactionMismatch)?,
+        };
+        Ok(identity)
+    }
+
+    /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
+    /// [`Transaction::verify`], and returns the contained [`crate::dag::Transactions`] and
+    /// [`crate::identity::Identity`].
+    pub fn validate_and_open_publish_transaction(self) -> Result<(Transactions, Identity)> {
+        // first, do a borrowed verification of the full published identity.
+        let identity = self.validate_publish_transaction()?;
+
+        // now we can fully deconstuct the transaction, get the inner identity, and return it
+        match self {
+            Self(Transaction {
+                entry:
+                    TransactionEntry {
+                        body: TransactionBody::PublishV1 { transactions },
+                        ..
+                    },
+                ..
+            }) => Ok((*transactions, identity)),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+}
+
+/// A wrapper around `Sign` transactions
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(delegate)]
+pub struct SignTransaction(Transaction);
+
+define_wrapper_tx!(SignTransaction, TransactionBody::SignV1);
+
+impl SignTransaction {
+    /// If this is an Sign transaction, grab the `creator` field.
+    pub fn get_creator(&self) -> Result<&IdentityID> {
+        match self.entry().body() {
+            TransactionBody::SignV1 { ref creator, .. } => Ok(creator),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is a Sign transaction, grab the `body_hash` field
+    pub fn get_body_hash(&self) -> Result<&Hash> {
+        match self.entry().body() {
+            TransactionBody::SignV1 { ref body_hash, .. } => Ok(body_hash),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+}
+
+/// A wrapper around `Ext` transactions
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(delegate)]
+pub struct ExtTransaction(Transaction);
+
+define_wrapper_tx!(ExtTransaction, TransactionBody::ExtV1);
+
+impl ExtTransaction {
+    /// If this is an Ext transaction, grab the `creator` field.
+    pub fn get_creator(&self) -> Result<&IdentityID> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref creator, .. } => Ok(creator),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `ty` field.
+    pub fn get_ty(&self) -> Result<&Option<BinaryVec>> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref ty, .. } => Ok(ty),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `previous_transactions` field.
+    pub fn get_previous_transactions(&self) -> Result<&Vec<TransactionID>> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 {
+                ref previous_transactions, ..
+            } => Ok(previous_transactions),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `context` field.
+    pub fn get_context(&self) -> Result<&Option<HashMapAsn1<BinaryVec, BinaryVec>>> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref context, .. } => Ok(context),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `payload` field.
+    pub fn get_payload(&self) -> Result<&BinaryVec> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref payload, .. } => Ok(payload),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

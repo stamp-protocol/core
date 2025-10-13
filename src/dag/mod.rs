@@ -12,7 +12,7 @@ mod transaction;
 mod transactions;
 
 pub use crate::dag::{
-    transaction::{Transaction, TransactionBody, TransactionEntry, TransactionID},
+    transaction::{ExtTransaction, PublishTransaction, SignTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID},
     transactions::{tx_chain, Transactions},
 };
 use crate::{error::Error, util::Timestamp};
