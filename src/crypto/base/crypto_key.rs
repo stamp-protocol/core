@@ -5,7 +5,7 @@ use crate::{
     },
     error::{Error, Result},
     util::{
-        ser::{Binary, BinarySecret, BinaryVec},
+        ser::{Binary, BinarySecret, BinaryVec, SerdeBinary},
         Public,
     },
 };
@@ -292,6 +292,8 @@ impl From<CryptoKeypair> for CryptoKeypairPublic {
         }
     }
 }
+
+impl SerdeBinary for CryptoKeypairPublic {}
 
 #[cfg(test)]
 pub(crate) mod tests {

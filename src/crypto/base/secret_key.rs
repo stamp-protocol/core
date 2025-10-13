@@ -268,7 +268,6 @@ pub(crate) mod tests {
         ])
         .unwrap();
         let hash = Hash::new_blake3(b"HI HUNGRY IM DAD").unwrap();
-        println!("bytes: {}", hash.as_bytes().len());
         let nonce = key.make_nonce(hash.as_bytes()).unwrap();
         let sealed = key.seal_with_nonce(nonce, b"nice marmot").unwrap();
         assert_eq!(

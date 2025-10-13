@@ -5,7 +5,7 @@ use crate::{
     },
     error::{Error, Result},
     util::{
-        ser::{self, Binary, BinarySecret},
+        ser::{self, Binary, BinarySecret, SerdeBinary},
         sign::Signable,
         Public,
     },
@@ -237,6 +237,8 @@ impl AsRef<[u8]> for SignKeypairPublic {
         }
     }
 }
+
+impl SerdeBinary for SignKeypairPublic {}
 
 #[cfg(test)]
 pub(crate) mod tests {
