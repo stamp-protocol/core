@@ -274,44 +274,44 @@ impl Identity {
     }
 
     /// Return all emails associated with this identity.
-    pub fn emails(&self) -> Vec<String> {
+    pub fn emails(&self) -> Vec<&str> {
         self.claims()
             .iter()
             .filter_map(|x| match x.spec() {
-                ClaimSpec::Email(MaybePrivate::Public(ref email)) => Some(email.clone()),
+                ClaimSpec::Email(MaybePrivate::Public(ref email)) => Some(email.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()
     }
 
     /// Return all names associated with this identity.
-    pub fn names(&self) -> Vec<String> {
+    pub fn names(&self) -> Vec<&str> {
         self.claims()
             .iter()
             .filter_map(|x| match x.spec() {
-                ClaimSpec::Name(MaybePrivate::Public(ref name)) => Some(name.clone()),
+                ClaimSpec::Name(MaybePrivate::Public(ref name)) => Some(name.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()
     }
 
     /// Return all domains associated with this identity
-    pub fn domains(&self) -> Vec<String> {
+    pub fn domains(&self) -> Vec<&str> {
         self.claims()
             .iter()
             .filter_map(|x| match x.spec() {
-                ClaimSpec::Domain(MaybePrivate::Public(ref val)) => Some(val.clone()),
+                ClaimSpec::Domain(MaybePrivate::Public(ref val)) => Some(val.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()
     }
 
     /// Return all URLs associated with this identity
-    pub fn urls(&self) -> Vec<Url> {
+    pub fn urls(&self) -> Vec<&Url> {
         self.claims()
             .iter()
             .filter_map(|x| match x.spec() {
-                ClaimSpec::Url(MaybePrivate::Public(ref val)) => Some(val.clone()),
+                ClaimSpec::Url(MaybePrivate::Public(ref val)) => Some(val),
                 _ => None,
             })
             .collect::<Vec<_>>()

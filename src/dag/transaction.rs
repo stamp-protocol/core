@@ -432,6 +432,7 @@ impl Public for TransactionBody {
 
 /// The TransactionID is a [Hash][enum@crate::crypto::base::Hash] of the transaction body
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[rasn(delegate)]
 pub struct TransactionID(Hash);
 
 #[cfg(test)]
