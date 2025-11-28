@@ -12,7 +12,7 @@ use crate::{
     error::Result,
     identity::{
         claim::{Claim, ClaimID},
-        identity::IdentityID,
+        instance::IdentityID,
         keychain::Subkey,
     },
     util::{
@@ -248,7 +248,7 @@ mod tests {
         error::Error,
         identity::{
             claim::{Claim, ClaimSpec, Relationship, RelationshipType},
-            identity::IdentityID,
+            instance::IdentityID,
             keychain::{AdminKey, AdminKeypair, ExtendKeypair, Key, Keychain},
             stamp::Confidence,
         },

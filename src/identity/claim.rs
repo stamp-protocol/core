@@ -9,7 +9,7 @@
 use crate::{
     crypto::{base::SecretKey, private::MaybePrivate},
     error::{Error, Result},
-    identity::{identity::IdentityID, stamp::Stamp},
+    identity::{instance::IdentityID, stamp::Stamp},
     util::{BinaryVec, Date, Public, SerText, Url},
 };
 use getset;

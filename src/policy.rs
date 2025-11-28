@@ -17,7 +17,7 @@ use crate::{
     error::{Error, Result},
     identity::{
         claim::ClaimSpec,
-        identity::{Identity, IdentityID},
+        instance::{IdentityID, IdentityInstance},
         keychain::{AdminKey, AdminKeyID, AdminKeypair, AdminKeypairPublic, AdminKeypairSignature},
     },
     util::ser::{self, BinaryVec},
@@ -294,7 +294,7 @@ pub enum Context {
 
 impl Context {
     /// Takes a transaction and returns all the contexts it covers.
-    pub(crate) fn contexts_from_transaction_body(transaction_body: &TransactionBody, identity: &Identity) -> Vec<Self> {
+    pub(crate) fn contexts_from_transaction_body(transaction_body: &TransactionBody, identity_instance: &IdentityInstance) -> Vec<Self> {
         let mut contexts = Vec::new();
         match transaction_body {
             TransactionBody::CreateIdentityV1 { .. } => {}
@@ -306,14 +306,14 @@ impl Context {
                 contexts.push(Self::Name(admin_key.name().clone()));
             }
             TransactionBody::EditAdminKeyV1 { id, .. } => {
-                if let Some(admin_key) = identity.keychain().admin_key_by_keyid(id) {
+                if let Some(admin_key) = identity_instance.keychain().admin_key_by_keyid(id) {
                     contexts.push(Self::Name(admin_key.name().clone()));
                 }
                 contexts.push(Self::AdminKeyID(id.clone()));
                 contexts.push(Self::KeyID(id.clone().into()));
             }
             TransactionBody::RevokeAdminKeyV1 { id, .. } => {
-                if let Some(admin_key) = identity.keychain().admin_key_by_keyid(id) {
+                if let Some(admin_key) = identity_instance.keychain().admin_key_by_keyid(id) {
                     contexts.push(Self::Name(admin_key.name().clone()));
                 }
                 contexts.push(Self::AdminKeyID(id.clone()));
@@ -345,7 +345,7 @@ impl Context {
             TransactionBody::RevokeStampV1 { stamp_id, .. } => {
                 contexts.push(Self::ObjectID(stamp_id.deref().clone()));
 
-                let stamp_maybe = identity.find_claim_stamp_by_id(stamp_id);
+                let stamp_maybe = identity_instance.find_claim_stamp_by_id(stamp_id);
                 if let Some(stamp) = stamp_maybe {
                     contexts.push(Self::IdentityID(stamp.entry().stampee().clone()));
                     contexts.push(Self::ObjectID(stamp.entry().claim_id().deref().clone()));
@@ -359,7 +359,7 @@ impl Context {
                 }
             }
             TransactionBody::DeleteStampV1 { stamp_id } => {
-                let stamp_maybe = identity.find_claim_stamp_by_id(stamp_id);
+                let stamp_maybe = identity_instance.find_claim_stamp_by_id(stamp_id);
                 if let Some(stamp) = stamp_maybe {
                     contexts.push(Self::ObjectID(stamp.id().deref().clone()));
                     contexts.push(Self::ObjectID(stamp.entry().claim_id().deref().clone()));
@@ -372,19 +372,19 @@ impl Context {
             }
             TransactionBody::EditSubkeyV1 { id, .. } => {
                 contexts.push(Self::KeyID(id.clone()));
-                if let Some(subkey) = identity.keychain().subkey_by_keyid(id) {
+                if let Some(subkey) = identity_instance.keychain().subkey_by_keyid(id) {
                     contexts.push(Self::Name(subkey.name().clone()));
                 }
             }
             TransactionBody::RevokeSubkeyV1 { id, .. } => {
                 contexts.push(Self::KeyID(id.clone()));
-                if let Some(subkey) = identity.keychain().subkey_by_keyid(id) {
+                if let Some(subkey) = identity_instance.keychain().subkey_by_keyid(id) {
                     contexts.push(Self::Name(subkey.name().clone()));
                 }
             }
             TransactionBody::DeleteSubkeyV1 { id } => {
                 contexts.push(Self::KeyID(id.clone()));
-                if let Some(subkey) = identity.keychain().subkey_by_keyid(id) {
+                if let Some(subkey) = identity_instance.keychain().subkey_by_keyid(id) {
                     contexts.push(Self::Name(subkey.name().clone()));
                 }
             }
@@ -1313,9 +1313,9 @@ mod tests {
     #[test]
     fn policy_validate_transaction() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = util::test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = util::test::create_fake_identity(&mut rng, Timestamp::now());
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Jack's", None);
-        let identity = transactions.build_identity().unwrap();
+        let identity_instance = identity.build_identity_instance().unwrap();
 
         let capabilities = vec![Capability::Transaction {
             body_type: vec![TransactionBodyType::MakeClaimV1],
@@ -1327,7 +1327,7 @@ mod tests {
         };
         let policy = Policy::new(capabilities.clone(), multisig.clone());
 
-        let transaction1 = transactions
+        let transaction1 = identity
             .make_claim(
                 &HashAlgo::Blake3,
                 Timestamp::now(),
@@ -1335,7 +1335,7 @@ mod tests {
                 Some("primary-url"),
             )
             .unwrap();
-        let contexts = Context::contexts_from_transaction_body(transaction1.entry().body(), &identity);
+        let contexts = Context::contexts_from_transaction_body(transaction1.entry().body(), &identity_instance);
 
         assert_eq!(policy.validate_transaction(&transaction1, &contexts), Err(Error::MultisigPolicyConditionMismatch));
 
@@ -1357,10 +1357,10 @@ mod tests {
     #[test]
     fn contexts_from_transaction_body_create_identity_v1() {
         let mut rng = crate::util::test::rng();
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity = transactions.build_identity().unwrap();
+        let (_master_key, identity, _admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_instance = identity.build_identity_instance().unwrap();
         assert_eq!(
-            Context::contexts_from_transaction_body(transactions.transactions()[0].entry().body(), &identity,),
+            Context::contexts_from_transaction_body(identity.transactions()[0].entry().body(), &identity_instance),
             vec![],
         );
     }
@@ -1368,17 +1368,17 @@ mod tests {
     #[test]
     fn contexts_from_transaction_body_reset_identity_v1() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
-        let policies = match transactions.transactions()[0].entry().body() {
+        let (master_key, identity, admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
+        let policies = match identity.transactions()[0].entry().body() {
             TransactionBody::CreateIdentityV1 { policies, .. } => policies.clone(),
             _ => panic!("how strange"),
         };
-        let transactions = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ reset_identity, Timestamp::now(), Some(vec![admin_key.clone()]), Some(policies.clone()) ]
         };
-        let identity = transactions.build_identity().unwrap();
+        let identity_instance = identity.build_identity_instance().unwrap();
         assert_eq!(
-            Context::contexts_from_transaction_body(transactions.transactions()[1].entry().body(), &identity,),
+            Context::contexts_from_transaction_body(identity.transactions()[1].entry().body(), &identity_instance,),
             vec![],
         );
     }
@@ -1386,15 +1386,15 @@ mod tests {
     #[test]
     fn contexts_from_transaction_body_add_admin_key_v1() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
         let admin_keypair2 = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let admin_key2 = AdminKey::new(admin_keypair2, "Alpha", None);
-        let transactions = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ add_admin_key, Timestamp::now(), admin_key2.clone() ]
         };
-        let identity = transactions.build_identity().unwrap();
+        let identity_instance = identity.build_identity_instance().unwrap();
         assert_eq!(
-            Context::contexts_from_transaction_body(transactions.transactions()[1].entry().body(), &identity,),
+            Context::contexts_from_transaction_body(identity.transactions()[1].entry().body(), &identity_instance,),
             vec![
                 Context::AdminKeyID(admin_key2.key_id()),
                 Context::KeyID(admin_key2.key_id().into()),
@@ -1406,22 +1406,22 @@ mod tests {
     #[test]
     fn contexts_from_transaction_body_edit_admin_key_v1() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
         let admin_keypair2 = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let admin_key2 = AdminKey::new(admin_keypair2, "turtl/manager", None);
-        let transactions = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ add_admin_key, Timestamp::now(), admin_key2.clone() ]
         };
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ edit_admin_key, Timestamp::now(), admin_key2.key_id(), Some("turtl/manage".to_string()), None ]
         };
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ edit_admin_key, Timestamp::now(), admin_key2.key_id(), None, Some(Some("management key".to_string())) ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        let identity3 = transactions3.build_identity().unwrap();
+        let identity_instance2 = identity2.build_identity_instance().unwrap();
+        let identity_instance3 = identity3.build_identity_instance().unwrap();
         assert_eq!(
-            Context::contexts_from_transaction_body(transactions2.transactions()[2].entry().body(), &identity2,),
+            Context::contexts_from_transaction_body(identity2.transactions()[2].entry().body(), &identity_instance2),
             vec![
                 Context::Name("turtl/manage".to_string()),
                 Context::AdminKeyID(admin_key2.key_id()),
@@ -1429,7 +1429,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            Context::contexts_from_transaction_body(transactions3.transactions()[2].entry().body(), &identity3,),
+            Context::contexts_from_transaction_body(identity3.transactions()[2].entry().body(), &identity_instance3),
             vec![
                 Context::Name("turtl/manager".to_string()),
                 Context::AdminKeyID(admin_key2.key_id()),

@@ -8,12 +8,12 @@
 //! transactions. They are less concerned with verifying transaction validity and more so focused
 //! on providing functions for traversing DAGs and running their nodes in order.
 
+mod identity;
 mod transaction;
-mod transactions;
 
 pub use crate::dag::{
+    identity::{tx_chain, Identity},
     transaction::{ExtTransaction, PublishTransaction, SignTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID},
-    transactions::{tx_chain, Transactions},
 };
 use crate::{error::Error, util::Timestamp};
 use getset::{Getters, MutGetters};
@@ -762,10 +762,10 @@ mod tests {
     #[test]
     fn dag_from_nodes_walk_simple() {
         let mut rng = crate::util::test::rng();
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
+        let (_master_key, identity, _admin_key) = crate::util::test::create_fake_identity(&mut rng, Timestamp::now());
         #[allow(non_snake_case, unused_mut)]
         let (transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
-           transactions,
+           identity,
            [A(0), B(1), C(2), D(3), E(4), F(5), G(6)],
            [
                [A, B] <- [C],
@@ -836,10 +836,10 @@ mod tests {
     fn dag_from_nodes_walk_deterministic() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
         let mut rng = crate::util::test::rng_seeded(b"hi i'm butch");
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
+        let (_master_key, identity, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
-           transactions,
+           identity,
            [A(0), B(1), C(2), D(3), E(4), F(5), G(6)],
            [
                [A, B] <- [C],
@@ -909,10 +909,10 @@ mod tests {
     fn dag_from_nodes_walk_missing() {
         let mut rng = crate::util::test::rng();
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
+        let (_master_key, identity, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
-           transactions,
+           identity,
            [A(0), B(1), C(2), D(3), E(4), F(5), G(6)],
            [
                [A, B] <- [C],
@@ -971,13 +971,13 @@ mod tests {
     fn dag_from_nodes_walk_node_order() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
         let mut rng = crate::util::test::rng_seeded(b"HI i'm Butch");
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
+        let (_master_key, identity, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
-           transactions,
+           identity,
            // set up a chain where B's timestamp comes after C, which means if we sort just be
            // timestamp then the causal chain will break. however, if we sort by causal chain THEN
-           // timestamp when running transactions, we're gonna have a good time.
+           // timestamp when running identity, we're gonna have a good time.
            //
            // note that A and E have the same timestamp. with our deterministic identity, we've
            // created a situation where E's ID is lower than A's. thus, E should come before A in
@@ -1015,10 +1015,10 @@ mod tests {
     fn dag_from_nodes_walk_complex_branch() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
         let mut rng = crate::util::test::rng_seeded(b"hi I'm Butch.");
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
+        let (_master_key, identity, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
-           transactions,
+           identity,
            [A(0), B(20), C(10), D(30), E(0), F(15), G(16), H(5), I(6), J(2), K(22), L(30), M(20), N(20), O(0), P(13), Q(24)],
            [
                [A] <- [B],
@@ -1090,10 +1090,10 @@ mod tests {
     fn dag_from_nodes_duplicate_links() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
         let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
+        let (_master_key, identity, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
-           transactions,
+           identity,
            [A(0), B(10), C(20)],
            [
                [A] <- [B],
@@ -1135,10 +1135,10 @@ mod tests {
     fn dag_multiple_node_sources() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
         let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
+        let (_master_key, identity, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (transaction_list1, tid_to_name1, _name_to_tid) = make_dag_chain! {
-           transactions,
+           identity,
            [A(0), B(10), C(20)],
            [
                [A] <- [B],
@@ -1147,7 +1147,7 @@ mod tests {
            []
         };
         let (transaction_list2, tid_to_name2, _name_to_tid) = make_dag_chain! {
-           transactions,
+           identity,
            [D(5), E(40), F(40)],
            [
                [D] <- [E, F],
@@ -1171,10 +1171,10 @@ mod tests {
     fn dag_get_causal_chain() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
         let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
-        let (_master_key, transactions, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
+        let (_master_key, identity, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (transaction_list, tid_to_name, name_to_tid) = make_dag_chain! {
-           transactions,
+           identity,
            [A(0), B(10), C(20), D(30), E(29), F(40), G(42), H(69)],
            [
                [A] <- [B, C],

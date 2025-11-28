@@ -33,7 +33,7 @@ object_id! {
 /// An identity.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Identity {
+pub struct IdentityInstance {
     /// The unique identifier for this identity.
     #[rasn(tag(explicit(0)))]
     id: IdentityID,
@@ -73,7 +73,7 @@ pub struct Identity {
     revoked: bool,
 }
 
-impl Identity {
+impl IdentityInstance {
     /// Create a new identity.
     pub(crate) fn create(id: IdentityID, admin_keys: Vec<AdminKey>, policies: Vec<PolicyContainer>, created: Timestamp) -> Self {
         // create a new keychain from our keys above.
@@ -336,7 +336,7 @@ impl Identity {
     }
 }
 
-impl Public for Identity {
+impl Public for IdentityInstance {
     fn strip_private(&self) -> Self {
         let mut clone = self.clone();
         clone.set_keychain(clone.keychain().strip_private());
@@ -349,7 +349,7 @@ impl Public for Identity {
     }
 }
 
-impl SerText for Identity {}
+impl SerText for IdentityInstance {}
 
 #[cfg(test)]
 mod tests {
@@ -366,7 +366,7 @@ mod tests {
     use rand::{CryptoRng, RngCore};
     use std::str::FromStr;
 
-    fn create_identity<R: RngCore + CryptoRng>(rng: &mut R) -> (SecretKey, Identity) {
+    fn create_identity<R: RngCore + CryptoRng>(rng: &mut R) -> (SecretKey, IdentityInstance) {
         let master_key = SecretKey::new_xchacha20poly1305(rng).unwrap();
         let id = IdentityID::random();
         let admin_keypair = AdminKeypair::new_ed25519(rng, &master_key).unwrap();
@@ -380,7 +380,7 @@ mod tests {
         );
         let created = Timestamp::now();
         let policy_trans_id = TransactionID::random();
-        let identity = Identity::create(
+        let identity = IdentityInstance::create(
             id,
             vec![admin_key],
             vec![PolicyContainer::from_policy_transaction(&policy_trans_id, 0, capability).unwrap()],
@@ -405,7 +405,8 @@ mod tests {
         );
         let container = PolicyContainer::from_policy_transaction(&TransactionID::random(), 0, capability).unwrap();
         let created = Timestamp::now();
-        let identity = Identity::create(id.clone(), vec![admin_key.clone()], vec![container.clone().try_into().unwrap()], created.clone());
+        let identity =
+            IdentityInstance::create(id.clone(), vec![admin_key.clone()], vec![container.clone().try_into().unwrap()], created.clone());
 
         assert_eq!(identity.id(), &id);
         assert_eq!(identity.created(), &created);
@@ -747,7 +748,7 @@ mod tests {
             },
         );
         let container = PolicyContainer::from_policy_transaction(id.deref(), 0, capability).unwrap();
-        let identity = Identity::create(id.clone(), vec![admin_key], vec![container], now);
+        let identity = IdentityInstance::create(id.clone(), vec![admin_key], vec![container], now);
         let ser = identity.serialize_text().unwrap();
         assert_eq!(
             ser.trim(),

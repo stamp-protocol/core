@@ -8,11 +8,11 @@
 
 use crate::{
     crypto::base::{Hash, HashAlgo, KeyID, SecretKey},
-    dag::{DagNode, Transactions},
+    dag::{DagNode, Identity},
     error::{Error, Result},
     identity::{
         claim::{ClaimID, ClaimSpec},
-        identity::{Identity, IdentityID},
+        instance::{IdentityID, IdentityInstance},
         keychain::{AdminKey, AdminKeyID, AdminKeypair, AdminKeypairPublic, ExtendKeypair, Key, RevocationReason},
         stamp::{RevocationReason as StampRevocationReason, StampEntry, StampID},
     },
@@ -194,7 +194,7 @@ pub enum TransactionBody {
     #[rasn(tag(explicit(19)))]
     PublishV1 {
         #[rasn(tag(explicit(0)))]
-        transactions: Box<Transactions>,
+        identity: Box<Identity>,
     },
     /// Sign a message. The usual Stamp policy process applies here, so an official
     /// identity signing transaction must match an existing policy to be valid. This
@@ -312,8 +312,8 @@ impl TransactionBody {
             Self::EditSubkeyV1 { id, new_name, new_desc } => Self::EditSubkeyV1 { id, new_name, new_desc },
             Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
-            Self::PublishV1 { transactions } => Self::PublishV1 {
-                transactions: Box::new(transactions.reencrypt(rng, old_master_key, new_master_key)?),
+            Self::PublishV1 { identity } => Self::PublishV1 {
+                identity: Box::new(identity.reencrypt(rng, old_master_key, new_master_key)?),
             },
             Self::SignV1 { creator, body_hash } => Self::SignV1 { creator, body_hash },
             Self::ExtV1 {
@@ -379,8 +379,8 @@ impl Public for TransactionBody {
             Self::EditSubkeyV1 { id, new_name, new_desc } => Self::EditSubkeyV1 { id, new_name, new_desc },
             Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
-            Self::PublishV1 { transactions } => Self::PublishV1 {
-                transactions: Box::new(transactions.strip_private()),
+            Self::PublishV1 { identity } => Self::PublishV1 {
+                identity: Box::new(identity.strip_private()),
             },
             Self::SignV1 { creator, body_hash } => Self::SignV1 { creator, body_hash },
             Self::ExtV1 {
@@ -423,7 +423,7 @@ impl Public for TransactionBody {
             Self::EditSubkeyV1 { .. } => false,
             Self::RevokeSubkeyV1 { .. } => false,
             Self::DeleteSubkeyV1 { .. } => false,
-            Self::PublishV1 { transactions } => transactions.has_private(),
+            Self::PublishV1 { identity } => identity.has_private(),
             Self::SignV1 { .. } => false,
             Self::ExtV1 { .. } => false,
         }
@@ -611,7 +611,7 @@ impl Transaction {
     /// Create a new transaction with hand-supplied values for the create time, previous
     /// transactions, and body.
     ///
-    /// You almost never want this! Use the dag::Transactions::<create_identity|add_subkey|...>
+    /// You almost never want this! Use the dag::Identity::<create_identity|add_subkey|...>
     /// functions instead. This function's main utility is raw DAG manipulation.
     pub fn create_raw<T: Into<Timestamp>>(
         hash_with: &HashAlgo,
@@ -714,7 +714,7 @@ impl Transaction {
     /// Verify this transaction's validity. We have to make sure its ID matches
     /// the hash of its public contents, and we have to make sure the signatures
     /// satisfy a policy which has the capabilities the transaction requires.
-    pub fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
+    pub fn verify(&self, identity_maybe: Option<&IdentityInstance>) -> Result<()> {
         self.verify_hash_and_signatures()?;
 
         macro_rules! search_capabilities {
@@ -755,7 +755,7 @@ impl Transaction {
                             .enumerate()
                             .map(|(idx, x)| PolicyContainer::from_policy_transaction(self.id(), idx, x.clone()))
                             .collect::<Result<Vec<PolicyContainer>>>()?;
-                        let identity = Identity::create(
+                        let identity = IdentityInstance::create(
                             IdentityID::from(self.id().clone()),
                             admin_keys.clone(),
                             policies_con,
@@ -895,36 +895,36 @@ define_wrapper_tx!(PublishTransaction, TransactionBody::PublishV1);
 
 impl PublishTransaction {
     /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
-    pub fn validate_publish_transaction(&self) -> Result<Identity> {
+    pub fn validate_publish_transaction(&self) -> Result<IdentityInstance> {
         // do a verification of the full published identity.
-        let identity = match self.entry().body() {
-            TransactionBody::PublishV1 { transactions } => {
-                let identity = transactions.build_identity()?;
-                self.verify(Some(&identity))?;
-                identity
+        let identity_instance = match self.entry().body() {
+            TransactionBody::PublishV1 { identity } => {
+                let identity_instance = identity.build_identity_instance()?;
+                self.verify(Some(&identity_instance))?;
+                identity_instance
             }
             _ => Err(Error::TransactionMismatch)?,
         };
-        Ok(identity)
+        Ok(identity_instance)
     }
 
     /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
-    /// [`Transaction::verify`], and returns the contained [`crate::dag::Transactions`] and
-    /// [`crate::identity::Identity`].
-    pub fn validate_and_open_publish_transaction(self) -> Result<(Transactions, Identity)> {
+    /// [`Transaction::verify`], and returns the contained [`crate::dag::Identity`] and
+    /// [`crate::identity::IdentityInstance`].
+    pub fn validate_and_open_publish_transaction(self) -> Result<(Identity, IdentityInstance)> {
         // first, do a borrowed verification of the full published identity.
-        let identity = self.validate_publish_transaction()?;
+        let identity_instance = self.validate_publish_transaction()?;
 
         // now we can fully deconstuct the transaction, get the inner identity, and return it
         match self {
             Self(Transaction {
                 entry:
                     TransactionEntry {
-                        body: TransactionBody::PublishV1 { transactions },
+                        body: TransactionBody::PublishV1 { identity },
                         ..
                     },
                 ..
-            }) => Ok((*transactions, identity)),
+            }) => Ok((*identity, identity_instance)),
             _ => Err(Error::TransactionMismatch),
         }
     }
@@ -1159,7 +1159,7 @@ mod tests {
         }
 
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
         test_privates(&TransactionBody::CreateIdentityV1 {
             admin_keys: vec![admin_key.clone()],
@@ -1210,7 +1210,7 @@ mod tests {
             stamp_id: StampID::random(),
             reason: StampRevocationReason::Unspecified,
         });
-        let stamp_transaction = transactions.make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry.clone()).unwrap();
+        let stamp_transaction = identity.make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry.clone()).unwrap();
         test_privates(&TransactionBody::AcceptStampV1 {
             stamp_transaction: Box::new(stamp_transaction),
         });
@@ -1258,12 +1258,12 @@ mod tests {
     fn trans_verify_hash_and_signatures() {
         let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
-        let (_master_key1, transactions1, _admin_key1) = test::create_fake_identity(&mut rng, now.clone());
-        let (_master_key2, mut transactions2, _admin_key2) = test::create_fake_identity(&mut rng, now.clone());
-        transactions1.transactions()[0].verify_hash_and_signatures().unwrap();
-        *transactions2.transactions_mut()[0].signatures_mut() = transactions1.transactions()[0].signatures().clone();
+        let (_master_key1, identity1, _admin_key1) = test::create_fake_identity(&mut rng, now.clone());
+        let (_master_key2, mut identity2, _admin_key2) = test::create_fake_identity(&mut rng, now.clone());
+        identity1.transactions()[0].verify_hash_and_signatures().unwrap();
+        *identity2.transactions_mut()[0].signatures_mut() = identity1.transactions()[0].signatures().clone();
         assert!(matches!(
-            transactions2.transactions()[0].verify_hash_and_signatures(),
+            identity2.transactions()[0].verify_hash_and_signatures(),
             Err(Error::TransactionSignatureInvalid(_))
         ));
     }
@@ -1272,30 +1272,30 @@ mod tests {
     fn trans_new_verify() {
         let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
-        let (_master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, now.clone());
-        transactions.transactions()[0].verify(None).unwrap();
+        let (_master_key, identity, admin_key) = test::create_fake_identity(&mut rng, now.clone());
+        identity.transactions()[0].verify(None).unwrap();
 
-        let (_, transactions_new, _) = test::create_fake_identity(&mut rng, now.clone());
+        let (_, identity_new, _) = test::create_fake_identity(&mut rng, now.clone());
 
-        let create2 = transactions_new.transactions()[0].clone();
+        let create2 = identity_new.transactions()[0].clone();
 
-        let res = transactions.clone().push_transaction(create2);
+        let res = identity.clone().push_transaction(create2);
         assert_eq!(res.err(), Some(Error::DagCreateIdentityOnExistingChain));
 
-        let mut trans2 = transactions.transactions()[0].clone();
+        let mut trans2 = identity.transactions()[0].clone();
         trans2.set_id(TransactionID::random());
         assert!(matches!(trans2.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
 
-        let mut trans3 = transactions.transactions()[0].clone();
+        let mut trans3 = identity.transactions()[0].clone();
         let then = Timestamp::from(*now.deref() - chrono::Duration::seconds(2));
         trans3.entry_mut().set_created(then);
         assert!(matches!(trans3.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
 
-        let mut trans4 = transactions.transactions()[0].clone();
+        let mut trans4 = identity.transactions()[0].clone();
         trans4.entry_mut().set_previous_transactions(vec![TransactionID::random()]);
         assert!(matches!(trans4.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
 
-        let mut trans5 = transactions.transactions()[0].clone();
+        let mut trans5 = identity.transactions()[0].clone();
         trans5.entry_mut().set_body(TransactionBody::CreateIdentityV1 {
             admin_keys: vec![admin_key.clone()],
             policies: vec![],
@@ -1307,10 +1307,10 @@ mod tests {
     fn trans_is_signed_by() {
         let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, now.clone());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, now.clone());
         let admin_key2 = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
-        assert!(transactions.transactions()[0].is_signed_by(&admin_key.key().clone().into()));
-        assert!(!transactions.transactions()[0].is_signed_by(&admin_key2.clone().into()));
+        assert!(identity.transactions()[0].is_signed_by(&admin_key.key().clone().into()));
+        assert!(!identity.transactions()[0].is_signed_by(&admin_key2.clone().into()));
     }
 
     #[ignore]
@@ -1329,8 +1329,8 @@ mod tests {
     fn trans_strip_has_private() {
         let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
-        let (_master_key, transactions, _admin_key) = test::create_fake_identity(&mut rng, now.clone());
-        let trans = transactions.transactions()[0].clone();
+        let (_master_key, identity, _admin_key) = test::create_fake_identity(&mut rng, now.clone());
+        let trans = identity.transactions()[0].clone();
 
         assert!(trans.has_private());
         assert!(trans.entry().has_private());
@@ -1345,8 +1345,8 @@ mod tests {
     fn trans_serde_binary() {
         let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
-        let (_master_key, transactions, _admin_key) = test::create_fake_identity(&mut rng, now.clone());
-        let trans = transactions.transactions()[0].clone();
+        let (_master_key, identity, _admin_key) = test::create_fake_identity(&mut rng, now.clone());
+        let trans = identity.transactions()[0].clone();
 
         let ser = trans.serialize_binary().unwrap();
         let des = Transaction::deserialize_binary(ser.as_slice()).unwrap();
@@ -2103,14 +2103,10 @@ signatures:
         "#;
         let transaction = Transaction::deserialize_text(published_identity).unwrap();
         match transaction.entry().body() {
-            TransactionBody::PublishV1 { transactions } => {
-                let identity = transactions.build_identity().unwrap();
-                assert_eq!(format!("{}", identity.id()), "zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzwA");
-                let ids = transactions
-                    .transactions()
-                    .iter()
-                    .map(|x| format!("{}", x.id()))
-                    .collect::<Vec<_>>();
+            TransactionBody::PublishV1 { identity } => {
+                let identity_instance = identity.build_identity_instance().unwrap();
+                assert_eq!(format!("{}", identity_instance.id()), "zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzwA");
+                let ids = identity.transactions().iter().map(|x| format!("{}", x.id())).collect::<Vec<_>>();
                 assert_eq!(
                     ids,
                     vec![

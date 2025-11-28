@@ -55,7 +55,7 @@
 //! ```
 //! use stamp_core::{
 //!     crypto::base::{derive_secret_key, rng, Hash, HashAlgo, KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
-//!     dag::Transactions,
+//!     dag::Identity,
 //!     identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
 //!     policy::{Capability, MultisigPolicy, Policy},
 //!     util::Timestamp,
@@ -92,11 +92,11 @@
 //! // An identity is a collection of transactions. Later transactions reference previous
 //! // transactions, creating a DAG (Directed Acyclic Graph) of changes that, when applied
 //! // in order, create your final identity.
-//! let transactions = Transactions::new();
+//! let identity = Identity::new();
 //!
 //! // Ok, now to the fun stuff. We author a transaction that creates our identity: a genesis
 //! // transaction.
-//! let genesis = transactions
+//! let genesis = identity
 //!     // when creating the identity, we pass in our initial set of admin keys and our
 //!     // initial policies.
 //!     .create_identity(&HashAlgo::Blake3, Timestamp::now(), vec![admin_key.clone()], vec![policy]).unwrap()
@@ -107,13 +107,13 @@
 //!     .sign(&master_key, &admin_key).unwrap();
 //!
 //! // Fantastic! Now we apply the genesis transaction to our transaction set...
-//! let transactions_new = transactions.push_transaction(genesis).unwrap();
+//! let identity_new = identity.push_transaction(genesis).unwrap();
 //!
 //! // If we want to get the actual, finished Identity object from the transaction set, we do:
-//! let identity = transactions_new.build_identity().unwrap();
+//! let identity_instance = identity_new.build_identity_instance().unwrap();
 //!
 //! // The identity id is always the hash of the genesis transaction.
-//! assert_eq!(identity.id().deref(), transactions_new.transactions()[0].id());
+//! assert_eq!(identity_instance.id().deref(), identity_new.transactions()[0].id());
 //! ```
 //!
 //! See? Easy. *A child could do it.* While this approach is seemingly complicated, it
@@ -130,11 +130,11 @@
 //! signing, and (usually) saving [transactions][crate::dag::Transaction]
 //! to the transaction list, for example:
 //!
-//! - [`make_claim()`][crate::dag::Transactions::make_claim]
-//! - [`make_stamp()`][crate::dag::Transactions::make_stamp]
-//! - [`add_policy()`][crate::dag::Transactions::add_policy]
-//! - [`publish()`][crate::dag::Transactions::publish]
-//! - [etc][crate::dag::Transactions]
+//! - [`make_claim()`][crate::dag::Identity::make_claim]
+//! - [`make_stamp()`][crate::dag::Identity::make_stamp]
+//! - [`add_policy()`][crate::dag::Identity::add_policy]
+//! - [`publish()`][crate::dag::Identity::publish]
+//! - [etc][crate::dag::Identity]
 
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 // MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMN$IF*******FV$MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
