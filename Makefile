@@ -43,7 +43,13 @@ lint:
 		-A clippy::module_inception \
 		-A clippy::redundant_closure \
 		-A clippy::redundant_pattern_matching \
-		-A clippy::search_is_some
+		-A clippy::search_is_some \
+		-D clippy::indexing_slicing \
+		-D clippy::fallible_impl_from \
+		-D clippy::wildcard_enum_match_arm \
+		-D clippy::unneeded_field_pattern \
+		-D clippy::fn_params_excessive_bools \
+		-D clippy::must_use_candidate
 
 lintfix: override CARGO_BUILD_ARGS += --fix
 lintfix: lint
