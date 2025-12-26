@@ -2,6 +2,7 @@
 //! conditions that can arise while interacting with the system.
 
 use crate::dag::TransactionID;
+use private_parts::Public;
 use thiserror::Error;
 
 /// This is our error enum. It contains an entry for any part of the system in
@@ -166,6 +167,10 @@ pub enum Error {
     #[error("attempt to open private object which has no data")]
     PrivateDataMissing,
 
+    /// An error while handling private parts
+    #[error("an error occurred merging private data with a public object: {0}")]
+    PrivatePartsError(#[from] private_parts::MergeError),
+
     /// An error while engaging in yaml serialization.
     #[error("yaml serialization error")]
     SerializeYaml(#[from] serde_yaml::Error),
@@ -189,7 +194,7 @@ pub enum Error {
 
     /// A signature on a transaction is not valid.
     #[error("transaction signature invalid: {0:?}")]
-    TransactionSignatureInvalid(crate::identity::keychain::AdminKeypairPublic),
+    TransactionSignatureInvalid(crate::identity::keychain::AdminKeypair<Public>, crate::crypto::base::SignKeypairSignature),
 
     /// A missing value was encountered when calculating trust
     #[error("trust calculation had a missing value")]

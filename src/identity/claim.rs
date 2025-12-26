@@ -7,15 +7,19 @@
 //! [stamped](crate::identity::stamp) by someone within your trust network.
 
 use crate::{
-    crypto::{base::SecretKey, private::MaybePrivate},
+    crypto::{
+        base::SecretKey,
+        private::{MaybePrivate, PrivateContainer, ReEncrypt},
+    },
     error::{Error, Result},
     identity::{identity::IdentityID, stamp::Stamp},
-    util::{BinaryVec, Date, Public, SerText, Url},
+    util::{BinaryVec, Date, SerText, Url},
 };
 use getset;
+use private_parts::{Full, PrivacyMode, PrivateParts};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
 object_id! {
@@ -71,9 +75,10 @@ impl<T> Relationship<T> {
 /// our `secret` key in our keyset). This allows others to see that I have made
 /// a particular claim (and that others have stamped it) without revealing the
 /// private data in that claim.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[derive(Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[parts(private_data = "PrivateContainer")]
 #[rasn(choice)]
-pub enum ClaimSpec {
+pub enum ClaimSpec<M: PrivacyMode> {
     /// A claim that this identity is mine.
     ///
     /// This claim should be made *publicly* any time a new identity is created.
@@ -83,20 +88,20 @@ pub enum ClaimSpec {
     /// This can also be used to claim ownership of another identity, for instance
     /// if you lost your keys and need to move to a new identity.
     #[rasn(tag(explicit(0)))]
-    Identity(MaybePrivate<IdentityID>),
+    Identity(MaybePrivate<M, IdentityID>),
     /// A claim that the name attached to this identity is mine.
     #[rasn(tag(explicit(1)))]
-    Name(MaybePrivate<String>),
+    Name(MaybePrivate<M, String>),
     /// A claim I was born on a certain day.
     #[rasn(tag(explicit(2)))]
-    Birthday(MaybePrivate<Date>),
+    Birthday(MaybePrivate<M, Date>),
     /// A claim that I own an email address.
     #[rasn(tag(explicit(3)))]
-    Email(MaybePrivate<String>),
+    Email(MaybePrivate<M, String>),
     /// A claim that the attached photo is a photo of me (ie, not an anime
     /// avatar).
     #[rasn(tag(explicit(4)))]
-    Photo(MaybePrivate<BinaryVec>),
+    Photo(MaybePrivate<M, BinaryVec>),
     /// A claim that I own a PGP keypair (using the key's ID as the value).
     ///
     /// In general, you would create this claim, sign the claim's ID with your
@@ -107,7 +112,7 @@ pub enum ClaimSpec {
     /// this themselves via cross-signing, but seems more appropriate to keep
     /// the spec lean and instead require third-parties to verify the claim.
     #[rasn(tag(explicit(5)))]
-    Pgp(MaybePrivate<String>),
+    Pgp(MaybePrivate<M, String>),
     /// A claim that I own or have write access to an internet domain.
     ///
     /// This claim should be accompanied by a DNS TXT record on the domain that
@@ -146,7 +151,7 @@ pub enum ClaimSpec {
     /// stamp://s0f__TtNxiUrNJ8y/claim/zYY3Z_P_MappC5sd
     /// ```
     #[rasn(tag(explicit(6)))]
-    Domain(MaybePrivate<String>),
+    Domain(MaybePrivate<M, String>),
     /// A claim that I own or have write access to a specific URL.
     ///
     /// This claim can generally be validated by implementations themselves.
@@ -195,27 +200,27 @@ pub enum ClaimSpec {
     /// format for new posts, and doesn't have editable posts, you will need a
     /// third-party to stamp this claim.
     #[rasn(tag(explicit(7)))]
-    Url(MaybePrivate<Url>),
+    Url(MaybePrivate<M, Url>),
     /// A claim that I reside at a physical address.
     ///
     /// Must be stamped in-person. At the DMV. The one that's further away.
     /// Sorry, that's the protocol.
     #[rasn(tag(explicit(8)))]
-    Address(MaybePrivate<String>),
+    Address(MaybePrivate<M, String>),
     /// A claim that I own a phone number.
     #[rasn(tag(explicit(9)))]
-    PhoneNumber(MaybePrivate<String>),
+    PhoneNumber(MaybePrivate<M, String>),
     /// A claim that I am in a relationship with another identity, hopefully
     /// stamped by that identity ='[
     #[rasn(tag(explicit(10)))]
-    Relation(MaybePrivate<Relationship<IdentityID>>),
+    Relation(MaybePrivate<M, Relationship<IdentityID>>),
     /// A claim that I am in a relationship with another entity with some form
     /// of serializable identification (such as a signed certificate, a name,
     /// etc). Can be used to assert relationships to entities outside of the
     /// Stamp protocol (although stamps on these relationships must be provided
     /// by Stamp protocol identities).
     #[rasn(tag(explicit(11)))]
-    RelationExtension(MaybePrivate<Relationship<BinaryVec>>),
+    RelationExtension(MaybePrivate<M, Relationship<BinaryVec>>),
     /// Any kind of claim of identity ownership or possession outside the
     /// defined types. This includes a public field (which could be used as a
     /// key) and a maybe-private field which would be a value (or a key and
@@ -235,13 +240,12 @@ pub enum ClaimSpec {
         #[rasn(tag(explicit(0)))]
         key: BinaryVec,
         #[rasn(tag(explicit(1)))]
-        value: MaybePrivate<BinaryVec>,
+        value: MaybePrivate<M, BinaryVec>,
     },
 }
 
-impl ClaimSpec {
-    /// Re-encrypt this claim spec's private data, if it has any
-    pub(crate) fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
+impl ReEncrypt for ClaimSpec<Full> {
+    fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
         let spec = match self {
             Self::Identity(maybe) => Self::Identity(maybe.reencrypt(rng, current_key, new_key)?),
             Self::Name(maybe) => Self::Name(maybe.reencrypt(rng, current_key, new_key)?),
@@ -262,83 +266,21 @@ impl ClaimSpec {
         };
         Ok(spec)
     }
-
-    /// Convert this spec into a public one, assuming we have the correct
-    /// decrypt key.
-    fn into_public(self, open_key: &SecretKey) -> Result<Self> {
-        let spec = match self {
-            Self::Identity(maybe) => Self::Identity(maybe.into_public(open_key)?),
-            Self::Name(maybe) => Self::Name(maybe.into_public(open_key)?),
-            Self::Birthday(maybe) => Self::Birthday(maybe.into_public(open_key)?),
-            Self::Email(maybe) => Self::Email(maybe.into_public(open_key)?),
-            Self::Photo(maybe) => Self::Photo(maybe.into_public(open_key)?),
-            Self::Pgp(maybe) => Self::Pgp(maybe.into_public(open_key)?),
-            Self::Domain(maybe) => Self::Domain(maybe.into_public(open_key)?),
-            Self::Url(maybe) => Self::Url(maybe.into_public(open_key)?),
-            Self::Address(maybe) => Self::Address(maybe.into_public(open_key)?),
-            Self::PhoneNumber(maybe) => Self::PhoneNumber(maybe.into_public(open_key)?),
-            Self::Relation(maybe) => Self::Relation(maybe.into_public(open_key)?),
-            Self::RelationExtension(maybe) => Self::RelationExtension(maybe.into_public(open_key)?),
-            Self::Extension { key, value } => Self::Extension {
-                key,
-                value: value.into_public(open_key)?,
-            },
-        };
-        Ok(spec)
-    }
-}
-
-impl Public for ClaimSpec {
-    fn strip_private(&self) -> Self {
-        match self {
-            Self::Identity(val) => Self::Identity(val.strip_private()),
-            Self::Name(val) => Self::Name(val.strip_private()),
-            Self::Birthday(val) => Self::Birthday(val.strip_private()),
-            Self::Email(val) => Self::Email(val.strip_private()),
-            Self::Photo(val) => Self::Photo(val.strip_private()),
-            Self::Pgp(val) => Self::Pgp(val.strip_private()),
-            Self::Domain(val) => Self::Domain(val.strip_private()),
-            Self::Url(val) => Self::Url(val.strip_private()),
-            Self::Address(val) => Self::Address(val.strip_private()),
-            Self::PhoneNumber(val) => Self::PhoneNumber(val.strip_private()),
-            Self::Relation(val) => Self::Relation(val.strip_private()),
-            Self::RelationExtension(val) => Self::RelationExtension(val.strip_private()),
-            Self::Extension { key, value } => Self::Extension {
-                key: key.clone(),
-                value: value.strip_private(),
-            },
-        }
-    }
-
-    fn has_private(&self) -> bool {
-        match self {
-            Self::Identity(val) => val.has_private(),
-            Self::Name(val) => val.has_private(),
-            Self::Birthday(val) => val.has_private(),
-            Self::Email(val) => val.has_private(),
-            Self::Photo(val) => val.has_private(),
-            Self::Pgp(val) => val.has_private(),
-            Self::Domain(val) => val.has_private(),
-            Self::Url(val) => val.has_private(),
-            Self::Address(val) => val.has_private(),
-            Self::PhoneNumber(val) => val.has_private(),
-            Self::Relation(val) => val.has_private(),
-            Self::RelationExtension(val) => val.has_private(),
-            Self::Extension { value, .. } => value.has_private(),
-        }
-    }
 }
 
 /// A claim on an identity, along with its ID, name, and any [stamps][Stamp] we've received.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
+#[parts(private_data = "PrivateContainer")]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Claim {
+pub struct Claim<M: PrivacyMode> {
     /// The ID of this claim (the [transaction id][crate::dag::TransactionID] that created it).
     #[rasn(tag(explicit(0)))]
     id: ClaimID,
     /// The data we're claiming.
     #[rasn(tag(explicit(1)))]
-    spec: ClaimSpec,
+    spec: ClaimSpec<M>,
     /// Stamps that have been made on our claim.
     #[rasn(tag(explicit(2)))]
     stamps: Vec<Stamp>,
@@ -347,9 +289,9 @@ pub struct Claim {
     name: Option<String>,
 }
 
-impl Claim {
+impl<M: PrivacyMode> Claim<M> {
     /// Create a new claim.
-    pub(crate) fn new(id: ClaimID, spec: ClaimSpec, name: Option<String>) -> Self {
+    pub(crate) fn new(id: ClaimID, spec: ClaimSpec<M>, name: Option<String>) -> Self {
         Self {
             id,
             spec,
@@ -358,6 +300,16 @@ impl Claim {
         }
     }
 
+    /// Whether this is a public claim or a private claim, return a public claim
+    /// (assuming we have the correct decrypting key).
+    pub fn as_public(&self, open_key: &SecretKey) -> Result<Self> {
+        let mut claim = self.clone();
+        claim.set_spec(claim.spec().clone().into_public(open_key)?);
+        Ok(claim)
+    }
+}
+
+impl<M: PrivacyMode> Claim<M> {
     /// Given a claim we want to "instant verify" (ie, any claim type that can
     /// be verified automatically), return the possible values for that claim's
     /// automatic validation. If one of these values is present in the body of
@@ -398,29 +350,9 @@ impl Claim {
             _ => Err(Error::IdentityClaimVerificationNotAllowed),
         }
     }
-
-    /// Whether this is a public claim or a private claim, return a public claim
-    /// (assuming we have the correct decrypting key).
-    pub fn as_public(&self, open_key: &SecretKey) -> Result<Self> {
-        let mut claim = self.clone();
-        claim.set_spec(claim.spec().clone().into_public(open_key)?);
-        Ok(claim)
-    }
 }
 
-impl Public for Claim {
-    fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        clone.set_spec(clone.spec().strip_private());
-        clone
-    }
-
-    fn has_private(&self) -> bool {
-        self.spec().has_private()
-    }
-}
-
-impl SerText for Claim {}
+impl<M: PrivacyMode + Serialize> SerText for Claim<M> {}
 
 #[cfg(test)]
 pub(crate) mod tests {

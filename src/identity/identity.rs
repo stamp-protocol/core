@@ -8,7 +8,7 @@
 use crate::{
     crypto::{
         base::{KeyID, SecretKey},
-        private::MaybePrivate,
+        private::{MaybePrivate, PrivateContainer},
     },
     error::{Error, Result},
     identity::{
@@ -17,11 +17,12 @@ use crate::{
         stamp::{RevocationReason as StampRevocationReason, Stamp, StampID},
     },
     policy::{PolicyContainer, PolicyID},
-    util::{Public, SerText, Timestamp, Url},
+    util::{SerText, Timestamp, Url},
 };
 use getset;
+use private_parts::{Full, PrivacyMode, PrivateParts};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
 object_id! {
@@ -31,9 +32,12 @@ object_id! {
 }
 
 /// An identity.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
+#[parts(private_data = "PrivateContainer")]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Identity {
+pub struct Identity<M: PrivacyMode> {
     /// The unique identifier for this identity.
     #[rasn(tag(explicit(0)))]
     id: IdentityID,
@@ -54,10 +58,10 @@ pub struct Identity {
     policies: Vec<PolicyContainer>,
     /// Holds the keys for our identity.
     #[rasn(tag(explicit(3)))]
-    keychain: Keychain,
+    keychain: Keychain<M>,
     /// The claims this identity makes.
     #[rasn(tag(explicit(4)))]
-    claims: Vec<Claim>,
+    claims: Vec<Claim<M>>,
     /// The public stamps (and revocations) this identity has made *on other
     /// identities.*
     ///
@@ -73,9 +77,9 @@ pub struct Identity {
     revoked: bool,
 }
 
-impl Identity {
+impl<M: PrivacyMode> Identity<M> {
     /// Create a new identity.
-    pub(crate) fn create(id: IdentityID, admin_keys: Vec<AdminKey>, policies: Vec<PolicyContainer>, created: Timestamp) -> Self {
+    pub(crate) fn create(id: IdentityID, admin_keys: Vec<AdminKey<M>>, policies: Vec<PolicyContainer>, created: Timestamp) -> Self {
         // create a new keychain from our keys above.
         let keychain = Keychain::new(admin_keys);
 
@@ -92,7 +96,11 @@ impl Identity {
     }
 
     /// Reset the admin keys/capabilities in this identity.
-    pub(crate) fn reset(mut self, admin_keys_maybe: Option<Vec<AdminKey>>, policies_maybe: Option<Vec<PolicyContainer>>) -> Result<Self> {
+    pub(crate) fn reset(
+        mut self,
+        admin_keys_maybe: Option<Vec<AdminKey<M>>>,
+        policies_maybe: Option<Vec<PolicyContainer>>,
+    ) -> Result<Self> {
         if let Some(admin_keys) = admin_keys_maybe {
             let mut keychain = self.keychain().clone();
             keychain.set_admin_keys(admin_keys);
@@ -109,7 +117,7 @@ impl Identity {
         Ok(self)
     }
 
-    pub(crate) fn add_admin_key(mut self, admin_key: AdminKey) -> Result<Self> {
+    pub(crate) fn add_admin_key(mut self, admin_key: AdminKey<M>) -> Result<Self> {
         self.set_keychain(self.keychain().clone().add_admin_key(admin_key)?);
         Ok(self)
     }
@@ -141,7 +149,7 @@ impl Identity {
 
     /// Create a new claim from the given data, sign it, and attach it to this
     /// identity.
-    pub(crate) fn make_claim(mut self, claim_id: ClaimID, claim: ClaimSpec, name: Option<String>) -> Result<Self> {
+    pub(crate) fn make_claim(mut self, claim_id: ClaimID, claim: ClaimSpec<M>, name: Option<String>) -> Result<Self> {
         let claim = Claim::new(claim_id, claim, name);
         self.claims_mut().push(claim);
         Ok(self)
@@ -219,7 +227,7 @@ impl Identity {
     }
 
     /// Add a new subkey to our identity.
-    pub(crate) fn add_subkey<T: Into<String>>(mut self, key: Key, name: T, description: Option<T>) -> Result<Self> {
+    pub(crate) fn add_subkey<T: Into<String>>(mut self, key: Key<M>, name: T, description: Option<T>) -> Result<Self> {
         self.set_keychain(self.keychain().clone().add_subkey(key, name, description)?);
         Ok(self)
     }
@@ -249,7 +257,7 @@ impl Identity {
     /// The alternative here is to have some kind of conflict resolution around
     /// duplicate names, and let's be honest, this protocol is complicated enough
     /// without dealing with name conflicts.
-    pub fn find_claim_by_name(&self, name: &str) -> Option<&Claim> {
+    pub fn find_claim_by_name(&self, name: &str) -> Option<&Claim<M>> {
         self.claims()
             .iter()
             .rev()
@@ -316,13 +324,9 @@ impl Identity {
             })
             .collect::<Vec<_>>()
     }
+}
 
-    /// Determine if this identity is owned (ie, we have the private keys stored
-    /// locally) or it is imported (ie, someone else's identity).
-    pub fn is_owned(&self) -> bool {
-        self.keychain().admin_keys().iter().any(|k| k.has_private())
-    }
-
+impl Identity<Full> {
     /// Test if a master key is correct.
     pub fn test_master_key(&self, master_key: &SecretKey) -> Result<()> {
         let test_bytes = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -336,20 +340,7 @@ impl Identity {
     }
 }
 
-impl Public for Identity {
-    fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        clone.set_keychain(clone.keychain().strip_private());
-        clone.set_claims(clone.claims().iter().map(|c| c.strip_private()).collect::<Vec<_>>());
-        clone
-    }
-
-    fn has_private(&self) -> bool {
-        self.keychain().has_private() || self.claims().iter().any(|c| c.has_private())
-    }
-}
-
-impl SerText for Identity {}
+impl<M: PrivacyMode + Serialize> SerText for Identity<M> {}
 
 #[cfg(test)]
 mod tests {
@@ -366,11 +357,11 @@ mod tests {
     use rand::{CryptoRng, RngCore};
     use std::str::FromStr;
 
-    fn create_identity<R: RngCore + CryptoRng>(rng: &mut R) -> (SecretKey, Identity) {
+    fn create_identity<R: RngCore + CryptoRng>(rng: &mut R) -> (SecretKey, Identity<Full>) {
         let master_key = SecretKey::new_xchacha20poly1305(rng).unwrap();
         let id = IdentityID::random();
-        let admin_keypair = AdminKeypair::new_ed25519(rng, &master_key).unwrap();
-        let admin_key = AdminKey::new(admin_keypair.clone(), "Default", None);
+        let admin_keypair = AdminKeypair::<Full>::new_ed25519(rng, &master_key).unwrap();
+        let admin_key = AdminKey::<Full>::new(admin_keypair.clone(), "Default", None);
         let capability = Policy::new(
             vec![Capability::Permissive],
             MultisigPolicy::MOfN {
@@ -380,7 +371,7 @@ mod tests {
         );
         let created = Timestamp::now();
         let policy_trans_id = TransactionID::random();
-        let identity = Identity::create(
+        let identity = Identity::<Full>::create(
             id,
             vec![admin_key],
             vec![PolicyContainer::from_policy_transaction(&policy_trans_id, 0, capability).unwrap()],
@@ -701,17 +692,6 @@ mod tests {
         assert_eq!(identity2.names().len(), 1);
         let identity3 = identity2.clone().delete_claim(&claim_id2).unwrap();
         assert_eq!(identity3.names().len(), 0);
-    }
-
-    #[test]
-    fn identity_is_owned() {
-        let mut rng = crate::util::test::rng();
-        let (_master_key, identity) = create_identity(&mut rng);
-        assert!(identity.is_owned());
-
-        let mut identity2 = identity.clone();
-        identity2.set_keychain(identity.keychain().strip_private());
-        assert!(!identity2.is_owned());
     }
 
     #[test]

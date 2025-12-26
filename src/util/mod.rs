@@ -3,7 +3,7 @@
 use crate::error::Result;
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, SubsecRound, TimeZone, Utc};
 use rasn::{types::Tag, AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 use std::str::FromStr;
 
@@ -23,7 +23,7 @@ macro_rules! object_id {
         $(#[$meta:meta])*
         $name:ident
     ) => {
-        #[derive(Debug, Clone, rasn::AsnType, rasn::Encode, rasn::Decode, PartialEq, Eq, Hash, PartialOrd, Ord, serde_derive::Serialize, serde_derive::Deserialize)]
+        #[derive(Debug, Clone, rasn::AsnType, rasn::Encode, rasn::Decode, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
         #[rasn(delegate)]
         $(#[$meta])*
         pub struct $name(pub(crate) crate::dag::TransactionID);

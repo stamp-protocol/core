@@ -18,8 +18,9 @@ use crate::{
     identity::{keychain::Subkey, IdentityID},
     util::ser::{self, BinaryVec},
 };
+use private_parts::{Full, PrivacyMode};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// A cryptographic signature.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
@@ -63,7 +64,7 @@ impl Signature {
 impl ser::SerdeBinary for Signature {}
 
 /// Sign a message with a private key, returning the detached signature.
-pub fn sign(master_key: &SecretKey, signing_identity_id: &IdentityID, signing_key: &Subkey, message: &[u8]) -> Result<Signature> {
+pub fn sign(master_key: &SecretKey, signing_identity_id: &IdentityID, signing_key: &Subkey<Full>, message: &[u8]) -> Result<Signature> {
     let sign_key = signing_key.key().as_signkey().ok_or(Error::KeychainSubkeyWrongType)?;
     let signature = sign_key.sign(master_key, message)?;
     let key_id = signing_key.key_id();
@@ -73,14 +74,19 @@ pub fn sign(master_key: &SecretKey, signing_identity_id: &IdentityID, signing_ke
 }
 
 /// Verify a detached signature.
-pub fn verify(signing_key: &Subkey, signature: &Signature, message: &[u8]) -> Result<()> {
+pub fn verify<M: PrivacyMode>(signing_key: &Subkey<M>, signature: &Signature, message: &[u8]) -> Result<()> {
     let detached = signature.detached().map(|x| x.body()).ok_or(Error::CryptoWrongSignatureType)?;
     let sign_key = signing_key.key().as_signkey().ok_or(Error::KeychainSubkeyWrongType)?;
     sign_key.verify(detached, message)
 }
 
 /// Sign a message with a private key, returning the detached signature.
-pub fn sign_attached(master_key: &SecretKey, signing_identity_id: &IdentityID, signing_key: &Subkey, message: &[u8]) -> Result<Signature> {
+pub fn sign_attached(
+    master_key: &SecretKey,
+    signing_identity_id: &IdentityID,
+    signing_key: &Subkey<Full>,
+    message: &[u8],
+) -> Result<Signature> {
     let sign_key = signing_key.key().as_signkey().ok_or(Error::KeychainSubkeyWrongType)?;
     let signature = sign_key.sign(master_key, message)?;
     let key_id = signing_key.key_id();
@@ -91,7 +97,7 @@ pub fn sign_attached(master_key: &SecretKey, signing_identity_id: &IdentityID, s
 }
 
 /// Verify a detached signature.
-pub fn verify_attached(signing_key: &Subkey, signature: &Signature) -> Result<()> {
+pub fn verify_attached<M: PrivacyMode>(signing_key: &Subkey<M>, signature: &Signature) -> Result<()> {
     let attached = signature
         .attached()
         .map(|x| (x.0.body(), x.1))

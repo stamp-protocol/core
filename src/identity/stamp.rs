@@ -8,6 +8,7 @@ use crate::{
     crypto::{
         base::SecretKey,
         message::{self, Message},
+        private::ReEncrypt,
     },
     error::Result,
     identity::{
@@ -17,13 +18,14 @@ use crate::{
     },
     util::{
         ser::{self, SerText},
-        Public, Timestamp,
+        Timestamp,
     },
 };
 use getset;
+use private_parts::{Full, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
 object_id! {
@@ -164,16 +166,6 @@ impl Stamp {
     }
 }
 
-impl Public for Stamp {
-    fn strip_private(&self) -> Self {
-        self.clone()
-    }
-
-    fn has_private(&self) -> bool {
-        false
-    }
-}
-
 impl SerText for Stamp {}
 
 /// A request for a claim to be stamped (basically a CSR, in the parlance of our
@@ -191,7 +183,7 @@ impl SerText for Stamp {}
 pub struct StampRequest {
     /// The claim we wish to have stamped
     #[rasn(tag(explicit(0)))]
-    claim: Claim,
+    claim: Claim<Full>,
     /// The one-time key that can be used to decrypt and verify this claim.
     #[rasn(tag(explicit(1)))]
     decrypt_key: SecretKey,
@@ -206,9 +198,9 @@ impl StampRequest {
         rng: &mut R,
         sender_master_key: &SecretKey,
         sender_identity_id: &IdentityID,
-        sender_key: &Subkey,
-        recipient_key: &Subkey,
-        claim: &Claim,
+        sender_key: &Subkey<Full>,
+        recipient_key: &Subkey<Public>,
+        claim: &Claim<Full>,
         one_time_key: SecretKey,
     ) -> Result<Message> {
         let claim_reencrypted_spec = claim.spec().clone().reencrypt(rng, sender_master_key, &one_time_key)?;
@@ -230,7 +222,12 @@ impl StampRequest {
     /// private claim data and make sure it validates. If the MAC does not
     /// represent the data ("this doesn't represent me!") then hard pass on
     /// allowing this data to be stamped.
-    pub fn open(recipient_master_key: &SecretKey, recipient_key: &Subkey, sender_key: &Subkey, req: &Message) -> Result<Claim> {
+    pub fn open(
+        recipient_master_key: &SecretKey,
+        recipient_key: &Subkey<Full>,
+        sender_key: &Subkey<Public>,
+        req: &Message,
+    ) -> Result<Claim<Full>> {
         let serialized = message::open(recipient_master_key, recipient_key, sender_key, req)?;
         let stamp_req: Self = ser::deserialize(&serialized)?;
         stamp_req.claim().as_public(stamp_req.decrypt_key())

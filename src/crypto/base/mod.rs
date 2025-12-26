@@ -14,8 +14,9 @@ use crate::{
     error::{Error, Result},
     util::ser::{self, BinarySecret},
 };
+use private_parts::Public;
 use rasn::{AsnType, Decode, Encode};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
 mod crypto_key;
@@ -91,9 +92,9 @@ pub mod rng {
 #[rasn(choice)]
 pub enum KeyID {
     #[rasn(tag(explicit(0)))]
-    SignKeypair(SignKeypairPublic),
+    SignKeypair(SignKeypair<Public>),
     #[rasn(tag(explicit(1)))]
-    CryptoKeypair(CryptoKeypairPublic),
+    CryptoKeypair(CryptoKeypair<Public>),
     #[rasn(tag(explicit(2)))]
     SecretKey(Hmac),
 }
@@ -101,8 +102,10 @@ pub enum KeyID {
 impl KeyID {
     pub fn as_string(&self) -> String {
         match self {
-            Self::SignKeypair(SignKeypairPublic::Ed25519(pubkey)) => ser::base64_encode(pubkey.as_ref()),
-            Self::CryptoKeypair(CryptoKeypairPublic::Curve25519XChaCha20Poly1305(pubkey)) => ser::base64_encode(pubkey.as_ref()),
+            Self::SignKeypair(SignKeypair::<Public>::Ed25519 { public: pubkey, .. }) => ser::base64_encode(pubkey.as_ref()),
+            Self::CryptoKeypair(CryptoKeypair::<Public>::Curve25519XChaCha20Poly1305 { public: pubkey, .. }) => {
+                ser::base64_encode(pubkey.as_ref())
+            }
             Self::SecretKey(hmac) => ser::base64_encode(hmac.deref()),
         }
     }

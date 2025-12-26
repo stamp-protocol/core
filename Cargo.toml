@@ -1,7 +1,7 @@
 [package]
 name = "stamp-core"
 version = "0.3.0"
-authors = ["Andrew Danger Lyon <andrew@killtheradio.net>"]
+authors = ["Kay Danger Lyon <kay@killtheradio.net>"]
 edition = "2021"
 
 [dependencies]
@@ -16,11 +16,11 @@ getset = "0.1"
 glob = "0.3"
 hkdf = "0.12"
 hmac = "0.12"
+private-parts = { path = "../tmp/private-parts" }
 rand = { version = "0.8", features = ["getrandom"] }
 rand_chacha = "0.3"
-rasn = "0.27"
-serde = "1.0"
-serde_derive = "1.0"
+rasn = { path = "../tmp/rasn" }
+serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 subtle = "2.5.0"
 thiserror = "1.0"

@@ -13,19 +13,20 @@
 
 use crate::{
     crypto::base::{Hash, KeyID},
-    dag::{Transaction, TransactionBody, TransactionID},
+    dag::{Transaction, TransactionBody, TransactionEntry, TransactionID},
     error::{Error, Result},
     identity::{
         claim::ClaimSpec,
         identity::{Identity, IdentityID},
-        keychain::{AdminKey, AdminKeyID, AdminKeypair, AdminKeypairPublic, AdminKeypairSignature},
+        keychain::{AdminKeyID, AdminKeypair, AdminKeypairSignature},
     },
     util::ser::{self, BinaryVec},
 };
 use getset;
 use glob::Pattern;
+use private_parts::{Full, PrivacyMode, Public};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
 object_id! {
@@ -83,10 +84,10 @@ pub enum TransactionBodyType {
     ExtV1,
 }
 
-impl From<&TransactionBody> for TransactionBodyType {
+impl<M: PrivacyMode> From<&TransactionBody<M>> for TransactionBodyType {
     // Not sure if this is actually useful as much as it keeps ContextClaimType
     // in sync with ClaimSpec
-    fn from(body: &TransactionBody) -> Self {
+    fn from(body: &TransactionBody<M>) -> Self {
         match *body {
             TransactionBody::CreateIdentityV1 { .. } => Self::CreateIdentityV1,
             TransactionBody::ResetIdentityV1 { .. } => Self::ResetIdentityV1,
@@ -146,10 +147,10 @@ pub enum ContextClaimType {
     Extension,
 }
 
-impl From<&ClaimSpec> for ContextClaimType {
+impl<M: PrivacyMode> From<&ClaimSpec<M>> for ContextClaimType {
     // Not sure if this is actually useful as much as it keeps ContextClaimType
     // in sync with ClaimSpec
-    fn from(spec: &ClaimSpec) -> Self {
+    fn from(spec: &ClaimSpec<M>) -> Self {
         match *spec {
             ClaimSpec::Identity(..) => Self::Identity,
             ClaimSpec::Name(..) => Self::Name,
@@ -294,7 +295,10 @@ pub enum Context {
 
 impl Context {
     /// Takes a transaction and returns all the contexts it covers.
-    pub(crate) fn contexts_from_transaction_body(transaction_body: &TransactionBody, identity: &Identity) -> Vec<Self> {
+    pub(crate) fn contexts_from_transaction_body<M: PrivacyMode>(
+        transaction_body: &TransactionBody<M>,
+        identity: &Identity<M>,
+    ) -> Vec<Self> {
         let mut contexts = Vec::new();
         match transaction_body {
             TransactionBody::CreateIdentityV1 { .. } => {}
@@ -353,9 +357,20 @@ impl Context {
                 // TODO: look up the claim and grab its ContextClaimType
             }
             TransactionBody::AcceptStampV1 { stamp_transaction } => {
-                if let TransactionBody::MakeStampV1 { stamp } = stamp_transaction.entry().body() {
-                    contexts.push(Self::ObjectID(stamp.claim_id().deref().clone()));
-                    contexts.push(Self::IdentityID(stamp.stamper().clone()));
+                let res: Result<Transaction<Public>> = stamp_transaction.verify_hash_and_signatures().and_then(|tx| tx.try_into());
+                match res {
+                    Ok(Transaction::<Public> {
+                        entry:
+                            TransactionEntry::<Public> {
+                                body: TransactionBody::<Public>::MakeStampV1 { stamp },
+                                ..
+                            },
+                        ..
+                    }) => {
+                        contexts.push(Self::ObjectID(stamp.claim_id().deref().clone()));
+                        contexts.push(Self::IdentityID(stamp.stamper().clone()));
+                    }
+                    _ => {}
                 }
             }
             TransactionBody::DeleteStampV1 { stamp_id } => {
@@ -566,12 +581,12 @@ pub enum Participant {
         name: Option<String>,
         /// The public key
         #[rasn(tag(explicit(1)))]
-        key: AdminKeypairPublic,
+        key: AdminKeypair<Public>,
     },
 }
 
-impl From<AdminKeypairPublic> for Participant {
-    fn from(admin_pubkey: AdminKeypairPublic) -> Self {
+impl From<AdminKeypair<Public>> for Participant {
+    fn from(admin_pubkey: AdminKeypair<Public>) -> Self {
         Participant::Key {
             name: None,
             key: admin_pubkey,
@@ -579,19 +594,10 @@ impl From<AdminKeypairPublic> for Participant {
     }
 }
 
-impl From<AdminKeypair> for Participant {
-    fn from(admin_keypair: AdminKeypair) -> Self {
-        Participant::Key {
-            name: None,
-            key: admin_keypair.into(),
-        }
-    }
-}
-
-impl From<AdminKey> for Participant {
-    fn from(admin_key: AdminKey) -> Self {
-        let AdminKey { key: admin_keypair, .. } = admin_key;
-        admin_keypair.into()
+impl From<AdminKeypair<Full>> for Participant {
+    fn from(admin_keypair: AdminKeypair<Full>) -> Self {
+        let (public, _) = admin_keypair.strip();
+        Participant::Key { name: None, key: public }
     }
 }
 
@@ -606,7 +612,7 @@ pub enum MultisigPolicySignature {
     Key {
         /// The key the signature came from
         #[rasn(tag(explicit(0)))]
-        key: AdminKeypairPublic,
+        key: AdminKeypair<Public>,
         /// The signature
         #[rasn(tag(explicit(1)))]
         signature: AdminKeypairSignature,
@@ -718,7 +724,7 @@ impl Policy {
     /// action `capability`, and also checks the transaction's signatures against the policy
     /// to make sure we have the signatures we need to perform this action (although
     /// this function does not validate transactions, that needs to happen higher up).
-    pub(crate) fn validate_transaction(&self, transaction: &Transaction, contexts: &[Context]) -> Result<()> {
+    pub(crate) fn validate_transaction<M: PrivacyMode>(&self, transaction: &Transaction<M>, contexts: &[Context]) -> Result<()> {
         // don't check the signature validity here. just check that we have the signatures
         // needed to satisfy the policy. signature checks happen higher level.
         self.multisig_policy().test(transaction.signatures())?;

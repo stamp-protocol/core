@@ -10,9 +10,10 @@ use crate::{
     identity::{identity::IdentityID, keychain::Subkey},
     util::ser::{self, BinaryVec},
 };
+use private_parts::{Full, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Encode};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// A wrapper around some encrypted message data, allowing us to provide easy
 /// serialization/deserialization methods.
@@ -57,8 +58,8 @@ pub fn seal<R: RngCore + CryptoRng>(
     rng: &mut R,
     sender_master_key: &SecretKey,
     sender_identity_id: &IdentityID,
-    sender_key: &Subkey,
-    recipient_key: &Subkey,
+    sender_key: &Subkey<Full>,
+    recipient_key: &Subkey<Public>,
     message: &[u8],
 ) -> Result<Message> {
     let sender_crypto = sender_key.key().as_cryptokey().ok_or(Error::KeychainSubkeyWrongType)?;
@@ -73,7 +74,12 @@ pub fn seal<R: RngCore + CryptoRng>(
 ///
 /// Note that we need the sender's public key to verify the signature on the
 /// message, which signs the *outside* of the message (not the inside).
-pub fn open(recipient_master_key: &SecretKey, recipient_key: &Subkey, sender_key: &Subkey, sealed: &Message) -> Result<Vec<u8>> {
+pub fn open(
+    recipient_master_key: &SecretKey,
+    recipient_key: &Subkey<Full>,
+    sender_key: &Subkey<Public>,
+    sealed: &Message,
+) -> Result<Vec<u8>> {
     let sender_crypto = sender_key.key().as_cryptokey().ok_or(Error::KeychainSubkeyWrongType)?;
     let recipient_crypto = recipient_key.key().as_cryptokey().ok_or(Error::KeychainSubkeyWrongType)?;
     let signed_message = match sealed {
@@ -87,14 +93,14 @@ pub fn open(recipient_master_key: &SecretKey, recipient_key: &Subkey, sender_key
 ///
 /// Anonymous messages are not signed by the sender, so their source cannot be
 /// cryptographically verified.
-pub fn send_anonymous<R: RngCore + CryptoRng>(rng: &mut R, recipient_key: &Subkey, message: &[u8]) -> Result<Message> {
+pub fn send_anonymous<R: RngCore + CryptoRng>(rng: &mut R, recipient_key: &Subkey<Public>, message: &[u8]) -> Result<Message> {
     let recipient_crypto = recipient_key.key().as_cryptokey().ok_or(Error::KeychainSubkeyWrongType)?;
     let sealed = recipient_crypto.seal_anonymous(rng, message)?;
     Ok(Message::Anonymous(sealed.into()))
 }
 
 /// Open an anonymous message send with [send_anonymous].
-pub fn open_anonymous(recipient_master_key: &SecretKey, recipient_key: &Subkey, sealed: &Message) -> Result<Vec<u8>> {
+pub fn open_anonymous(recipient_master_key: &SecretKey, recipient_key: &Subkey<Full>, sealed: &Message) -> Result<Vec<u8>> {
     let recipient_crypto = recipient_key.key().as_cryptokey().ok_or(Error::KeychainSubkeyWrongType)?;
     let anon_message = match sealed {
         Message::Anonymous(ref data) => data,

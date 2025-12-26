@@ -7,10 +7,7 @@
 //! readily supported by rust, we kind of have to take things into our own hands
 //! here and just make some serialization calls.
 
-use crate::{
-    error::{Error, Result},
-    util::Public,
-};
+use crate::error::{Error, Result};
 use base64::Engine as _;
 use core::hash::Hash;
 use rasn::{types::Tag, AsnType, Decode, Decoder, Encode, Encoder};
@@ -32,10 +29,9 @@ pub(crate) fn serialize<T: Encode>(obj: &T) -> Result<Vec<u8>> {
 /// Serialize an object into human-readable format.
 pub(crate) fn serialize_text<T>(obj: &T) -> Result<String>
 where
-    T: Serialize + Public,
+    T: Serialize,
 {
-    let stripped: T = obj.strip_private();
-    Ok(serde_yaml::to_string(&stripped)?)
+    Ok(serde_yaml::to_string(obj)?)
 }
 
 #[cfg(feature = "yaml-export")]
@@ -54,7 +50,7 @@ pub(crate) fn deserialize<T: Decode>(bytes: &[u8]) -> Result<T> {
 /// Deserialize an object from human-readable format.
 pub(crate) fn deserialize_text<T>(ser: &str) -> Result<T>
 where
-    T: DeserializeOwned + Public,
+    T: DeserializeOwned,
 {
     Ok(serde_yaml::from_str(ser)?)
 }
@@ -99,7 +95,7 @@ impl<T> SerdeBinary for Vec<T> where T: SerdeBinary {}
 /// Allows serializing to human readable format (but not deserializing). This is
 /// generally used for things that we want to be able to display in human readable
 /// format but aren't for consumption. If you want it consumable, use [SerdeBinary].
-pub trait SerText: Serialize + Public + Sized {
+pub trait SerText: Serialize + Sized {
     /// Serialize this object to human readable format
     fn serialize_text(&self) -> Result<String> {
         serialize_text(self)
@@ -107,7 +103,7 @@ pub trait SerText: Serialize + Public + Sized {
 }
 
 /// Allows deserializing a public object from human-readable format.
-pub trait DeText: DeserializeOwned + Public + Sized {
+pub trait DeText: DeserializeOwned + Sized {
     /// Deserialize this object from human readable format
     fn deserialize_text(ser: &str) -> Result<Self> {
         deserialize_text(ser)

@@ -5,7 +5,7 @@ use crate::{
 use hmac::{Mac, SimpleHmac};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Encode};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 use subtle::{Choice, ConstantTimeEq};
 

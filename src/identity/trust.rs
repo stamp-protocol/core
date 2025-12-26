@@ -10,8 +10,9 @@ use crate::{
     },
 };
 use getset::{CopyGetters, Getters, MutGetters};
+use private_parts::Public;
 use rasn::{AsnType, Decode, Encode};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Deref;
 
@@ -248,7 +249,7 @@ impl<'a> Network<'a> {
         }
     }
 
-    fn add_node(&mut self, identity: &'a Identity) {
+    fn add_node(&mut self, identity: &'a Identity<Public>) {
         for stamp in identity.stamps() {
             self.index_stamp(identity.id(), stamp);
         }
@@ -469,7 +470,7 @@ impl std::fmt::Display for TrustReport {
 pub fn find_paths<'a>(
     trust_mapping: &'a HashMap<TransactionID, Trust>,
     subject: &'a TransactionID,
-    identity_network: &[&'a Identity],
+    identity_network: &[&'a Identity<Public>],
     max_dist: usize,
 ) -> Vec<Path<'a>> {
     let mut network = Network::new();
@@ -500,7 +501,7 @@ pub fn find_paths<'a>(
 pub fn trust_score<T: TrustAlgo>(
     trust_mapping: &HashMap<TransactionID, Trust>,
     subject: &TransactionID,
-    identity_network: &[&Identity],
+    identity_network: &[&Identity<Public>],
     trust_algo: &T,
 ) -> Option<(i8, TrustReport)> {
     if trust_mapping.is_empty() {
@@ -583,7 +584,7 @@ mod tests {
     use crate::{
         crypto::{
             base::{HashAlgo, SecretKey},
-            private::MaybePrivate,
+            private::{Full, MaybePrivate},
         },
         dag::Transactions,
         identity::{
@@ -607,8 +608,8 @@ mod tests {
         ) => {{
             struct IdentityKeys {
                 master: SecretKey,
-                admin: AdminKey,
-                transactions: Transactions,
+                admin: AdminKey<Full>,
+                transactions: Transactions<Public>,
             }
             impl IdentityKeys {
                 fn new(master: SecretKey, admin: AdminKey, transactions: Transactions) -> Self {

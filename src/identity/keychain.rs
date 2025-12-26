@@ -14,16 +14,17 @@
 
 use crate::{
     crypto::{
-        base::{CryptoKeypair, KeyID, SecretKey, SignKeypair, SignKeypairPublic, SignKeypairSignature},
-        private::PrivateWithHmac,
+        base::{CryptoKeypair, KeyID, SecretKey, SignKeypair, SignKeypairSignature},
+        private::{PrivateContainer, PrivateWithHmac, ReEncrypt},
     },
     error::{Error, Result},
-    util::{ser, sign::Signable, Public},
+    util::{ser, sign::Signable},
 };
 use getset;
+use private_parts::{Full, PrivacyMode, PrivateDataContainer, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// Allows us to create new signature types from the base SignKeypairSignature.
@@ -35,12 +36,13 @@ pub trait ExtendKeypairSignature:
 /// Allows us to create new signing keypair types from the base SignKeypair.
 ///
 /// Now, says to myself, Colm, says I...
-pub trait ExtendKeypair:
-    From<SignKeypair>
+pub trait ExtendKeypair<M: PrivacyMode>:
+    ReEncrypt
+    + PrivateParts
+    + From<SignKeypair<M>>
     + Clone
     + PartialEq
-    + Deref<Target = SignKeypair>
-    + Public
+    + Deref<Target = SignKeypair<M>>
     + PartialEq
     + Signable
     + serde::Serialize
@@ -74,15 +76,10 @@ pub trait ExtendKeypair:
         self.deref().verify(signature.deref(), data)
     }
 
-    /// REEEEEEEE-encrypt this signing keypair with a new master key.
-    fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
-        Ok(Self::from(self.deref().clone().reencrypt(rng, previous_master_key, new_master_key)?))
-    }
-
     /// Create a KeyID from this keypair.
     fn key_id(&self) -> KeyID {
         let inner: &SignKeypair = self.deref();
-        KeyID::SignKeypair(inner.clone().into())
+        KeyID::SignKeypair(inner.key_id())
     }
 }
 
@@ -96,6 +93,13 @@ impl Deref for AdminKeypairSignature {
     type Target = SignKeypairSignature;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl From<AdminKeypairSignature> for SignKeypairSignature {
+    fn from(sig: AdminKeypairSignature) -> Self {
+        let AdminKeypairSignature(sig) = sig;
+        sig
     }
 }
 
@@ -113,74 +117,67 @@ impl AsRef<[u8]> for AdminKeypairSignature {
 
 impl ExtendKeypairSignature for AdminKeypairSignature {}
 
-/// The public key format of an [`AdminKeypair`].
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(delegate)]
-pub struct AdminKeypairPublic(SignKeypairPublic);
-
-impl From<SignKeypairPublic> for AdminKeypairPublic {
-    fn from(pubkey: SignKeypairPublic) -> Self {
-        Self(pubkey)
-    }
-}
-
-impl Deref for AdminKeypairPublic {
-    type Target = SignKeypairPublic;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 /// An admin keypair. This basically just wraps [`SignKeypair`] in a new type that allows
 /// specifying that specifically an admin key is required.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[derive(Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[parts(private_data = "PrivateContainer")]
 #[rasn(delegate)]
-pub struct AdminKeypair(SignKeypair);
+pub struct AdminKeypair<M: PrivacyMode>(SignKeypair<M>);
 
-impl From<SignKeypair> for AdminKeypair {
-    fn from(sign: SignKeypair) -> Self {
+impl<M: PrivacyMode> From<SignKeypair<M>> for AdminKeypair<M> {
+    fn from(sign: SignKeypair<M>) -> Self {
         Self(sign)
     }
 }
 
-impl From<AdminKeypair> for AdminKeypairPublic {
-    fn from(key: AdminKeypair) -> Self {
-        Self(key.deref().clone().into())
-    }
-}
-
-impl Deref for AdminKeypair {
-    type Target = SignKeypair;
+impl<M: PrivacyMode> Deref for AdminKeypair<M> {
+    type Target = SignKeypair<M>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl Public for AdminKeypair {
-    fn strip_private(&self) -> Self {
-        Self::from(self.deref().strip_private())
-    }
-
-    fn has_private(&self) -> bool {
-        self.deref().has_private()
-    }
-}
-
-impl PartialEq for AdminKeypair {
+impl<M: PrivacyMode> PartialEq for AdminKeypair<M> {
     fn eq(&self, other: &Self) -> bool {
         self.deref().eq(other.deref())
     }
 }
 
-impl Signable for AdminKeypair {
-    type Item = AdminKeypairPublic;
+impl<M: PrivacyMode> Signable for AdminKeypair<M> {
+    type Item = AdminKeypair<Public>;
     fn signable(&self) -> Self::Item {
         Self::Item::from(self.deref().signable())
     }
 }
 
-impl ExtendKeypair for AdminKeypair {
+impl ReEncrypt for AdminKeypair<Full> {
+    fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        Ok(Self::from(self.deref().clone().reencrypt(rng, previous_master_key, new_master_key)?))
+    }
+}
+
+impl<M: PrivacyMode> ExtendKeypair<M> for AdminKeypair<M>
+where
+    AdminKeypair<M>: ReEncrypt,
+    AdminKeypair<M>: PrivateParts,
+    AdminKeypair<M>: From<SignKeypair<M>>,
+    AdminKeypair<M>: Clone,
+    AdminKeypair<M>: PartialEq,
+    AdminKeypair<M>: Deref<Target = SignKeypair<M>>,
+    AdminKeypair<M>: PartialEq,
+    AdminKeypair<M>: Signable,
+    AdminKeypair<M>: serde::Serialize,
+    AdminKeypair<M>: serde::de::DeserializeOwned,
+{
     type Signature = AdminKeypairSignature;
+}
+
+// yes, we can just do stripe, but a lot of places in the code use .from() for this conversion and
+// i don't want to change them all
+impl From<AdminKeypair<Full>> for AdminKeypair<Public> {
+    fn from(key: AdminKeypair<Full>) -> Self {
+        key.strip().0
+    }
 }
 
 /// A [`KeyID`] but for an [`AdminKeypair`]
@@ -201,8 +198,8 @@ impl From<AdminKeyID> for KeyID {
     }
 }
 
-impl From<SignKeypairPublic> for AdminKeyID {
-    fn from(pubkey: SignKeypairPublic) -> Self {
+impl From<SignKeypair<Public>> for AdminKeyID {
+    fn from(pubkey: SignKeypair<Public>) -> Self {
         KeyID::SignKeypair(pubkey).into()
     }
 }
@@ -233,38 +230,39 @@ pub enum RevocationReason {
 }
 
 /// An enum that holds any type of key.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[derive(Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[parts(private_data = "PrivateContainer")]
 #[rasn(choice)]
-pub enum Key {
+pub enum Key<M: PrivacyMode> {
     /// A signing key.
     #[rasn(tag(explicit(0)))]
-    Sign(SignKeypair),
+    Sign(SignKeypair<M>),
     /// An asymmetric crypto key.
     #[rasn(tag(explicit(1)))]
-    Crypto(CryptoKeypair),
+    Crypto(CryptoKeypair<M>),
     /// A symmetric encryption key.
     #[rasn(tag(explicit(2)))]
-    Secret(PrivateWithHmac<SecretKey>),
+    Secret(PrivateWithHmac<M, SecretKey>),
 }
 
-impl Key {
+impl<M: PrivacyMode> Key<M> {
     /// Create a new signing keypair
-    pub fn new_sign(keypair: SignKeypair) -> Self {
+    pub fn new_sign(keypair: SignKeypair<M>) -> Self {
         Self::Sign(keypair)
     }
 
     /// Create a new signing keypair
-    pub fn new_crypto(keypair: CryptoKeypair) -> Self {
+    pub fn new_crypto(keypair: CryptoKeypair<M>) -> Self {
         Self::Crypto(keypair)
     }
 
     /// Create a new secret key
-    pub fn new_secret(key: PrivateWithHmac<SecretKey>) -> Self {
+    pub fn new_secret(key: PrivateWithHmac<M, SecretKey>) -> Self {
         Self::Secret(key)
     }
 
     /// Returns the `SignKeypair` if this is a signing key.
-    pub fn as_signkey(&self) -> Option<&SignKeypair> {
+    pub fn as_signkey(&self) -> Option<&SignKeypair<M>> {
         match self {
             Self::Sign(ref x) => Some(x),
             _ => None,
@@ -272,7 +270,7 @@ impl Key {
     }
 
     /// Returns the `CryptoKeypair` if this is a crypto key.
-    pub fn as_cryptokey(&self) -> Option<&CryptoKeypair> {
+    pub fn as_cryptokey(&self) -> Option<&CryptoKeypair<M>> {
         match self {
             Self::Crypto(ref x) => Some(x),
             _ => None,
@@ -280,7 +278,7 @@ impl Key {
     }
 
     /// Returns the `SecretKey` if this is a secret key.
-    pub fn as_secretkey(&self) -> Option<&PrivateWithHmac<SecretKey>> {
+    pub fn as_secretkey(&self) -> Option<&PrivateWithHmac<M, SecretKey>> {
         match self {
             Self::Secret(ref x) => Some(x),
             _ => None,
@@ -305,14 +303,10 @@ impl Key {
     pub fn deserialize(bytes: &[u8]) -> Result<Self> {
         ser::deserialize(bytes)
     }
+}
 
-    /// Consumes the key, and re-encryptes it with a new master key.
-    pub fn reencrypt<R: RngCore + CryptoRng>(
-        self,
-        rng: &mut R,
-        previous_master_key: &SecretKey,
-        new_master_key: &SecretKey,
-    ) -> Result<Self> {
+impl ReEncrypt for Key<Full> {
+    fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let key = match self {
             Self::Sign(keypair) => Self::Sign(keypair.reencrypt(rng, previous_master_key, new_master_key)?),
             Self::Crypto(keypair) => Self::Crypto(keypair.reencrypt(rng, previous_master_key, new_master_key)?),
@@ -322,29 +316,14 @@ impl Key {
     }
 }
 
-impl Public for Key {
-    fn strip_private(&self) -> Self {
-        match self {
-            Self::Sign(keypair) => Self::Sign(keypair.strip_private()),
-            Self::Crypto(keypair) => Self::Crypto(keypair.strip_private()),
-            Self::Secret(container) => Self::Secret(container.strip_private()),
-        }
-    }
-
-    fn has_private(&self) -> bool {
-        match self {
-            Self::Sign(keypair) => keypair.has_private(),
-            Self::Crypto(keypair) => keypair.has_private(),
-            Self::Secret(container) => container.has_private(),
-        }
-    }
-}
-
 /// Holds a subkey's key data, (unique) name, an optional description, and an
 /// optional revocation.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
+#[parts(private_data = "PrivateContainer")]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Subkey {
+pub struct Subkey<M: PrivacyMode> {
     /// The key itself.
     ///
     /// Alright, Parker, shut up. Thank you, Parker. Shut up. Thank you.
@@ -354,7 +333,7 @@ pub struct Subkey {
     ///
     /// ...Nobody thinks you're funny.
     #[rasn(tag(explicit(0)))]
-    key: Key,
+    key: Key<M>,
     /// The key's human-readable name, for example "email".
     #[rasn(tag(explicit(1)))]
     name: String,
@@ -367,9 +346,9 @@ pub struct Subkey {
     revocation: Option<RevocationReason>,
 }
 
-impl Subkey {
-    /// Create a new subkey, signed by our root key.
-    fn new<T: Into<String>>(key: Key, name: T, description: Option<T>) -> Self {
+impl<M: PrivacyMode> Subkey<M> {
+    /// Create a new subkey.
+    fn new<T: Into<String>>(key: Key<M>, name: T, description: Option<T>) -> Self {
         Self {
             key,
             name: name.into(),
@@ -387,34 +366,25 @@ impl Subkey {
     }
 }
 
-impl Deref for Subkey {
-    type Target = Key;
+impl<M: PrivacyMode> Deref for Subkey<M> {
+    type Target = Key<M>;
     fn deref(&self) -> &Self::Target {
         self.key()
-    }
-}
-
-impl Public for Subkey {
-    fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        clone.set_key(self.key().strip_private());
-        clone
-    }
-
-    fn has_private(&self) -> bool {
-        self.key().has_private()
     }
 }
 
 /// Represents an *active* (not revoked) named administration key.
 ///
 /// Revoked admin keys are stored as [subkeys][Subkey].
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
+#[parts(private_data = "PrivateContainer")]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct AdminKey {
+pub struct AdminKey<M: PrivacyMode> {
     /// The admin keypair.
     #[rasn(tag(explicit(0)))]
-    pub(crate) key: AdminKeypair,
+    key: AdminKeypair<M>,
     /// The key's human-readable name, for example "claims/manage".
     #[rasn(tag(explicit(1)))]
     name: String,
@@ -427,9 +397,9 @@ pub struct AdminKey {
     revocation: Option<RevocationReason>,
 }
 
-impl AdminKey {
+impl AdminKey<Full> {
     /// Create a new `AdminKey`. This sets `revocation` to `None`.
-    pub fn new<T: Into<String>>(key: AdminKeypair, name: T, description: Option<T>) -> Self {
+    pub fn new<T: Into<String>>(key: AdminKeypair<Full>, name: T, description: Option<T>) -> Self {
         Self {
             key,
             name: name.into(),
@@ -440,7 +410,7 @@ impl AdminKey {
 
     /// Create a new `AdminKey` with revocation specified.
     pub fn new_with_revocation<T: Into<String>>(
-        key: AdminKeypair,
+        key: AdminKeypair<Full>,
         name: T,
         description: Option<T>,
         revocation: Option<RevocationReason>,
@@ -452,14 +422,18 @@ impl AdminKey {
             revocation,
         }
     }
+}
 
-    /// Re-encrypt this signing keypair with a new master key.
-    pub fn reencrypt<R: RngCore + CryptoRng>(
-        self,
-        rng: &mut R,
-        previous_master_key: &SecretKey,
-        new_master_key: &SecretKey,
-    ) -> Result<Self> {
+impl<M: PrivacyMode> AdminKey<M> {
+    /// Grab this key's [AdminKeyID].
+    pub fn key_id(&self) -> AdminKeyID {
+        let key_id: KeyID = self.key().key_id();
+        Ok(key_id.into())
+    }
+}
+
+impl ReEncrypt for AdminKey<Full> {
+    fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let Self {
             key,
             name,
@@ -473,29 +447,12 @@ impl AdminKey {
             revocation,
         ))
     }
-
-    /// Grab this key's [AdminKeyID].
-    pub fn key_id(&self) -> AdminKeyID {
-        self.key().key_id().into()
-    }
 }
 
-impl Deref for AdminKey {
-    type Target = AdminKeypair;
+impl<M: PrivacyMode> Deref for AdminKey<M> {
+    type Target = AdminKeypair<M>;
     fn deref(&self) -> &Self::Target {
         self.key()
-    }
-}
-
-impl Public for AdminKey {
-    fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        clone.set_key(clone.key().strip_private());
-        clone
-    }
-
-    fn has_private(&self) -> bool {
-        self.key().has_private()
     }
 }
 
@@ -509,89 +466,92 @@ impl Public for AdminKey {
 /// The keys stored here can also be revoked. They can remain stored here for
 /// the purposes of verifying old signatures or decrypting old messages, but
 /// revoked keys must not be used to sign or encrypt new data.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
+#[parts(private_data = "PrivateContainer")]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Keychain {
+pub struct Keychain<M: PrivacyMode> {
     /// Holds this identity's owned administration keypairs. These are keys used
     /// to manage the identity, although it's entirely possible to manage the
     /// identity using keys owned by other identities by using the policy system.
     #[rasn(tag(explicit(0)))]
-    admin_keys: Vec<AdminKey>,
+    admin_keys: Vec<AdminKey<M>>,
     /// Holds subkeys, which are non-admin keys owned by this identity. Generally
     /// these are accessed/used by other systems for things like creating messages
     /// or accessing encrypted data. For instance, an application that manages
     /// encrypted notes might store a subkey in the keychain which can be used to
     /// unlock the note data.
     #[rasn(tag(explicit(1)))]
-    subkeys: Vec<Subkey>,
+    subkeys: Vec<Subkey<M>>,
 }
 
-impl Keychain {
+impl<M: PrivacyMode> Keychain<M> {
+    /// Find an admin key by key id.
+    pub fn admin_key_by_keyid(&self, key_id: &AdminKeyID) -> Option<&AdminKey<M>> {
+        self.admin_keys().iter().find(|x| &x.key_id() == key_id)
+    }
+
+    /// Find an admin key by key id.
+    pub fn admin_key_by_keyid_mut(&mut self, keyid: &AdminKeyID) -> Option<&mut AdminKey<M>> {
+        self.admin_keys_mut().iter_mut().find(|x| &x.key_id() == keyid)
+    }
+
+    /// Find an admin key by string key id.
+    pub fn admin_key_by_keyid_str(&self, keyid_str: &str) -> Option<&AdminKey<M>> {
+        self.admin_keys().iter().find(|x| x.key_id().as_string() == keyid_str)
+    }
+
+    /// Find an admin key by name.
+    pub fn admin_key_by_name(&self, name: &str) -> Option<&AdminKey<M>> {
+        self.admin_keys().iter().rev().find(|x| x.name() == name)
+    }
+
+    /// Find a subkey by ID.
+    pub fn subkey_by_keyid(&self, key_id: &KeyID) -> Option<&Subkey<M>> {
+        self.subkeys().iter().find(|x| &x.key_id() == key_id)
+    }
+
+    /// Find a subkey mut by ID. Relieves a bit of tedium.
+    pub fn subkey_by_keyid_mut(&mut self, keyid: &KeyID) -> Option<&mut Subkey<M>> {
+        self.subkeys_mut().iter_mut().find(|x| &x.key_id() == keyid)
+    }
+
+    /// Find a subkey by ID string
+    pub fn subkey_by_keyid_str(&self, keyid_str: &str) -> Option<&Subkey<M>> {
+        self.subkeys().iter().find(|x| x.key_id().as_string() == keyid_str)
+    }
+
+    /// Find a subkey by name. Relieves a bit of tedium.
+    pub fn subkey_by_name(&self, name: &str) -> Option<&Subkey<M>> {
+        self.subkeys().iter().rev().find(|x| x.name() == name)
+    }
+
+    /// Grab all admin keys (active and revoked).
+    pub fn keys_admin(&self) -> Vec<&AdminKeypair<M>> {
+        self.admin_keys().iter().map(|key| key.key()).collect::<Vec<_>>()
+    }
+
+    /// Grab all signing subkeys.
+    pub fn subkeys_sign(&self) -> Vec<&SignKeypair<M>> {
+        self.subkeys().iter().filter_map(|x| x.key().as_signkey()).collect::<Vec<_>>()
+    }
+
+    /// Grab all crypto subkeys.
+    pub fn subkeys_crypto(&self) -> Vec<&CryptoKeypair<M>> {
+        self.subkeys().iter().filter_map(|x| x.key().as_cryptokey()).collect::<Vec<_>>()
+    }
+
     /// Create a new keychain
-    pub(crate) fn new(admin_keys: Vec<AdminKey>) -> Self {
+    pub(crate) fn new(admin_keys: Vec<AdminKey<M>>) -> Self {
         Self {
             admin_keys,
             subkeys: Vec::new(),
         }
     }
 
-    /// Find an admin key by key id.
-    pub fn admin_key_by_keyid(&self, key_id: &AdminKeyID) -> Option<&AdminKey> {
-        self.admin_keys().iter().find(|x| &x.key_id() == key_id)
-    }
-
-    /// Find an admin key by string key id.
-    pub fn admin_key_by_keyid_str(&self, keyid_str: &str) -> Option<&AdminKey> {
-        self.admin_keys().iter().find(|x| x.key_id().as_string() == keyid_str)
-    }
-
-    /// Find an admin key by key id.
-    pub fn admin_key_by_keyid_mut(&mut self, keyid: &AdminKeyID) -> Option<&mut AdminKey> {
-        self.admin_keys_mut().iter_mut().find(|x| &x.key_id() == keyid)
-    }
-
-    /// Find an admin key by name.
-    pub fn admin_key_by_name(&self, name: &str) -> Option<&AdminKey> {
-        self.admin_keys().iter().rev().find(|x| x.name() == name)
-    }
-
-    /// Find a subkey by ID.
-    pub fn subkey_by_keyid(&self, key_id: &KeyID) -> Option<&Subkey> {
-        self.subkeys().iter().find(|x| &x.key_id() == key_id)
-    }
-
-    /// Find a subkey by ID string
-    pub fn subkey_by_keyid_str(&self, keyid_str: &str) -> Option<&Subkey> {
-        self.subkeys().iter().find(|x| x.key_id().as_string() == keyid_str)
-    }
-
-    /// Find a subkey mut by ID. Relieves a bit of tedium.
-    pub fn subkey_by_keyid_mut(&mut self, keyid: &KeyID) -> Option<&mut Subkey> {
-        self.subkeys_mut().iter_mut().find(|x| &x.key_id() == keyid)
-    }
-
-    /// Find a subkey by name. Relieves a bit of tedium.
-    pub fn subkey_by_name(&self, name: &str) -> Option<&Subkey> {
-        self.subkeys().iter().rev().find(|x| x.name() == name)
-    }
-
-    /// Grab all admin keys (active and revoked).
-    pub fn keys_admin(&self) -> Vec<&AdminKeypair> {
-        self.admin_keys().iter().map(|key| key.key()).collect::<Vec<_>>()
-    }
-
-    /// Grab all signing subkeys.
-    pub fn subkeys_sign(&self) -> Vec<&SignKeypair> {
-        self.subkeys().iter().filter_map(|x| x.key().as_signkey()).collect::<Vec<_>>()
-    }
-
-    /// Grab all crypto subkeys.
-    pub fn subkeys_crypto(&self) -> Vec<&CryptoKeypair> {
-        self.subkeys().iter().filter_map(|x| x.key().as_cryptokey()).collect::<Vec<_>>()
-    }
-
     /// Add an admin key but check for dupes
-    fn add_admin_key_impl(&mut self, admin_key: AdminKey) -> Result<()> {
+    fn add_admin_key_impl(&mut self, admin_key: AdminKey<M>) -> Result<()> {
         let admin_key_id = admin_key.key_id();
         if !self.admin_keys().iter().any(|x| x.key_id() == admin_key_id) {
             self.admin_keys_mut().push(admin_key);
@@ -600,7 +560,7 @@ impl Keychain {
     }
 
     /// Add a subkey but check for dupes
-    fn add_subkey_impl(&mut self, subkey: Subkey) -> Result<()> {
+    fn add_subkey_impl(&mut self, subkey: Subkey<M>) -> Result<()> {
         let key_id = subkey.key_id();
         if !self.subkeys().iter().any(|x| x.key_id() == key_id) {
             self.subkeys_mut().push(subkey);
@@ -609,7 +569,7 @@ impl Keychain {
     }
 
     /// Add a new admin keypair.
-    pub(crate) fn add_admin_key(mut self, admin_key: AdminKey) -> Result<Self> {
+    pub(crate) fn add_admin_key(mut self, admin_key: AdminKey<M>) -> Result<Self> {
         self.add_admin_key_impl(admin_key)?;
         Ok(self)
     }
@@ -649,7 +609,7 @@ impl Keychain {
     }
 
     /// Add a new subkey to the keychain (and sign it).
-    pub(crate) fn add_subkey<T: Into<String>>(mut self, key: Key, name: T, description: Option<T>) -> Result<Self> {
+    pub(crate) fn add_subkey<T: Into<String>>(mut self, key: Key<M>, name: T, description: Option<T>) -> Result<Self> {
         let subkey = Subkey::new(key, name, description);
         self.add_subkey_impl(subkey)?;
         Ok(self)
@@ -683,37 +643,6 @@ impl Keychain {
             self.subkeys_mut().retain(|x| &x.key_id() != id);
         }
         Ok(self)
-    }
-}
-
-impl Public for Keychain {
-    fn strip_private(&self) -> Self {
-        let mut keychain_clone = self.clone();
-        let admin_stripped = keychain_clone
-            .admin_keys()
-            .clone()
-            .into_iter()
-            .map(|mut ak| {
-                ak.set_key(ak.key().strip_private());
-                ak
-            })
-            .collect::<Vec<_>>();
-        let subkeys_stripped = self
-            .subkeys()
-            .clone()
-            .into_iter()
-            .map(|mut sk| {
-                sk.set_key(sk.key().strip_private());
-                sk
-            })
-            .collect::<Vec<_>>();
-        keychain_clone.set_admin_keys(admin_stripped);
-        keychain_clone.set_subkeys(subkeys_stripped);
-        keychain_clone
-    }
-
-    fn has_private(&self) -> bool {
-        self.admin_keys().iter().any(|x| x.key().has_private()) || self.subkeys().iter().any(|x| x.key().has_private())
     }
 }
 

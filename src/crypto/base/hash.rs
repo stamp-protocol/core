@@ -5,7 +5,7 @@ use crate::{
 #[cfg(test)]
 use rand::{rngs::OsRng, RngCore};
 use rasn::{AsnType, Decode, Encode};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// An enum we can pass to various signing functions to tell them which hashing

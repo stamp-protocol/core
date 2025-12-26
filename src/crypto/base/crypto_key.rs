@@ -1,18 +1,16 @@
 use crate::{
     crypto::{
         base::{KeyID, SecretKey},
-        private::Private,
+        private::{Private, PrivateContainer, ReEncrypt},
     },
     error::{Error, Result},
-    util::{
-        ser::{Binary, BinarySecret, BinaryVec, SerdeBinary},
-        Public,
-    },
+    util::ser::{Binary, BinarySecret, BinaryVec, SerdeBinary},
 };
 use crypto_box::aead::{generic_array::GenericArray, Aead as CryptoboxAead, AeadCore as CryptoboxAeadCore};
+use private_parts::{Full, PrivacyMode, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// An asymmetric signing keypair nonce.
@@ -48,32 +46,56 @@ impl CryptoKeypairMessage {
 }
 
 /// An asymmetric signing keypair.
-#[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[derive(Clone, Debug, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[parts(private_data = "PrivateContainer")]
 #[rasn(choice)]
-pub enum CryptoKeypair {
+pub enum CryptoKeypair<M: PrivacyMode> {
     /// Curve25519XChaCha20Poly1305 keypair for encryption/decryption
     #[rasn(tag(explicit(0)))]
     Curve25519XChaCha20Poly1305 {
         #[rasn(tag(explicit(0)))]
         public: Binary<32>,
         #[rasn(tag(explicit(1)))]
-        secret: Option<Private<BinarySecret<32>>>,
+        secret: Private<M, BinarySecret<32>>,
     },
 }
 
-impl CryptoKeypair {
-    /// Create a new keypair
-    pub fn new_curve25519xchacha20poly1305<R: RngCore + CryptoRng>(rng: &mut R, master_key: &SecretKey) -> Result<Self> {
-        let secret = crypto_box::SecretKey::generate(rng);
-        let public = secret.public_key();
-        Ok(Self::Curve25519XChaCha20Poly1305 {
-            public: Binary::new(*public.as_bytes()),
-            secret: Some(Private::seal(rng, master_key, &BinarySecret::new(secret.to_bytes()))?),
-        })
+impl<M: PrivacyMode> CryptoKeypair<M> {
+    /// Encrypt a message to a recipient, and sign it with our secret crypto
+    /// key. Needs our master key to unlock our heroic private key.
+    pub fn seal<R: RngCore + CryptoRng>(
+        &self,
+        rng: &mut R,
+        sender_master_key: &SecretKey,
+        sender_keypair: &CryptoKeypair<Full>,
+        data: &[u8],
+    ) -> Result<CryptoKeypairMessage> {
+        match (sender_keypair, self) {
+            (
+                CryptoKeypair::<Full>::Curve25519XChaCha20Poly1305 {
+                    secret: ref sender_seckey_sealed,
+                    ..
+                },
+                Self::Curve25519XChaCha20Poly1305 {
+                    public: ref recipient_pubkey,
+                    ..
+                },
+            ) => {
+                let sender_seckey = crypto_box::SecretKey::from(*sender_seckey_sealed.open(sender_master_key)?.expose_secret());
+                let recipient_chacha_pubkey = crypto_box::PublicKey::from(*recipient_pubkey.deref());
+                let cardboard_box = crypto_box::ChaChaBox::new(&recipient_chacha_pubkey, &sender_seckey);
+                let nonce = crypto_box::ChaChaBox::generate_nonce(rng);
+                let msg = cardboard_box.encrypt(&nonce, data).map_err(|_| Error::CryptoSealFailed)?;
+                let nonce_arr = nonce.as_slice().try_into().map_err(|_| Error::BadLength)?;
+                Ok(CryptoKeypairMessage::new(
+                    CryptoKeypairNonce::Curve25519XChaCha20Poly1305(Binary::new(nonce_arr)),
+                    msg,
+                ))
+            }
+        }
     }
 
     /// Anonymously encrypt a message using the recipient's public key.
-    // TODO: move this to CryptoKeypairPublic
     pub fn seal_anonymous<R: RngCore + CryptoRng>(&self, rng: &mut R, data: &[u8]) -> Result<Vec<u8>> {
         match self {
             Self::Curve25519XChaCha20Poly1305 { public: ref pubkey, .. } => {
@@ -93,6 +115,18 @@ impl CryptoKeypair {
             }
         }
     }
+}
+
+impl CryptoKeypair<Full> {
+    /// Create a new keypair
+    pub fn new_curve25519xchacha20poly1305<R: RngCore + CryptoRng>(rng: &mut R, master_key: &SecretKey) -> Result<Self> {
+        let secret = crypto_box::SecretKey::generate(rng);
+        let public = secret.public_key();
+        Ok(Self::Curve25519XChaCha20Poly1305 {
+            public: Binary::new(*public.as_bytes()),
+            secret: Private::seal(rng, master_key, &BinarySecret::new(secret.to_bytes()))?,
+        })
+    }
 
     /// Open an anonymous message encrypted with our public key. Requires our
     /// master key to open.
@@ -100,9 +134,8 @@ impl CryptoKeypair {
         match self {
             Self::Curve25519XChaCha20Poly1305 {
                 public: ref pubkey,
-                secret: ref seckey_opt,
+                secret: ref seckey_sealed,
             } => {
-                let seckey_sealed = seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let seckey = crypto_box::SecretKey::from(*seckey_sealed.open(master_key)?.expose_secret());
                 let ephemeral_pubkey_slice = &data[0..32];
                 let ephemeral_pubkey_arr: [u8; 32] = ephemeral_pubkey_slice.try_into().map_err(|_| Error::CryptoOpenFailed)?;
@@ -120,57 +153,25 @@ impl CryptoKeypair {
         }
     }
 
-    /// Encrypt a message to a recipient, and sign it with our secret crypto
-    /// key. Needs our master key to unlock our heroic private key.
-    // TODO: move this to CryptoKeypairPublic
-    pub fn seal<R: RngCore + CryptoRng>(
-        &self,
-        rng: &mut R,
-        sender_master_key: &SecretKey,
-        sender_keypair: &Self,
-        data: &[u8],
-    ) -> Result<CryptoKeypairMessage> {
-        match (sender_keypair, self) {
-            (
-                Self::Curve25519XChaCha20Poly1305 {
-                    secret: ref sender_seckey_opt,
-                    ..
-                },
-                Self::Curve25519XChaCha20Poly1305 {
-                    public: ref recipient_pubkey,
-                    ..
-                },
-            ) => {
-                let sender_seckey_sealed = sender_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
-                let sender_seckey = crypto_box::SecretKey::from(*sender_seckey_sealed.open(sender_master_key)?.expose_secret());
-                let recipient_chacha_pubkey = crypto_box::PublicKey::from(*recipient_pubkey.deref());
-                let cardboard_box = crypto_box::ChaChaBox::new(&recipient_chacha_pubkey, &sender_seckey);
-                let nonce = crypto_box::ChaChaBox::generate_nonce(rng);
-                let msg = cardboard_box.encrypt(&nonce, data).map_err(|_| Error::CryptoSealFailed)?;
-                let nonce_arr = nonce.as_slice().try_into().map_err(|_| Error::BadLength)?;
-                Ok(CryptoKeypairMessage::new(
-                    CryptoKeypairNonce::Curve25519XChaCha20Poly1305(Binary::new(nonce_arr)),
-                    msg,
-                ))
-            }
-        }
-    }
-
     /// Open a message encrypted with our public key and verify the sender of
     /// the message using their public key. Needs our master key to unlock the
     /// private key used to decrypt the message.
-    pub fn open(&self, recipient_master_key: &SecretKey, sender_keypair: &Self, message: &CryptoKeypairMessage) -> Result<Vec<u8>> {
+    pub fn open(
+        &self,
+        recipient_master_key: &SecretKey,
+        sender_keypair: &CryptoKeypair<Public>,
+        message: &CryptoKeypairMessage,
+    ) -> Result<Vec<u8>> {
         match (self, sender_keypair) {
             (
                 Self::Curve25519XChaCha20Poly1305 {
-                    secret: ref recipient_seckey_opt,
+                    secret: ref recipient_seckey_sealed,
                     ..
                 },
                 CryptoKeypair::Curve25519XChaCha20Poly1305 {
                     public: ref sender_pubkey, ..
                 },
             ) => {
-                let recipient_seckey_sealed = recipient_seckey_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let recipient_seckey = crypto_box::SecretKey::from(*recipient_seckey_sealed.open(recipient_master_key)?.expose_secret());
                 let nonce = match message.nonce() {
                     CryptoKeypairNonce::Curve25519XChaCha20Poly1305(vec) => GenericArray::from_slice(vec.as_slice()),
@@ -184,116 +185,43 @@ impl CryptoKeypair {
         }
     }
 
-    /// Re-encrypt this signing keypair with a new master key.
-    pub fn reencrypt<R: RngCore + CryptoRng>(
-        self,
-        rng: &mut R,
-        previous_master_key: &SecretKey,
-        new_master_key: &SecretKey,
-    ) -> Result<Self> {
-        match self {
-            Self::Curve25519XChaCha20Poly1305 {
-                public,
-                secret: Some(private),
-            } => Ok(Self::Curve25519XChaCha20Poly1305 {
-                public,
-                secret: Some(private.reencrypt(rng, previous_master_key, new_master_key)?),
-            }),
-            _ => Err(Error::CryptoKeyMissing),
-        }
-    }
-
     /// Create a KeyID from this keypair.
     pub fn key_id(&self) -> KeyID {
-        KeyID::CryptoKeypair(self.clone().into())
+        let (public, _) = self.clone().strip();
+        KeyID::CryptoKeypair(public)
     }
 }
 
-impl Clone for CryptoKeypair {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Curve25519XChaCha20Poly1305 {
-                public,
-                secret: secret_maybe,
-            } => Self::Curve25519XChaCha20Poly1305 {
-                public: public.clone(),
-                secret: secret_maybe.as_ref().cloned(),
-            },
-        }
-    }
-}
-
-impl Public for CryptoKeypair {
-    fn strip_private(&self) -> Self {
-        match self {
-            Self::Curve25519XChaCha20Poly1305 { public: ref pubkey, .. } => Self::Curve25519XChaCha20Poly1305 {
-                public: pubkey.clone(),
-                secret: None,
-            },
-        }
-    }
-
-    fn has_private(&self) -> bool {
-        match self {
-            Self::Curve25519XChaCha20Poly1305 { secret: private_maybe, .. } => private_maybe.is_some(),
-        }
-    }
-}
-
-/// An asymmetric signing public key.
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(choice)]
-pub enum CryptoKeypairPublic {
-    /// Public key for Curve25519XChaCha20Poly1305
-    #[rasn(tag(explicit(0)))]
-    Curve25519XChaCha20Poly1305(Binary<32>),
-}
-
-impl CryptoKeypairPublic {
-    /// Encrypt a message to a recipient, and sign it with our secret crypto
-    /// key. Needs our master key to unlock our heroic private key.
-    pub fn seal<R: RngCore + CryptoRng>(
-        &self,
-        rng: &mut R,
-        sender_master_key: &SecretKey,
-        sender_pubkey: &CryptoKeypair,
-        data: &[u8],
-    ) -> Result<CryptoKeypairMessage> {
-        let keypair = match self {
-            Self::Curve25519XChaCha20Poly1305(pubkey) => CryptoKeypair::Curve25519XChaCha20Poly1305 {
-                public: pubkey.clone(),
-                secret: None,
-            },
-        };
-        keypair.seal(rng, sender_master_key, sender_pubkey, data)
-    }
-
-    /// Anonymously encrypt a message using the recipient's public key.
-    pub fn seal_anonymous<R: RngCore + CryptoRng>(&self, rng: &mut R, data: &[u8]) -> Result<Vec<u8>> {
-        let keypair = match self {
-            Self::Curve25519XChaCha20Poly1305(pubkey) => CryptoKeypair::Curve25519XChaCha20Poly1305 {
-                public: pubkey.clone(),
-                secret: None,
-            },
-        };
-        keypair.seal_anonymous(rng, data)
-    }
-
+impl CryptoKeypair<Public> {
     /// Create a KeyID from this keypair.
     pub fn key_id(&self) -> KeyID {
         KeyID::CryptoKeypair(self.clone())
     }
 }
 
-impl From<CryptoKeypair> for CryptoKeypairPublic {
-    fn from(kp: CryptoKeypair) -> Self {
-        match kp {
-            CryptoKeypair::Curve25519XChaCha20Poly1305 { public, .. } => Self::Curve25519XChaCha20Poly1305(public),
+impl ReEncrypt for CryptoKeypair<Full> {
+    fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        match self {
+            Self::Curve25519XChaCha20Poly1305 { public, secret: private } => Ok(Self::Curve25519XChaCha20Poly1305 {
+                public,
+                secret: private.reencrypt(rng, previous_master_key, new_master_key)?,
+            }),
+            _ => Err(Error::CryptoKeyMissing),
         }
     }
 }
 
-impl SerdeBinary for CryptoKeypairPublic {}
+impl<M: PrivacyMode> PartialEq for CryptoKeypair<M> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Curve25519XChaCha20Poly1305 { public: public1, .. }, Self::Curve25519XChaCha20Poly1305 { public: public2, .. }) => {
+                public1 == public2
+            }
+        }
+    }
+}
+
+impl SerdeBinary for CryptoKeypair<Public> {}
 
 #[cfg(test)]
 pub(crate) mod tests {

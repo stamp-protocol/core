@@ -7,40 +7,45 @@
 //! that transaction.
 
 use crate::{
-    crypto::base::{Hash, HashAlgo, KeyID, SecretKey},
-    dag::{DagNode, Transactions},
+    crypto::{
+        base::{Hash, HashAlgo, KeyID, SecretKey},
+        private::{IntoPublic, PrivateContainer, ReEncrypt},
+    },
+    dag::{DagNode, DagUtil},
     error::{Error, Result},
     identity::{
         claim::{ClaimID, ClaimSpec},
         identity::{Identity, IdentityID},
-        keychain::{AdminKey, AdminKeyID, AdminKeypair, AdminKeypairPublic, ExtendKeypair, Key, RevocationReason},
-        stamp::{RevocationReason as StampRevocationReason, StampEntry, StampID},
+        keychain::{AdminKey, AdminKeyID, AdminKeypair, ExtendKeypair, Key, RevocationReason},
+        stamp::{Confidence, RevocationReason as StampRevocationReason, StampEntry, StampID},
     },
     policy::{Context, MultisigPolicySignature, Policy, PolicyContainer, PolicyID},
     util::{
         ser::{self, BinaryVec, DeText, HashMapAsn1, SerText, SerdeBinary},
-        Public, Timestamp,
+        Timestamp,
     },
 };
 use getset;
+use private_parts::{Full, PrivacyMode, PrivateDataContainer, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 use std::hash::{Hash as StdHash, Hasher};
 use std::ops::{Deref, DerefMut};
 
 /// This is all of the possible transactions that can be performed on an
 /// identity, including the data they require.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[derive(Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize)]
+#[parts(private_data = "PrivateContainer")]
 #[rasn(choice)]
-pub enum TransactionBody {
+pub enum TransactionBody<M: PrivacyMode> {
     /// Create a new identity. The [ID][TransactionID] of this transaction will
     /// be the identity's public ID forever after.
     #[rasn(tag(explicit(0)))]
     CreateIdentityV1 {
         #[rasn(tag(explicit(0)))]
-        admin_keys: Vec<AdminKey>,
+        admin_keys: Vec<AdminKey<M>>,
         #[rasn(tag(explicit(1)))]
         policies: Vec<Policy>,
     },
@@ -52,7 +57,7 @@ pub enum TransactionBody {
     #[rasn(tag(explicit(1)))]
     ResetIdentityV1 {
         #[rasn(tag(explicit(0)))]
-        admin_keys: Option<Vec<AdminKey>>,
+        admin_keys: Option<Vec<AdminKey<M>>>,
         #[rasn(tag(explicit(1)))]
         policies: Option<Vec<Policy>>,
     },
@@ -66,7 +71,7 @@ pub enum TransactionBody {
     #[rasn(tag(explicit(3)))]
     AddAdminKeyV1 {
         #[rasn(tag(explicit(0)))]
-        admin_key: AdminKey,
+        admin_key: AdminKey<M>,
     },
     /// Edit an admin key
     #[rasn(tag(explicit(4)))]
@@ -106,7 +111,7 @@ pub enum TransactionBody {
     #[rasn(tag(explicit(8)))]
     MakeClaimV1 {
         #[rasn(tag(explicit(0)))]
-        spec: ClaimSpec,
+        spec: ClaimSpec<M>,
         #[rasn(tag(explicit(1)))]
         name: Option<String>,
     },
@@ -144,7 +149,7 @@ pub enum TransactionBody {
     #[rasn(tag(explicit(13)))]
     AcceptStampV1 {
         #[rasn(tag(explicit(0)))]
-        stamp_transaction: Box<Transaction>,
+        stamp_transaction: Box<TransactionSerialized<Public>>,
     },
     /// Delete a stamp on one of our claims.
     #[rasn(tag(explicit(14)))]
@@ -156,7 +161,7 @@ pub enum TransactionBody {
     #[rasn(tag(explicit(15)))]
     AddSubkeyV1 {
         #[rasn(tag(explicit(0)))]
-        key: Key,
+        key: Key<M>,
         #[rasn(tag(explicit(1)))]
         name: String,
         #[rasn(tag(explicit(2)))]
@@ -194,7 +199,7 @@ pub enum TransactionBody {
     #[rasn(tag(explicit(19)))]
     PublishV1 {
         #[rasn(tag(explicit(0)))]
-        transactions: Box<Transactions>,
+        transactions: Vec<TransactionSerialized<Public>>,
     },
     /// Sign a message. The usual Stamp policy process applies here, so an official
     /// identity signing transaction must match an existing policy to be valid. This
@@ -255,8 +260,7 @@ pub enum TransactionBody {
     },
 }
 
-impl TransactionBody {
-    /// Reencrypt this transaction body
+impl ReEncrypt for TransactionBody<Full> {
     fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let new_self = match self {
             Self::CreateIdentityV1 { admin_keys, policies } => {
@@ -312,9 +316,7 @@ impl TransactionBody {
             Self::EditSubkeyV1 { id, new_name, new_desc } => Self::EditSubkeyV1 { id, new_name, new_desc },
             Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
-            Self::PublishV1 { transactions } => Self::PublishV1 {
-                transactions: Box::new(transactions.reencrypt(rng, old_master_key, new_master_key)?),
-            },
+            Self::PublishV1 { transactions } => Self::PublishV1 { transactions },
             Self::SignV1 { creator, body_hash } => Self::SignV1 { creator, body_hash },
             Self::ExtV1 {
                 creator,
@@ -331,102 +333,6 @@ impl TransactionBody {
             },
         };
         Ok(new_self)
-    }
-}
-
-impl Public for TransactionBody {
-    fn strip_private(&self) -> Self {
-        match self.clone() {
-            Self::CreateIdentityV1 { admin_keys, policies } => {
-                let admin_stripped = admin_keys.into_iter().map(|k| k.strip_private()).collect::<Vec<_>>();
-                Self::CreateIdentityV1 {
-                    admin_keys: admin_stripped,
-                    policies,
-                }
-            }
-            Self::ResetIdentityV1 { admin_keys, policies } => {
-                let stripped_admin = admin_keys.map(|keys| keys.into_iter().map(|k| k.strip_private()).collect::<Vec<_>>());
-                Self::ResetIdentityV1 {
-                    admin_keys: stripped_admin,
-                    policies,
-                }
-            }
-            Self::RevokeIdentityV1 => Self::RevokeIdentityV1,
-            Self::AddAdminKeyV1 { admin_key } => Self::AddAdminKeyV1 {
-                admin_key: admin_key.strip_private(),
-            },
-            Self::EditAdminKeyV1 { id, name, description } => Self::EditAdminKeyV1 { id, name, description },
-            Self::RevokeAdminKeyV1 { id, reason, new_name } => Self::RevokeAdminKeyV1 { id, reason, new_name },
-            Self::AddPolicyV1 { policy } => Self::AddPolicyV1 { policy },
-            Self::DeletePolicyV1 { id } => Self::DeletePolicyV1 { id },
-            Self::MakeClaimV1 { spec, name } => Self::MakeClaimV1 {
-                spec: spec.strip_private(),
-                name,
-            },
-            Self::EditClaimV1 { claim_id, name } => Self::EditClaimV1 { claim_id, name },
-            Self::DeleteClaimV1 { claim_id } => Self::DeleteClaimV1 { claim_id },
-            Self::MakeStampV1 { stamp } => Self::MakeStampV1 { stamp },
-            Self::RevokeStampV1 { stamp_id, reason } => Self::RevokeStampV1 { stamp_id, reason },
-            Self::AcceptStampV1 { stamp_transaction } => Self::AcceptStampV1 {
-                stamp_transaction: Box::new(stamp_transaction.strip_private()),
-            },
-            Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
-            Self::AddSubkeyV1 { key, name, desc } => Self::AddSubkeyV1 {
-                key: key.strip_private(),
-                name,
-                desc,
-            },
-            Self::EditSubkeyV1 { id, new_name, new_desc } => Self::EditSubkeyV1 { id, new_name, new_desc },
-            Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
-            Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
-            Self::PublishV1 { transactions } => Self::PublishV1 {
-                transactions: Box::new(transactions.strip_private()),
-            },
-            Self::SignV1 { creator, body_hash } => Self::SignV1 { creator, body_hash },
-            Self::ExtV1 {
-                creator,
-                ty,
-                previous_transactions,
-                context,
-                payload,
-            } => Self::ExtV1 {
-                creator,
-                ty,
-                previous_transactions,
-                context,
-                payload,
-            },
-        }
-    }
-
-    fn has_private(&self) -> bool {
-        match self {
-            Self::CreateIdentityV1 { admin_keys, .. } => admin_keys.iter().any(|k| k.has_private()),
-            Self::ResetIdentityV1 { admin_keys, .. } => admin_keys
-                .as_ref()
-                .map(|keys| keys.iter().any(|x| x.key().has_private()))
-                .unwrap_or(false),
-            Self::RevokeIdentityV1 => false,
-            Self::AddAdminKeyV1 { admin_key } => admin_key.has_private(),
-            Self::EditAdminKeyV1 { .. } => false,
-            Self::RevokeAdminKeyV1 { .. } => false,
-            Self::AddPolicyV1 { .. } => false,
-            Self::DeletePolicyV1 { .. } => false,
-            Self::MakeClaimV1 { spec, .. } => spec.has_private(),
-            Self::EditClaimV1 { .. } => false,
-            Self::DeleteClaimV1 { .. } => false,
-            Self::MakeStampV1 { .. } => false,
-            Self::RevokeStampV1 { .. } => false,
-            Self::AcceptStampV1 { .. } => false,
-            Self::DeleteStampV1 { .. } => false,
-            Self::AddSubkeyV1 { key, .. } => key.has_private(),
-            Self::EditSubkeyV1 { .. } => false,
-            Self::RevokeSubkeyV1 { .. } => false,
-            Self::DeleteSubkeyV1 { .. } => false,
-            Self::PublishV1 { transactions } => transactions.has_private(),
-            Self::SignV1 { .. } => false,
-            Self::ExtV1 { .. } => false,
-        }
     }
 }
 
@@ -508,9 +414,12 @@ impl TransactionID {
 
 /// The body of an identity transaction. Holds the transaction's references to
 /// its previous transactions and the transaction type/data itself.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
+#[parts(private_data = "PrivateContainer")]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct TransactionEntry {
+pub struct TransactionEntry<M: PrivacyMode> {
     /// When this transaction was created.
     #[rasn(tag(explicit(0)))]
     created: Timestamp,
@@ -530,12 +439,14 @@ pub struct TransactionEntry {
     previous_transactions: Vec<TransactionID>,
     /// This holds the actual transaction data.
     #[rasn(tag(explicit(2)))]
-    body: TransactionBody,
+    body: TransactionBody<M>,
 }
 
-impl TransactionEntry {
+impl<M: PrivacyMode> TransactionEntry<M> {
     /// Create a new entry.
-    pub(crate) fn new<T: Into<Timestamp>>(created: T, previous_transactions: Vec<TransactionID>, body: TransactionBody) -> Self {
+    // NOTE: we don't usually do `new()` for generic `<M: PrivacyMode>` or `<Public>` types but
+    // this is in service to some DAG rewiring stuff
+    pub(crate) fn new<T: Into<Timestamp>>(created: T, previous_transactions: Vec<TransactionID>, body: TransactionBody<M>) -> Self {
         Self {
             created: created.into(),
             previous_transactions,
@@ -544,179 +455,55 @@ impl TransactionEntry {
     }
 }
 
-impl Public for TransactionEntry {
-    fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        clone.set_body(self.body().strip_private());
-        clone
-    }
+impl IntoPublic for TransactionEntry<Full> {
+    type Public = TransactionEntry<Public>;
 
-    fn has_private(&self) -> bool {
-        self.body().has_private()
+    fn into_public(self) -> Self::Public {
+        self.strip().0
     }
 }
+
+impl IntoPublic for TransactionEntry<Public> {
+    type Public = TransactionEntry<Public>;
+
+    fn into_public(self) -> Self::Public {
+        self
+    }
+}
+
+impl SerdeBinary for TransactionEntry<Public> {}
+impl SerdeBinary for TransactionEntry<Full> {}
 
 /// A transaction represents a single change on an identity object. In order to
 /// build an identity, all transactions are played in order from start to finish.
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+///
+/// Note that `Transaction` itself *cannot be binary (de)serialized*. Instead, it has to be
+/// converted to a [`TransactionContainer`] which can then be saved/sent. We *can* serialize it in
+/// plaintext format for display/debug purposes.
+#[derive(Debug, Clone, PrivateParts, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[parts(private_data = "PrivateContainer")]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Transaction {
+pub struct Transaction<M: PrivacyMode> {
     /// This is a hash of the transaction's `entry`
-    #[rasn(tag(explicit(0)))]
     id: TransactionID,
-    /// This holds our transaction body: any references to previous
-    /// transactions as well as the transaction type/data.
-    #[rasn(tag(explicit(1)))]
-    entry: TransactionEntry,
+    /// This holds our serialized [`TransactionEntry`]
+    entry: TransactionEntry<M>,
     /// The signatures on this transaction's ID.
-    #[rasn(tag(explicit(2)))]
     signatures: Vec<MultisigPolicySignature>,
 }
 
-impl Transaction {
+impl<M: PrivacyMode> Transaction<M> {
     /// Create a new Transaction from a [TransactionEntry].
-    pub(crate) fn new(entry: TransactionEntry, hash_with: &HashAlgo) -> Result<Self> {
-        let serialized = ser::serialize(&entry.strip_private())?;
-        let hash = match hash_with {
-            HashAlgo::Blake3 => Hash::new_blake3(&serialized)?,
-        };
-        let id = TransactionID::from(hash);
-        Ok(Self {
-            id,
-            entry,
-            signatures: Vec::new(),
-        })
+    pub(crate) fn new_raw_with_sigs(id: TransactionID, entry: TransactionEntry<M>, signatures: Vec<MultisigPolicySignature>) -> Self {
+        Self { id, entry, signatures }
     }
 
-    /// A very unsafe function that is sometimes required in situations where a DAG needs to be
-    /// hand-created (forged) and we don't have all the information to do it ze proper way.
+    /// Authorize that this transaction has the signatures needed to match a policy that grants the
+    /// actions contained within the transaction.
     ///
-    /// For instance, if removing nodes from a DAG and then later re-creating them with fake
-    /// entries (that would never verify BTW so it's not some workaround to break integrity) we
-    /// might want to recreate the removed DAG nodes given just an ID and timestamp.
-    pub fn create_raw_with_id<T: Into<Timestamp>>(
-        id: TransactionID,
-        created: T,
-        previous_transactions: Vec<TransactionID>,
-        body: TransactionBody,
-    ) -> Self {
-        let entry = TransactionEntry::new(created, previous_transactions, body);
-        Self {
-            id,
-            entry,
-            signatures: Vec::new(),
-        }
-    }
-
-    /// Create a new transaction with hand-supplied values for the create time, previous
-    /// transactions, and body.
-    ///
-    /// You almost never want this! Use the dag::Transactions::<create_identity|add_subkey|...>
-    /// functions instead. This function's main utility is raw DAG manipulation.
-    pub fn create_raw<T: Into<Timestamp>>(
-        hash_with: &HashAlgo,
-        created: T,
-        previous_transactions: Vec<TransactionID>,
-        body: TransactionBody,
-    ) -> Result<Self> {
-        let entry = TransactionEntry::new(created, previous_transactions, body);
-        Transaction::new(entry, hash_with)
-    }
-
-    /// Allows modification of the `previous_transactions` field of an ExtV1 body. This is useful
-    /// in situations where an application needs to do some DAG manipulation but can't do it
-    /// directly because the official functions don't allow modifications of the `Transaction` or
-    /// inner fields.
-    ///
-    /// We can do the same by cloning a bunch of garbage and using [`Transaction::create_raw`] but this
-    /// allows the same without copy.
-    pub fn try_mod_ext_previous_transaction(&mut self, new_ext_previous_transactions: Vec<TransactionID>) -> Result<()> {
-        match self.entry_mut().body_mut() {
-            TransactionBody::ExtV1 {
-                ref mut previous_transactions,
-                ..
-            } => {
-                *previous_transactions = new_ext_previous_transactions;
-                Ok(())
-            }
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// Sign this transaction in-place.
-    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair) -> Result<()> {
-        let admin_key_pub: AdminKeypairPublic = admin_key.clone().into();
-        let sig_exists = self.signatures().iter().find(|sig| match sig {
-            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
-        });
-        if sig_exists.is_some() {
-            Err(Error::DuplicateSignature)?;
-        }
-        let serialized = ser::serialize(self.id().deref())?;
-        let sig = admin_key.sign(master_key, &serialized[..])?;
-        let policy_sig = MultisigPolicySignature::Key {
-            key: admin_key.clone().into(),
-            signature: sig,
-        };
-        self.signatures_mut().push(policy_sig);
-        Ok(())
-    }
-
-    /// Sign this transaction. This consumes the transaction, adds the signature
-    /// to the `signatures` list, then returns the new transaction.
-    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair) -> Result<Self> {
-        self.sign_mut(master_key, admin_key)?;
-        Ok(self)
-    }
-
-    /// Verify that the signatures on this transaction match the transaction.
-    pub(crate) fn verify_signatures(&self) -> Result<()> {
-        if self.signatures().is_empty() {
-            Err(Error::TransactionNoSignatures)?;
-        }
-        let ver_sig = ser::serialize(self.id().deref())?;
-        for sig in self.signatures() {
-            match sig {
-                MultisigPolicySignature::Key { key, signature } => {
-                    if key.verify(signature, &ver_sig[..]).is_err() {
-                        Err(Error::TransactionSignatureInvalid(key.clone()))?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Verify the hash on this transaction matches the transaction entry's hash, and also verify
-    /// the signatures of that hash.
-    ///
-    /// This is useful if you need to validate a transaction is "valid" up until the point where
-    /// you need a copy of the full identity (so that the policies can be checked). In other words,
-    /// if you need to verify a transaction but don't have all the information you need to run
-    /// `Transaction.verify()` then you can run this as a self-contained way of verification, as
-    /// long as you keep in mind that the transaction ultimately needs to be checked against a
-    /// built identity.
-    pub fn verify_hash_and_signatures(&self) -> Result<()> {
-        let serialized = ser::serialize(&self.entry().strip_private())?;
-        // first verify the transaction's hash.
-        let transaction_hash = match self.id().deref() {
-            Hash::Blake3(..) => Hash::new_blake3(&serialized[..])?,
-        };
-        if &transaction_hash != self.id().deref() {
-            Err(Error::TransactionIDMismatch(self.id().clone()))?;
-        }
-
-        // now verify the signatures on the stinkin transaction
-        self.verify_signatures()?;
-        Ok(())
-    }
-
-    /// Verify this transaction's validity. We have to make sure its ID matches
-    /// the hash of its public contents, and we have to make sure the signatures
-    /// satisfy a policy which has the capabilities the transaction requires.
-    pub fn verify(&self, identity_maybe: Option<&Identity>) -> Result<()> {
-        self.verify_hash_and_signatures()?;
-
+    /// By the time we get here, the transaction hash/signatures must have been validated, so we
+    /// focus on the policy-based validation.
+    pub fn authorize(&self, identity_maybe: Option<&Identity<M>>) -> Result<()> {
         macro_rules! search_capabilities {
             ($identity:expr) => {
                 let mut found_match = false;
@@ -769,39 +556,96 @@ impl Transaction {
             }
         }
     }
+}
 
-    /// Determines if this transaction has been signed by a given key.
-    pub fn is_signed_by(&self, admin_key: &AdminKeypairPublic) -> bool {
-        self.signatures()
-            .iter()
-            .find(|sig| match sig {
-                MultisigPolicySignature::Key { key, .. } => key == admin_key,
-            })
-            .is_some()
+impl<M> Transaction<M>
+where
+    M: PrivacyMode,
+    TransactionEntry<M>: IntoPublic,
+    <TransactionEntry<M> as IntoPublic>::Public: Encode,
+{
+    /// Create a new Transaction from a [TransactionEntry].
+    pub(crate) fn new(entry: TransactionEntry<M>, hash_with: &HashAlgo) -> Result<Self> {
+        let public = entry.into_public();
+        let serialized = ser::serialize(&public)?;
+        let hash = match hash_with {
+            HashAlgo::Blake3 => Hash::new_blake3(&serialized)?,
+        };
+        let id = TransactionID::from(hash);
+        Ok(Self {
+            id,
+            entry,
+            signatures: Vec::new(),
+        })
     }
+}
 
+impl ReEncrypt for Transaction<Full> {
     /// Reencrypt this transaction.
-    pub fn reencrypt<R: RngCore + CryptoRng>(
-        mut self,
-        rng: &mut R,
-        old_master_key: &SecretKey,
-        new_master_key: &SecretKey,
-    ) -> Result<Self> {
+    fn reencrypt<R: RngCore + CryptoRng>(mut self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         let new_body = self.entry().body().clone().reencrypt(rng, old_master_key, new_master_key)?;
         self.entry_mut().set_body(new_body);
         Ok(self)
     }
 }
 
-impl std::cmp::PartialEq for Transaction {
+impl<M> DagUtil for Transaction<M>
+where
+    M: PrivacyMode,
+    TransactionEntry<M>: IntoPublic,
+    <TransactionEntry<M> as IntoPublic>::Public: Encode,
+{
+    type ID = TransactionID;
+    type Body = TransactionBody<M>;
+
+    fn create_raw_with_id<T: Into<Timestamp>>(id: Self::ID, created: T, previous_transactions: Vec<Self::ID>, body: Self::Body) -> Self {
+        let entry = TransactionEntry::new(created, previous_transactions, body);
+        Self {
+            id,
+            entry,
+            signatures: Vec::new(),
+        }
+    }
+
+    fn create_raw<T: Into<Timestamp>>(
+        hash_with: &HashAlgo,
+        created: T,
+        previous_transactions: Vec<Self::ID>,
+        body: Self::Body,
+    ) -> Result<Self> {
+        let entry = TransactionEntry::new(created, previous_transactions, body);
+        Self::new(entry, hash_with)
+    }
+
+    fn try_mod_ext_previous_transaction(&mut self, new_ext_previous_transactions: Vec<Self::ID>) -> Result<()> {
+        match self.entry_mut().body_mut() {
+            TransactionBody::ExtV1 {
+                ref mut previous_transactions,
+                ..
+            } => {
+                *previous_transactions = new_ext_previous_transactions;
+                Ok(())
+            }
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+}
+
+impl<M: PrivacyMode> std::cmp::PartialEq for Transaction<M> {
     fn eq(&self, other: &Self) -> bool {
         self.id() == other.id() && self.signatures() == other.signatures()
     }
 }
 
-impl std::cmp::Eq for Transaction {}
+impl<M: PrivacyMode> std::cmp::Eq for Transaction<M> {}
 
-impl std::cmp::Ord for Transaction {
+impl<M: PrivacyMode> std::cmp::PartialOrd for Transaction<M> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<M: PrivacyMode> std::cmp::Ord for Transaction<M> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let cmp = self.entry().created().cmp(other.entry().created());
         let ord = if cmp == std::cmp::Ordering::Equal {
@@ -813,48 +657,184 @@ impl std::cmp::Ord for Transaction {
     }
 }
 
-impl std::cmp::PartialOrd for Transaction {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<'a> From<&'a Transaction> for DagNode<'a, TransactionID, Transaction> {
-    fn from(t: &'a Transaction) -> Self {
+impl<'a, M: PrivacyMode> From<&'a Transaction<M>> for DagNode<'a, TransactionID, Transaction<M>> {
+    fn from(t: &'a Transaction<M>) -> Self {
         DagNode::new(t.id(), t, t.entry().previous_transactions().iter().collect::<Vec<_>>(), t.entry().created())
     }
 }
 
-impl Public for Transaction {
-    fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        clone.set_entry(self.entry().strip_private());
-        clone
+impl SerText for Transaction<Public> {}
+impl DeText for Transaction<Public> {}
+
+/// A [`Transaction`] where the [`TransactionEntry`] has been serialized. This enforces that our
+/// hash/signatures happen *on our serialized data* and prevents even getting a full
+/// [`Transaction`] object unless our hash and signatures verify. This object is safe to store
+/// and/or transmit (unlike [`Transaction`]).
+///
+/// This bundles private data that can be used to reconstruct a [`Full`] [`Transaction`] object if:
+///
+/// - The transaction ID matches the hash of the serialized entry bytes
+/// - The deserialization succeeds
+/// - The bundled private data is sufficient to reconstruct the full data
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct TransactionSerialized<M: PrivacyMode> {
+    /// This is a hash of the transaction's `entry`
+    #[rasn(tag(explicit(0)))]
+    id: TransactionID,
+    /// This holds our serialized [`TransactionEntry`]
+    #[rasn(tag(explicit(1)))]
+    entry: BinaryVec,
+    /// The signatures on this transaction's ID.
+    #[rasn(tag(explicit(2)))]
+    signatures: Vec<MultisigPolicySignature>,
+    /// Private data bundled with the transaction. If present (ie, PrivacyMode == Full`) then it
+    /// can construct a `Transaction<Full>`, otherwise it will construct `Transaction<Public>`.
+    #[rasn(tag(explicit(3)))]
+    private_data: M::Private<PrivateContainer>,
+}
+
+impl<M: PrivacyMode> TransactionSerialized<M> {
+    /// Verify that the signatures on this transaction match the transaction.
+    pub(crate) fn verify_signatures(&self) -> Result<()> {
+        if self.signatures().is_empty() {
+            Err(Error::TransactionNoSignatures)?;
+        }
+        let ver_sig = ser::serialize(self.id().deref())?;
+        for sig in self.signatures() {
+            match sig {
+                MultisigPolicySignature::Key { key, signature } => {
+                    if key.verify(signature, &ver_sig[..]).is_err() {
+                        Err(Error::TransactionSignatureInvalid(key.clone(), signature.clone().into()))?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
-    fn has_private(&self) -> bool {
-        self.entry().has_private()
+    /// Verify that the hash on this transaction matches its serialized body.
+    pub(crate) fn verify_hash(&self) -> Result<()> {
+        let transaction_hash = match self.id().deref() {
+            Hash::Blake3(..) => Hash::new_blake3(self.entry().as_slice())?,
+        };
+        if &transaction_hash != self.id().deref() {
+            Err(Error::TransactionIDMismatch(self.id().clone()))?;
+        }
+        Ok(())
+    }
+
+    /// Verify the hash on this transaction matches the transaction entry's hash, and also verify
+    /// the signatures of that hash.
+    ///
+    /// This is useful if you need to validate a transaction is "valid" up until the point where
+    /// you need a copy of the full identity (so that the policies can be checked). In other words,
+    /// if you need to verify a transaction but don't have all the information you need to run
+    /// `Transaction.verify()` then you can run this as a self-contained way of verification, as
+    /// long as you keep in mind that the transaction ultimately needs to be checked against a
+    /// built identity (and its contained policies).
+    ///
+    /// This should *always* be called before transforming a `TransactionSerialized` into a
+    /// [`Transaction`]!!
+    pub fn verify_hash_and_signatures(&self) -> Result<()> {
+        self.verify_hash()?;
+        self.verify_signatures()?;
+        Ok(())
+    }
+
+    /// Sign this transaction in-place.
+    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
+        self.verify_hash()?;
+        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
+        let sig_exists = self.signatures().iter().find(|sig| match sig {
+            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
+        });
+        if sig_exists.is_some() {
+            Err(Error::DuplicateSignature)?;
+        }
+        let serialized = ser::serialize(self.id().deref())?;
+        let sig = admin_key.sign(master_key, &serialized[..])?;
+        let policy_sig = MultisigPolicySignature::Key {
+            key: admin_key.clone().into(),
+            signature: sig,
+        };
+        self.signatures_mut().push(policy_sig);
+        Ok(())
+    }
+
+    /// Sign this transaction. This consumes the transaction, adds the signature
+    /// to the `signatures` list, then returns the new transaction.
+    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
+        self.sign_mut(master_key, admin_key)?;
+        Ok(self)
+    }
+
+    /// Determines if this transaction has been signed by a given key.
+    pub fn is_signed_by(&self, admin_key: &AdminKeypair<Public>) -> bool {
+        self.signatures()
+            .iter()
+            .find(|sig| match sig {
+                MultisigPolicySignature::Key { key, .. } => key == admin_key,
+            })
+            .is_some()
     }
 }
 
-impl SerdeBinary for Transaction {}
-impl SerText for Transaction {}
-impl DeText for Transaction {}
+impl TryFrom<TransactionSerialized<Full>> for Transaction<Full> {
+    type Error = Error;
+
+    fn try_from(value: TransactionSerialized<Full>) -> Result<Self> {
+        value.verify_hash_and_signatures()?;
+        let TransactionSerialized::<Full> {
+            id,
+            entry,
+            signatures,
+            mut private_data,
+        } = value;
+        let entry = TransactionEntry::<Public>::deserialize_binary(entry.as_slice())?;
+        let trans_public = Transaction::<Public>::new_raw_with_sigs(id, entry, signatures);
+        let trans = Transaction::<Full>::merge(trans_public, &mut private_data)?;
+        Ok(trans)
+    }
+}
+
+impl TryFrom<TransactionSerialized<Public>> for Transaction<Public> {
+    type Error = Error;
+
+    fn try_from(value: TransactionSerialized<Public>) -> Result<Self> {
+        value.verify_hash_and_signatures()?;
+        let TransactionSerialized::<Public> { id, entry, signatures, .. } = value;
+        let entry = TransactionEntry::<Public>::deserialize_binary(entry.as_slice())?;
+        let trans = Transaction::<Public>::new_raw_with_sigs(id, entry, signatures);
+        Ok(trans)
+    }
+}
 
 /// Makes it easy to define wrapper transactions
 macro_rules! define_wrapper_tx {
     ( $name:ident, $body_type:path ) => {
         impl $name {
             /// Convert this into a [`Transaction`]
-            pub fn into_inner(self) -> Transaction {
+            pub fn into_inner(self) -> Transaction<Public> {
                 let Self(tx) = self;
                 tx
             }
         }
 
-        impl TryFrom<Transaction> for $name {
+        impl TryFrom<Transaction<Full>> for $name {
             type Error = Error;
-            fn try_from(val: Transaction) -> std::result::Result<Self, Self::Error> {
+            fn try_from(val: Transaction<Full>) -> std::result::Result<Self, Self::Error> {
+                if matches!(val.entry().body(), $body_type { .. }) {
+                    Ok(Self(val.strip().0))
+                } else {
+                    Err(Error::TransactionMismatch)
+                }
+            }
+        }
+
+        impl TryFrom<Transaction<Public>> for $name {
+            type Error = Error;
+            fn try_from(val: Transaction<Public>) -> std::result::Result<Self, Self::Error> {
                 if matches!(val.entry().body(), $body_type { .. }) {
                     Ok(Self(val))
                 } else {
@@ -863,8 +843,32 @@ macro_rules! define_wrapper_tx {
             }
         }
 
+        impl TryFrom<TransactionSerialized<Full>> for $name {
+            type Error = Error;
+            fn try_from(val: TransactionSerialized<Full>) -> std::result::Result<Self, Self::Error> {
+                let transaction = Transaction::<Full>::try_from(val)?;
+                if matches!(transaction.entry().body(), $body_type { .. }) {
+                    Ok(Self(transaction.strip().0))
+                } else {
+                    Err(Error::TransactionMismatch)
+                }
+            }
+        }
+
+        impl TryFrom<TransactionSerialized<Public>> for $name {
+            type Error = Error;
+            fn try_from(val: TransactionSerialized<Public>) -> std::result::Result<Self, Self::Error> {
+                let transaction = Transaction::<Public>::try_from(val)?;
+                if matches!(transaction.entry().body(), $body_type { .. }) {
+                    Ok(Self(transaction))
+                } else {
+                    Err(Error::TransactionMismatch)
+                }
+            }
+        }
+
         impl Deref for $name {
-            type Target = Transaction;
+            type Target = Transaction<Public>;
             fn deref(&self) -> &Self::Target {
                 &self.0
             }
@@ -875,27 +879,68 @@ macro_rules! define_wrapper_tx {
                 &mut self.0
             }
         }
-
-        // when deserializing, when that we actually have the proper type
-        impl crate::util::ser::SerdeBinary for $name {
-            fn deserialize_binary(slice: &[u8]) -> Result<Self> {
-                let tx: Transaction = crate::util::ser::SerdeBinary::deserialize_binary(slice)?;
-                Self::try_from(tx)
-            }
-        }
     };
 }
 
+/// A wrapper around `MakeStampV1` transactions
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct StampTransaction(Transaction<Public>);
+
+define_wrapper_tx!(StampTransaction, TransactionBody::MakeStampV1);
+
+impl StampTransaction {
+    /// IF (and this is a BIG if...) this is a `MakeStamp` transaction, grab the stamper's
+    /// identity ID
+    pub fn get_stamper(&self) -> Result<&IdentityID> {
+        match self.entry().body() {
+            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.stamper()),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// IF (and this is a BIG if...) this is a `MakeStamp` transaction, grab the stampee's
+    /// identity ID
+    pub fn get_stampee(&self) -> Result<&IdentityID> {
+        match self.entry().body() {
+            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.stampee()),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// Get the claim ID from this stamp
+    pub fn get_claim_id(&self) -> Result<&ClaimID> {
+        match self.entry().body() {
+            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.claim_id()),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// Get the confidence from this stamp
+    pub fn get_confidence(&self) -> Result<&Confidence> {
+        match self.entry().body() {
+            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.confidence()),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// Get this stamp's expiration date
+    pub fn get_expires(&self) -> Result<&Option<Timestamp>> {
+        match self.entry().body() {
+            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.expires()),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+}
+
 /// A wrapper around `Publish` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(delegate)]
-pub struct PublishTransaction(Transaction);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PublishTransaction(Transaction<Public>);
 
 define_wrapper_tx!(PublishTransaction, TransactionBody::PublishV1);
 
 impl PublishTransaction {
     /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
-    pub fn validate_publish_transaction(&self) -> Result<Identity> {
+    pub fn validate_publish_transaction(&self) -> Result<Identity<Public>> {
         // do a verification of the full published identity.
         let identity = match self.entry().body() {
             TransactionBody::PublishV1 { transactions } => {
@@ -911,7 +956,7 @@ impl PublishTransaction {
     /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
     /// [`Transaction::verify`], and returns the contained [`crate::dag::Transactions`] and
     /// [`crate::identity::Identity`].
-    pub fn validate_and_open_publish_transaction(self) -> Result<(Transactions, Identity)> {
+    pub fn validate_and_open_publish_transaction(self) -> Result<(Vec<TransactionSerialized<Public>>, Identity<Public>)> {
         // first, do a borrowed verification of the full published identity.
         let identity = self.validate_publish_transaction()?;
 
@@ -931,9 +976,8 @@ impl PublishTransaction {
 }
 
 /// A wrapper around `Sign` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(delegate)]
-pub struct SignTransaction(Transaction);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SignTransaction(Transaction<Public>);
 
 define_wrapper_tx!(SignTransaction, TransactionBody::SignV1);
 
@@ -956,9 +1000,8 @@ impl SignTransaction {
 }
 
 /// A wrapper around `Ext` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(delegate)]
-pub struct ExtTransaction(Transaction);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExtTransaction(Transaction<Public>);
 
 define_wrapper_tx!(ExtTransaction, TransactionBody::ExtV1);
 
@@ -1054,7 +1097,7 @@ mod tests {
 
     #[test]
     fn trans_body_strip_has_private() {
-        fn test_privates(body: &TransactionBody) {
+        fn test_privates(body: &TransactionBody<Full>) {
             match body {
                 TransactionBody::CreateIdentityV1 { admin_keys, policies } => {
                     assert!(body.has_private());

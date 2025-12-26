@@ -8,6 +8,7 @@ use crate::{
     policy::{Capability, MultisigPolicy, Participant, Policy, PolicyContainer},
     util::Timestamp,
 };
+use private_parts::Full;
 use rand::{CryptoRng, RngCore};
 use std::thread;
 use std::time::Duration;
@@ -28,11 +29,11 @@ pub(crate) fn rng_seeded(seed: &[u8]) -> rand_chacha::ChaCha20Rng {
     crate::crypto::base::rng::chacha20_seeded(seed_bytes)
 }
 
-pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Timestamp) -> (SecretKey, Transactions, AdminKey) {
-    let transactions = Transactions::new();
+pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Timestamp) -> (SecretKey, Transactions<Full>, AdminKey<Full>) {
+    let transactions = Transactions::<Full>::new();
     let master_key = SecretKey::new_xchacha20poly1305(rng).unwrap();
-    let admin = AdminKeypair::new_ed25519(rng, &master_key).unwrap();
-    let admin_key = AdminKey::new(admin, "Alpha", None);
+    let admin = AdminKeypair::<Full>::new_ed25519(rng, &master_key).unwrap();
+    let admin_key = AdminKey::<Full>::new(admin, "Alpha", None);
     let policy = Policy::new(
         vec![Capability::Permissive],
         MultisigPolicy::MOfN {
@@ -49,9 +50,9 @@ pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Tim
     (master_key, transactions2, admin_key)
 }
 
-pub(crate) fn setup_identity_with_subkeys<R: RngCore + CryptoRng>(rng: &mut R) -> (SecretKey, Identity) {
+pub(crate) fn setup_identity_with_subkeys<R: RngCore + CryptoRng>(rng: &mut R) -> (SecretKey, Identity<Full>) {
     let master_key = SecretKey::new_xchacha20poly1305(rng).unwrap();
-    let admin_keypair = AdminKeypair::new_ed25519(rng, &master_key).unwrap();
+    let admin_keypair = AdminKeypair::<Full>::new_ed25519(rng, &master_key).unwrap();
     let policy = Policy::new(
         vec![Capability::Permissive],
         MultisigPolicy::MOfN {
@@ -64,8 +65,8 @@ pub(crate) fn setup_identity_with_subkeys<R: RngCore + CryptoRng>(rng: &mut R) -
     );
     let policy_transaction_id = TransactionID::from(Hash::new_blake3(b"policy").unwrap());
     let policy_con = PolicyContainer::from_policy_transaction(&policy_transaction_id, 0, policy).unwrap();
-    let admin_key = AdminKey::new(admin_keypair, "Alpha", None);
-    let identity = Identity::create(IdentityID::random(), vec![admin_key], vec![policy_con], Timestamp::now())
+    let admin_key = AdminKey::<Full>::new(admin_keypair, "Alpha", None);
+    let identity = Identity::<Full>::create(IdentityID::random(), vec![admin_key], vec![policy_con], Timestamp::now())
         .add_subkey(Key::new_sign(SignKeypair::new_ed25519(rng, &master_key).unwrap()), "sign", None)
         .unwrap()
         .add_subkey(

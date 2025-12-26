@@ -11,12 +11,20 @@
 mod transaction;
 mod transactions;
 
-pub use crate::dag::{
-    transaction::{ExtTransaction, PublishTransaction, SignTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID},
-    transactions::{tx_chain, Transactions},
+pub use crate::{
+    crypto::base::HashAlgo,
+    dag::{
+        transaction::{
+            ExtTransaction, PublishTransaction, SignTransaction, StampTransaction, Transaction, TransactionBody, TransactionEntry,
+            TransactionID,
+        },
+        transactions::{tx_chain, Transactions},
+    },
+    error::Result,
 };
 use crate::{error::Error, util::Timestamp};
 use getset::{Getters, MutGetters};
+use private_parts::PrivacyMode;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 
@@ -744,6 +752,45 @@ where
         }
         unvisited
     }
+}
+
+/// Utilities for modifying DAG nodes in efficient ways. This *will* break signatures and hashes,
+/// so just be mindful to only use this for throwaway DAG stuff.
+pub trait DagUtil: Sized {
+    /// The type used for transaction IDs
+    type ID;
+
+    /// the type used for transaction bodies
+    type Body;
+
+    /// A very unsafe function that is sometimes required in situations where a DAG needs to be
+    /// hand-created (forged) and we don't have all the information to do it ze proper way.
+    ///
+    /// For instance, if removing nodes from a DAG and then later re-creating them with fake
+    /// entries (that would never verify BTW so it's not some workaround to break integrity) we
+    /// might want to recreate the removed DAG nodes given just an ID and timestamp.
+    fn create_raw_with_id<T: Into<Timestamp>>(id: Self::ID, created: T, previous_transactions: Vec<Self::ID>, body: Self::Body) -> Self;
+
+    /// Create a new transaction with hand-supplied values for the create time, previous
+    /// transactions, and body.
+    ///
+    /// You almost never want this! Use the dag::Transactions::<create_identity|add_subkey|...>
+    /// functions instead. This function's main utility is raw DAG manipulation.
+    fn create_raw<T: Into<Timestamp>>(
+        hash_with: &HashAlgo,
+        created: T,
+        previous_transactions: Vec<Self::ID>,
+        body: Self::Body,
+    ) -> Result<Self>;
+
+    /// Allows modification of the `previous_transactions` field of an ExtV1 body. This is useful
+    /// in situations where an application needs to do some DAG manipulation but can't do it
+    /// directly because the official functions don't allow modifications of the `Transaction` or
+    /// inner fields.
+    ///
+    /// We can do the same by cloning a bunch of garbage and using [`Transaction::create_raw`] but
+    /// this allows the same without copy.
+    fn try_mod_ext_previous_transaction(&mut self, new_ext_previous_transactions: Vec<Self::ID>) -> Result<()>;
 }
 
 #[cfg(test)]

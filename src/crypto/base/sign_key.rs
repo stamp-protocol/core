@@ -1,18 +1,18 @@
 use crate::{
     crypto::{
         base::{KeyID, SecretKey},
-        private::Private,
+        private::{Private, PrivateContainer, ReEncrypt},
     },
     error::{Error, Result},
     util::{
         ser::{self, Binary, BinarySecret, SerdeBinary},
         sign::Signable,
-        Public,
     },
 };
+use private_parts::{Full, PrivacyMode, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// A signature derived from a signing keypair.
@@ -32,20 +32,21 @@ impl AsRef<[u8]> for SignKeypairSignature {
 }
 
 /// An asymmetric signing keypair.
-#[derive(Debug, Serialize, Deserialize, AsnType, Encode, Decode)]
+#[derive(Clone, Debug, PrivateParts, Serialize, Deserialize, AsnType, Encode, Decode)]
+#[parts(private_data = "PrivateContainer")]
 #[rasn(choice)]
-pub enum SignKeypair {
+pub enum SignKeypair<M: PrivacyMode> {
     /// Ed25519 signing keypair
     #[rasn(tag(explicit(0)))]
     Ed25519 {
         #[rasn(tag(explicit(0)))]
         public: Binary<32>,
         #[rasn(tag(explicit(1)))]
-        secret: Option<Private<BinarySecret<32>>>,
+        secret: Private<M, BinarySecret<32>>,
     },
 }
 
-impl SignKeypair {
+impl SignKeypair<Full> {
     fn new_ed25519_from_secret<R: RngCore + CryptoRng>(
         rng: &mut R,
         master_key: &SecretKey,
@@ -54,7 +55,7 @@ impl SignKeypair {
         let public = secret.verification_key();
         Ok(Self::Ed25519 {
             public: Binary::new(public.to_bytes()),
-            secret: Some(Private::seal(rng, master_key, &BinarySecret::new(secret.to_bytes()))?),
+            secret: Private::seal(rng, master_key, &BinarySecret::new(secret.to_bytes()))?,
         })
     }
 
@@ -78,10 +79,8 @@ impl SignKeypair {
     pub fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<SignKeypairSignature> {
         match self {
             Self::Ed25519 {
-                secret: ref sec_locked_opt,
-                ..
+                secret: ref sec_locked, ..
             } => {
-                let sec_locked = sec_locked_opt.as_ref().ok_or(Error::CryptoKeyMissing)?;
                 let sec_bytes: [u8; 32] = *sec_locked.open(master_key)?.expose_secret();
                 let seckey = ed25519_consensus::SigningKey::from(sec_bytes);
                 let sig_obj = seckey.sign(data);
@@ -91,9 +90,33 @@ impl SignKeypair {
         }
     }
 
+    /// Create a KeyID from this keypair.
+    pub fn key_id(&self) -> KeyID {
+        let (public, _) = self.clone().strip();
+        KeyID::SignKeypair(public)
+    }
+}
+
+impl SignKeypair<Public> {
+    /// Serialize this public key
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        ser::serialize(self)
+    }
+
+    /// Deserialize into a public key
+    pub fn deserialize(bytes: &[u8]) -> Result<Self> {
+        ser::deserialize(bytes)
+    }
+
+    /// Create a KeyID from this keypair.
+    pub fn key_id(&self) -> KeyID {
+        KeyID::SignKeypair(self.clone())
+    }
+}
+
+impl<M: PrivacyMode> SignKeypair<M> {
     /// Verify a value with a detached signature given the public key of the
     /// signer.
-    // TODO: move this to SignKeypairPublic
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
         match (self, signature) {
             (
@@ -111,64 +134,21 @@ impl SignKeypair {
             }
         }
     }
+}
 
-    /// Re-encrypt this signing keypair with a new master key.
-    pub fn reencrypt<R: RngCore + CryptoRng>(
-        self,
-        rng: &mut R,
-        previous_master_key: &SecretKey,
-        new_master_key: &SecretKey,
-    ) -> Result<Self> {
+impl ReEncrypt for SignKeypair<Full> {
+    fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         match self {
-            Self::Ed25519 {
+            Self::Ed25519 { public, secret: private } => Ok(Self::Ed25519 {
                 public,
-                secret: Some(private),
-            } => Ok(Self::Ed25519 {
-                public,
-                secret: Some(private.reencrypt(rng, previous_master_key, new_master_key)?),
+                secret: private.reencrypt(rng, previous_master_key, new_master_key)?,
             }),
             _ => Err(Error::CryptoKeyMissing),
         }
     }
-
-    /// Create a KeyID from this keypair.
-    pub fn key_id(&self) -> KeyID {
-        KeyID::SignKeypair(self.clone().into())
-    }
 }
 
-impl Clone for SignKeypair {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Ed25519 {
-                public,
-                secret: secret_maybe,
-            } => Self::Ed25519 {
-                public: public.clone(),
-                secret: secret_maybe.as_ref().cloned(),
-            },
-        }
-    }
-}
-
-impl Public for SignKeypair {
-    fn strip_private(&self) -> Self {
-        match self {
-            Self::Ed25519 { public: pubkey, .. } => Self::Ed25519 {
-                public: pubkey.clone(),
-                secret: None,
-            },
-        }
-    }
-
-    fn has_private(&self) -> bool {
-        match self {
-            Self::Ed25519 { secret: private_maybe, .. } => private_maybe.is_some(),
-        }
-    }
-}
-
-impl PartialEq for SignKeypair {
+impl<M: PrivacyMode> PartialEq for SignKeypair<M> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Ed25519 { public: public1, .. }, Self::Ed25519 { public: public2, .. }) => public1 == public2,
@@ -176,69 +156,23 @@ impl PartialEq for SignKeypair {
     }
 }
 
-impl Signable for SignKeypair {
-    type Item = SignKeypairPublic;
+impl Signable for SignKeypair<Full> {
+    type Item = SignKeypair<Public>;
     fn signable(&self) -> Self::Item {
-        self.clone().into()
+        let (public, _) = self.clone().strip();
+        public
     }
 }
 
-/// An asymmetric signing public key.
-#[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
-#[rasn(choice)]
-pub enum SignKeypairPublic {
-    /// Ed25519 signing public key
-    #[rasn(tag(explicit(0)))]
-    Ed25519(Binary<32>),
-}
-
-impl SignKeypairPublic {
-    /// Verify a value with a detached signature given the public key of the
-    /// signer.
-    pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
-        // this clone()s, but at least we aren't duplicating code anymore
-        let keypair = match self {
-            SignKeypairPublic::Ed25519(pubkey) => SignKeypair::Ed25519 {
-                public: pubkey.clone(),
-                secret: None,
-            },
-        };
-        keypair.verify(signature, data)
-    }
-
-    /// Create a KeyID from this keypair.
-    pub fn key_id(&self) -> KeyID {
-        KeyID::SignKeypair(self.clone())
-    }
-
-    /// Serialize this public key
-    pub fn serialize(&self) -> Result<Vec<u8>> {
-        ser::serialize(self)
-    }
-
-    /// Deserialize into a public key
-    pub fn deserialize(bytes: &[u8]) -> Result<Self> {
-        ser::deserialize(bytes)
-    }
-}
-
-impl From<SignKeypair> for SignKeypairPublic {
-    fn from(kp: SignKeypair) -> Self {
-        match kp {
-            SignKeypair::Ed25519 { public, .. } => Self::Ed25519(public),
-        }
-    }
-}
-
-impl AsRef<[u8]> for SignKeypairPublic {
+impl AsRef<[u8]> for SignKeypair<Public> {
     fn as_ref(&self) -> &[u8] {
         match self {
-            Self::Ed25519(sig) => sig.as_ref(),
+            Self::Ed25519 { public, .. } => public.as_ref(),
         }
     }
 }
 
-impl SerdeBinary for SignKeypairPublic {}
+impl SerdeBinary for SignKeypair<Public> {}
 
 #[cfg(test)]
 pub(crate) mod tests {

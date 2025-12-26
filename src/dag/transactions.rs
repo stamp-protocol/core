@@ -2,8 +2,11 @@
 //! valid [Transaction] objects.
 
 use crate::{
-    crypto::base::{Hash, HashAlgo, KeyID, SecretKey},
-    dag::{Dag, Transaction, TransactionBody, TransactionEntry, TransactionID},
+    crypto::{
+        base::{Hash, HashAlgo, KeyID, SecretKey},
+        private::ReEncrypt,
+    },
+    dag::{Dag, StampTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID},
     error::{Error, Result},
     identity::{
         claim::{ClaimID, ClaimSpec},
@@ -13,33 +16,29 @@ use crate::{
     },
     policy::{Policy, PolicyContainer, PolicyID},
     util::{
-        ser::{BinaryVec, HashMapAsn1, SerText, SerdeBinary},
-        Public, Timestamp,
+        ser::{BinaryVec, HashMapAsn1, SerdeBinary},
+        Timestamp,
     },
 };
 use getset;
+use private_parts::{Full, PrivacyMode, PrivateDataContainer, PrivateParts};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 /// A container that holds a set of transactions.
 #[derive(Debug, Default, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Transactions {
+pub struct Transactions<M: PrivacyMode> {
     /// The actual transactions.
     #[rasn(tag(explicit(0)))]
-    transactions: Vec<Transaction>,
+    transactions: Vec<Transaction<M>>,
 }
 
-impl Transactions {
-    /// Create a new, empty transaction set.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
+impl<M: PrivacyMode> Transactions<M> {
     /// Returns an iterator over these transactions
-    pub fn iter(&self) -> core::slice::Iter<'_, Transaction> {
+    pub fn iter(&self) -> core::slice::Iter<'_, Transaction<M>> {
         self.transactions().iter()
     }
 
@@ -52,20 +51,8 @@ impl Transactions {
         }
     }
 
-    /// Creates a new transaction that references the trailing transactions in the
-    /// current set.
-    pub(crate) fn prepare_transaction<T: Into<Timestamp> + Clone>(
-        &self,
-        hash_with: &HashAlgo,
-        now: T,
-        body: TransactionBody,
-    ) -> Result<Transaction> {
-        let leaves = Self::find_leaf_transactions(self.transactions());
-        Transaction::new(TransactionEntry::new(now, leaves.into_iter().cloned().collect::<Vec<_>>(), body), hash_with)
-    }
-
     /// Run a transaction and return the output
-    fn apply_transaction(identity: Option<Identity>, transaction: &Transaction) -> Result<Identity> {
+    fn apply_transaction(identity: Option<Identity<M>>, transaction: &Transaction<M>) -> Result<Identity<M>> {
         if identity.as_ref().map(|i| *i.revoked()).unwrap_or(false) {
             Err(Error::IdentityRevoked)?;
         }
@@ -204,7 +191,7 @@ impl Transactions {
         }
     }
 
-    fn build_identity_impl(transactions: &[Transaction]) -> Result<Identity> {
+    fn build_identity_impl(transactions: &[Transaction<M>]) -> Result<Identity<M>> {
         if transactions.is_empty() {
             Err(Error::DagEmpty)?;
         }
@@ -255,7 +242,7 @@ impl Transactions {
     /// although the transaction is applied to all identities from previous
     /// branches as well. However, this algorithm does not handle other
     /// conflicts (such as duplicate entries).
-    pub fn build_identity(&self) -> Result<Identity> {
+    pub fn build_identity(&self) -> Result<Identity<M>> {
         Self::build_identity_impl(self.transactions())
     }
 
@@ -266,17 +253,17 @@ impl Transactions {
     /// tree. The idea here is that we can build the identity at a certain point in history to
     /// verify the validity of some transaction that may have been issued in the past (which is no
     /// longer valid).
-    pub fn build_identity_at_point_in_history(&self, past_transactions: &[TransactionID]) -> Result<Identity> {
+    pub fn build_identity_at_point_in_history(&self, past_transactions: &[TransactionID]) -> Result<Identity<M>> {
         let mut transactions_idx = HashMap::with_capacity(self.transactions().len());
         for trans in self.transactions().iter() {
             transactions_idx.insert(trans.id(), trans);
         }
 
-        fn transaction_finder<'a>(
-            idx: &'a HashMap<&TransactionID, &Transaction>,
+        fn transaction_finder<'a, M: PrivacyMode>(
+            idx: &'a HashMap<&TransactionID, &Transaction<M>>,
             prev: &'a [TransactionID],
             visited: &mut HashSet<&'a TransactionID>,
-            final_list: &mut Vec<Transaction>,
+            final_list: &mut Vec<Transaction<M>>,
         ) -> Result<()> {
             for txid in prev {
                 if visited.contains(txid) {
@@ -299,7 +286,7 @@ impl Transactions {
 
     /// Find any transactions that are not referenced as previous transactions.
     /// Effectively, the leaves of our graph.
-    fn find_leaf_transactions(transaction_list: &[Transaction]) -> Vec<&TransactionID> {
+    fn find_leaf_transactions(transaction_list: &[Transaction<M>]) -> Vec<&TransactionID> {
         let mut seen: HashSet<&TransactionID> = HashSet::new();
         for trans in transaction_list {
             for prev in trans.entry().previous_transactions() {
@@ -315,7 +302,7 @@ impl Transactions {
     /// Push a transaction created by one of the transaction-creating functions
     /// onto this transaction set. We consume and return the transaction set for
     /// this.
-    pub fn push_transaction(mut self, transaction: Transaction) -> Result<Self> {
+    pub fn push_transaction(mut self, transaction: Transaction<M>) -> Result<Self> {
         self.push_transaction_mut(transaction)?;
         Ok(self)
     }
@@ -327,7 +314,7 @@ impl Transactions {
     /// Unless you know you want an [`Identity`] instead of [`Transactions`], or
     /// when in doubt, use [`push_transaction()`][Transactions::push_transaction]
     /// instead of this method.
-    pub fn push_transaction_mut(&mut self, transaction: Transaction) -> Result<Identity> {
+    pub fn push_transaction_mut(&mut self, transaction: Transaction<M>) -> Result<Identity<M>> {
         if self.transactions().iter().any(|x| x.id() == transaction.id()) {
             Err(Error::DuplicateTransaction)?;
         }
@@ -375,7 +362,7 @@ impl Transactions {
     /// connected the next time a new transaction is created.
     pub fn reset(mut self, txid: &TransactionID) -> Result<Self> {
         // recursively find all transactions referencing the given one
-        fn find_tx_to_rm(transactions: &[Transaction], txid: &TransactionID) -> Vec<TransactionID> {
+        fn find_tx_to_rm<M: PrivacyMode>(transactions: &[Transaction<M>], txid: &TransactionID) -> Vec<TransactionID> {
             let mut to_remove = Vec::new();
             for trans in transactions {
                 if trans.entry().previous_transactions().contains(txid) {
@@ -390,29 +377,6 @@ impl Transactions {
         Ok(self)
     }
 
-    /// Reencrypt this transaction set with a new master key.
-    pub fn reencrypt<R: RngCore + CryptoRng>(
-        mut self,
-        rng: &mut R,
-        old_master_key: &SecretKey,
-        new_master_key: &SecretKey,
-    ) -> Result<Self> {
-        for trans in self.transactions_mut() {
-            *trans = trans.clone().reencrypt(rng, old_master_key, new_master_key)?;
-        }
-        Ok(self)
-    }
-
-    /// Determine if this identity is owned (ie, we have the private keys stored
-    /// locally) or it is imported (ie, someone else's identity).
-    pub fn is_owned(&self) -> bool {
-        self.transactions().iter().any(|trans| match trans.entry().body() {
-            TransactionBody::CreateIdentityV1 { .. } => trans.entry().body().has_private(),
-            TransactionBody::AddAdminKeyV1 { .. } => trans.entry().body().has_private(),
-            _ => false,
-        })
-    }
-
     /// Test if a master key is correct.
     pub fn test_master_key(&self, master_key: &SecretKey) -> Result<()> {
         if !self.is_owned() {
@@ -421,6 +385,25 @@ impl Transactions {
 
         let identity = self.build_identity()?;
         identity.test_master_key(master_key)
+    }
+}
+
+impl Transactions<Full> {
+    /// Create a new, empty transaction set.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a new transaction that references the trailing transactions in the
+    /// current set.
+    pub(crate) fn prepare_transaction<T: Into<Timestamp> + Clone>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        body: TransactionBody<Full>,
+    ) -> Result<Transaction<Full>> {
+        let leaves = Self::find_leaf_transactions(self.transactions());
+        Transaction::<Full>::new(TransactionEntry::<Full>::new(now, leaves.into_iter().cloned().collect::<Vec<_>>(), body), hash_with)
     }
 
     // -------------------------------------------------------------------------
@@ -433,9 +416,9 @@ impl Transactions {
         &self,
         hash_with: &HashAlgo,
         now: T,
-        admin_keys: Vec<AdminKey>,
+        admin_keys: Vec<AdminKey<Full>>,
         policies: Vec<Policy>,
-    ) -> Result<Transaction> {
+    ) -> Result<Transaction<Full>> {
         let body = TransactionBody::CreateIdentityV1 { admin_keys, policies };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -450,15 +433,20 @@ impl Transactions {
         &self,
         hash_with: &HashAlgo,
         now: T,
-        admin_keys: Option<Vec<AdminKey>>,
+        admin_keys: Option<Vec<AdminKey<Full>>>,
         policies: Option<Vec<Policy>>,
-    ) -> Result<Transaction> {
+    ) -> Result<Transaction<Full>> {
         let body = TransactionBody::ResetIdentityV1 { admin_keys, policies };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Add a new [admin key][AdminKey] to the [Keychain][crate::identity::keychain::Keychain].
-    pub fn add_admin_key<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, admin_key: AdminKey) -> Result<Transaction> {
+    pub fn add_admin_key<T: Into<Timestamp> + Clone>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        admin_key: AdminKey<Full>,
+    ) -> Result<Transaction<Full>> {
         let body = TransactionBody::AddAdminKeyV1 { admin_key };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -471,7 +459,7 @@ impl Transactions {
         id: AdminKeyID,
         name: Option<S>,
         description: Option<Option<S>>,
-    ) -> Result<Transaction>
+    ) -> Result<Transaction<Full>>
     where
         T: Into<Timestamp> + Clone,
         S: Into<String>,
@@ -493,7 +481,7 @@ impl Transactions {
         id: AdminKeyID,
         reason: RevocationReason,
         new_name: Option<S>,
-    ) -> Result<Transaction>
+    ) -> Result<Transaction<Full>>
     where
         T: Into<Timestamp> + Clone,
         S: Into<String>,
@@ -507,19 +495,19 @@ impl Transactions {
     }
 
     /// Add a new [policy][Policy] to the identity.
-    pub fn add_policy<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, policy: Policy) -> Result<Transaction> {
+    pub fn add_policy<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, policy: Policy) -> Result<Transaction<Full>> {
         let body = TransactionBody::AddPolicyV1 { policy };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Delete (by name) a [Policy] from the identity.
-    pub fn delete_policy<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, id: PolicyID) -> Result<Transaction> {
+    pub fn delete_policy<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, id: PolicyID) -> Result<Transaction<Full>> {
         let body = TransactionBody::DeletePolicyV1 { id };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Make a new [Claim][ClaimSpec].
-    pub fn make_claim<T, S>(&self, hash_with: &HashAlgo, now: T, spec: ClaimSpec, name: Option<S>) -> Result<Transaction>
+    pub fn make_claim<T, S>(&self, hash_with: &HashAlgo, now: T, spec: ClaimSpec<Full>, name: Option<S>) -> Result<Transaction<Full>>
     where
         T: Into<Timestamp> + Clone,
         S: Into<String>,
@@ -532,7 +520,7 @@ impl Transactions {
     }
 
     /// Edit a claim.
-    pub fn edit_claim<T, S>(&self, hash_with: &HashAlgo, now: T, claim_id: ClaimID, name: Option<S>) -> Result<Transaction>
+    pub fn edit_claim<T, S>(&self, hash_with: &HashAlgo, now: T, claim_id: ClaimID, name: Option<S>) -> Result<Transaction<Full>>
     where
         T: Into<Timestamp> + Clone,
         S: Into<String>,
@@ -545,7 +533,7 @@ impl Transactions {
     }
 
     /// Delete an existing claim.
-    pub fn delete_claim<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, claim_id: ClaimID) -> Result<Transaction> {
+    pub fn delete_claim<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, claim_id: ClaimID) -> Result<Transaction<Full>> {
         let body = TransactionBody::DeleteClaimV1 { claim_id };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -555,7 +543,7 @@ impl Transactions {
     /// stamp.
     ///
     /// It can also not be added to the identity and sent directly to the stampee.
-    pub fn make_stamp<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, stamp: StampEntry) -> Result<Transaction> {
+    pub fn make_stamp<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, stamp: StampEntry) -> Result<Transaction<Full>> {
         let body = TransactionBody::MakeStampV1 { stamp };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -568,7 +556,7 @@ impl Transactions {
         now: T,
         stamp_id: StampID,
         reason: StampRevocationReason,
-    ) -> Result<Transaction> {
+    ) -> Result<Transaction<Full>> {
         let body = TransactionBody::RevokeStampV1 { stamp_id, reason };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -578,8 +566,8 @@ impl Transactions {
         &self,
         hash_with: &HashAlgo,
         now: T,
-        stamp_transaction: Transaction,
-    ) -> Result<Transaction> {
+        stamp_transaction: StampTransaction,
+    ) -> Result<Transaction<Full>> {
         if !matches!(stamp_transaction.entry().body(), TransactionBody::MakeStampV1 { .. }) {
             Err(Error::TransactionMismatch)?;
         }
@@ -590,13 +578,13 @@ impl Transactions {
     }
 
     /// Delete an existing stamp.
-    pub fn delete_stamp<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, stamp_id: StampID) -> Result<Transaction> {
+    pub fn delete_stamp<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, stamp_id: StampID) -> Result<Transaction<Full>> {
         let body = TransactionBody::DeleteStampV1 { stamp_id };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Add a new subkey to our keychain.
-    pub fn add_subkey<T, S>(&self, hash_with: &HashAlgo, now: T, key: Key, name: S, desc: Option<S>) -> Result<Transaction>
+    pub fn add_subkey<T, S>(&self, hash_with: &HashAlgo, now: T, key: Key<Full>, name: S, desc: Option<S>) -> Result<Transaction<Full>>
     where
         T: Into<Timestamp> + Clone,
         S: Into<String>,
@@ -617,7 +605,7 @@ impl Transactions {
         id: KeyID,
         new_name: Option<S>,
         new_desc: Option<Option<S>>,
-    ) -> Result<Transaction>
+    ) -> Result<Transaction<Full>>
     where
         T: Into<Timestamp> + Clone,
         S: Into<String>,
@@ -638,7 +626,7 @@ impl Transactions {
         id: KeyID,
         reason: RevocationReason,
         new_name: Option<S>,
-    ) -> Result<Transaction>
+    ) -> Result<Transaction<Full>>
     where
         T: Into<Timestamp> + Clone,
         S: Into<String>,
@@ -652,16 +640,15 @@ impl Transactions {
     }
 
     /// Delete a subkey.
-    pub fn delete_subkey<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, id: KeyID) -> Result<Transaction> {
+    pub fn delete_subkey<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, id: KeyID) -> Result<Transaction<Full>> {
         let body = TransactionBody::DeleteSubkeyV1 { id };
         self.prepare_transaction(hash_with, now, body)
     }
 
     /// Publish this identity
-    pub fn publish<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T) -> Result<Transaction> {
-        let body = TransactionBody::PublishV1 {
-            transactions: Box::new(self.strip_private()),
-        };
+    pub fn publish<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T) -> Result<Transaction<Full>> {
+        let transactions = self.transactions().iter().cloned().map(|t| t.strip().0).collect::<Vec<_>>();
+        let body = TransactionBody::PublishV1 { transactions };
         self.prepare_transaction(hash_with, now, body)
     }
 
@@ -672,7 +659,7 @@ impl Transactions {
         now: T,
         body_hash_with: &HashAlgo,
         body: &[u8],
-    ) -> Result<Transaction> {
+    ) -> Result<Transaction<Full>> {
         let identity = self.build_identity()?;
         if *identity.revoked() {
             Err(Error::IdentityRevoked)?;
@@ -694,7 +681,7 @@ impl Transactions {
         ty: Option<BinaryVec>,
         context: Option<K>,
         payload: BinaryVec,
-    ) -> Result<Transaction> {
+    ) -> Result<Transaction<Full>> {
         let identity = self.build_identity()?;
         if *identity.revoked() {
             Err(Error::IdentityRevoked)?;
@@ -711,21 +698,17 @@ impl Transactions {
     }
 }
 
-impl Public for Transactions {
-    fn strip_private(&self) -> Self {
-        let mut clone = self.clone();
-        let stripped = self.transactions().iter().map(|x| x.strip_private()).collect::<Vec<_>>();
-        clone.set_transactions(stripped);
-        clone
-    }
-
-    fn has_private(&self) -> bool {
-        self.transactions().iter().any(|x| x.has_private())
+impl ReEncrypt for Transactions<Full> {
+    fn reencrypt<R: RngCore + CryptoRng>(mut self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
+        for trans in self.transactions_mut() {
+            *trans = trans.clone().reencrypt(rng, old_master_key, new_master_key)?;
+        }
+        Ok(self)
     }
 }
 
-impl IntoIterator for Transactions {
-    type Item = Transaction;
+impl<M: PrivacyMode> IntoIterator for Transactions<M> {
+    type Item = Transaction<M>;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -733,9 +716,6 @@ impl IntoIterator for Transactions {
         transactions.into_iter()
     }
 }
-
-impl SerdeBinary for Transactions {}
-impl SerText for Transactions {}
 
 /// Allows creating DAG chains of transactions using a friendly and inviting syntax that will change
 /// the way you think and live *forever*.

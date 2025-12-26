@@ -5,7 +5,7 @@ use crate::{
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
 /// A structure to help with the bundling of AAD (additional associated data) with our ciphertext.
