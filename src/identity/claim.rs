@@ -244,6 +244,29 @@ pub enum ClaimSpec<M: PrivacyMode> {
     },
 }
 
+impl ClaimSpec<Full> {
+    fn into_public(self, open_key: &SecretKey) -> Result<Self> {
+        let public = match self {
+            Self::Identity(maybe) => Self::Identity(maybe.into_public(open_key)?),
+            Self::Name(maybe) => Self::Name(maybe.into_public(open_key)?),
+            Self::Birthday(maybe) => Self::Birthday(maybe.into_public(open_key)?),
+            Self::Email(maybe) => Self::Email(maybe.into_public(open_key)?),
+            Self::Photo(maybe) => Self::Photo(maybe.into_public(open_key)?),
+            Self::Pgp(maybe) => Self::Pgp(maybe.into_public(open_key)?),
+            Self::Domain(maybe) => Self::Domain(maybe.into_public(open_key)?),
+            Self::Url(maybe) => Self::Url(maybe.into_public(open_key)?),
+            Self::Address(maybe) => Self::Address(maybe.into_public(open_key)?),
+            Self::PhoneNumber(maybe) => Self::PhoneNumber(maybe.into_public(open_key)?),
+            Self::Relation(maybe) => Self::Relation(maybe.into_public(open_key)?),
+            Self::RelationExtension(maybe) => Self::RelationExtension(maybe.into_public(open_key)?),
+            Self::Extension { key, value } => Self::Extension {
+                key,
+                value: value.into_public(open_key)?,
+            },
+        };
+        Ok(public)
+    }
+}
 impl ReEncrypt for ClaimSpec<Full> {
     fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
         let spec = match self {
@@ -300,16 +323,6 @@ impl<M: PrivacyMode> Claim<M> {
         }
     }
 
-    /// Whether this is a public claim or a private claim, return a public claim
-    /// (assuming we have the correct decrypting key).
-    pub fn as_public(&self, open_key: &SecretKey) -> Result<Self> {
-        let mut claim = self.clone();
-        claim.set_spec(claim.spec().clone().into_public(open_key)?);
-        Ok(claim)
-    }
-}
-
-impl<M: PrivacyMode> Claim<M> {
     /// Given a claim we want to "instant verify" (ie, any claim type that can
     /// be verified automatically), return the possible values for that claim's
     /// automatic validation. If one of these values is present in the body of
@@ -349,6 +362,16 @@ impl<M: PrivacyMode> Claim<M> {
             }
             _ => Err(Error::IdentityClaimVerificationNotAllowed),
         }
+    }
+}
+
+impl Claim<Full> {
+    /// Whether this is a public claim or a private claim, return a public claim
+    /// (assuming we have the correct decrypting key).
+    pub fn as_public(&self, open_key: &SecretKey) -> Result<Self> {
+        let mut claim = self.clone();
+        claim.set_spec(claim.spec().clone().into_public(open_key)?);
+        Ok(claim)
     }
 }
 

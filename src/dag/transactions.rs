@@ -6,7 +6,7 @@ use crate::{
         base::{Hash, HashAlgo, KeyID, SecretKey},
         private::ReEncrypt,
     },
-    dag::{Dag, StampTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID},
+    dag::{Dag, StampTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID, TransactionSerialized},
     error::{Error, Result},
     identity::{
         claim::{ClaimID, ClaimSpec},
@@ -21,18 +21,18 @@ use crate::{
     },
 };
 use getset;
-use private_parts::{Full, PrivacyMode, PrivateDataContainer, PrivateParts};
+use private_parts::{Full, PrivacyMode, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 
 /// A container that holds a set of transactions.
-#[derive(Debug, Default, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Default, Clone, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transactions<M: PrivacyMode> {
     /// The actual transactions.
-    #[rasn(tag(explicit(0)))]
     transactions: Vec<Transaction<M>>,
 }
 
@@ -43,9 +43,16 @@ impl<M: PrivacyMode> Transactions<M> {
     }
 
     /// Grab the [IdentityID] from this transaction set.
+    ///
+    /// This requires building the DAG so don't go calling this 1000 times a second.
     pub fn identity_id(&self) -> Option<IdentityID> {
         if !self.transactions().is_empty() {
-            Some(self.transactions()[0].id().clone().into())
+            let nodes = self.transactions().iter().map(|x| x.into()).collect::<Vec<_>>();
+            let dag: Dag<TransactionID, Transaction<M>> = Dag::from_nodes(&[&nodes]);
+            match dag.head()[..] {
+                [node] => Some(node.clone().into()),
+                _ => None,
+            }
         } else {
             None
         }
@@ -135,8 +142,11 @@ impl<M: PrivacyMode> Transactions<M> {
                 let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.revoke_stamp(&stamp_id, reason)?;
                 Ok(identity_mod)
             }
-            TransactionBody::AcceptStampV1 { stamp_transaction } => {
-                stamp_transaction.verify_signatures()?;
+            TransactionBody::AcceptStampV1 {
+                stamp_transaction: tx_serialized,
+            } => {
+                tx_serialized.verify_signatures()?;
+                let stamp_transaction = StampTransaction::try_from(tx_serialized.deref().clone())?;
                 let identity_mod = match stamp_transaction.entry().body() {
                     TransactionBody::MakeStampV1 { stamp: entry } => {
                         let created = stamp_transaction.entry().created().clone();
@@ -196,19 +206,19 @@ impl<M: PrivacyMode> Transactions<M> {
             Err(Error::DagEmpty)?;
         }
         let nodes = transactions.iter().map(|x| x.into()).collect::<Vec<_>>();
-        let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&[&nodes]);
+        let dag: Dag<TransactionID, Transaction<M>> = Dag::from_nodes(&[&nodes]);
 
         if !dag.missing().is_empty() {
             #[allow(suspicious_double_ref_op)]
             Err(Error::DagMissingTransactions(dag.missing().iter().map(|x| x.clone().clone()).collect::<Vec<_>>()))?;
         }
-        let mut branch_identities: HashMap<TransactionID, Identity> = HashMap::new();
+        let mut branch_identities: HashMap<TransactionID, Identity<M>> = HashMap::new();
         let identity = dag
             .apply(
                 &mut branch_identities,
                 |node| Transactions::apply_transaction(None, node.node()),
                 |_node| false,
-                |identity, node| node.node().verify(Some(identity)),
+                |identity, node| node.node().authorize(Some(identity)),
                 |identity, node| {
                     let id = identity.clone();
                     (*identity) = Transactions::apply_transaction(Some(id), node.node())?;
@@ -376,22 +386,18 @@ impl<M: PrivacyMode> Transactions<M> {
         self.transactions_mut().retain(|t| !remove_tx.contains(t.id()));
         Ok(self)
     }
-
-    /// Test if a master key is correct.
-    pub fn test_master_key(&self, master_key: &SecretKey) -> Result<()> {
-        if !self.is_owned() {
-            Err(Error::IdentityNotOwned)?;
-        }
-
-        let identity = self.build_identity()?;
-        identity.test_master_key(master_key)
-    }
 }
 
 impl Transactions<Full> {
     /// Create a new, empty transaction set.
     pub fn new() -> Self {
-        Self::default()
+        Self { transactions: Vec::new() }
+    }
+
+    /// Test if a master key is correct.
+    pub fn test_master_key(&self, master_key: &SecretKey) -> Result<()> {
+        let identity = self.build_identity()?;
+        identity.test_master_key(master_key)
     }
 
     /// Creates a new transaction that references the trailing transactions in the
@@ -568,11 +574,9 @@ impl Transactions<Full> {
         now: T,
         stamp_transaction: StampTransaction,
     ) -> Result<Transaction<Full>> {
-        if !matches!(stamp_transaction.entry().body(), TransactionBody::MakeStampV1 { .. }) {
-            Err(Error::TransactionMismatch)?;
-        }
+        let stamp_tx_ser = TransactionSerialized::<Public>::try_from(stamp_transaction)?;
         let body = TransactionBody::AcceptStampV1 {
-            stamp_transaction: Box::new(stamp_transaction),
+            stamp_transaction: Box::new(stamp_tx_ser),
         };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -647,8 +651,11 @@ impl Transactions<Full> {
 
     /// Publish this identity
     pub fn publish<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T) -> Result<Transaction<Full>> {
-        let transactions = self.transactions().iter().cloned().map(|t| t.strip().0).collect::<Vec<_>>();
-        let body = TransactionBody::PublishV1 { transactions };
+        let transactions_full = TransactionsSerialized::<Full>::try_from(self.clone())?;
+        let transactions_pub = TransactionsSerialized::<Public>::from(transactions_full);
+        let body = TransactionBody::PublishV1 {
+            transactions: transactions_pub,
+        };
         self.prepare_transaction(hash_with, now, body)
     }
 
@@ -715,6 +722,82 @@ impl<M: PrivacyMode> IntoIterator for Transactions<M> {
         let Transactions { transactions } = self;
         transactions.into_iter()
     }
+}
+
+/// A container that holds a set of transactions.
+#[derive(Debug, Default, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct TransactionsSerialized<M: PrivacyMode> {
+    /// The actual SERIALIZED transactions.
+    #[rasn(tag(explicit(0)))]
+    transactions: Vec<TransactionSerialized<M>>,
+}
+
+impl<M: PrivacyMode> TransactionsSerialized<M> {
+    pub fn iter(&self) -> core::slice::Iter<'_, TransactionSerialized<M>> {
+        self.transactions().iter()
+    }
+}
+
+impl<M: PrivacyMode> IntoIterator for TransactionsSerialized<M> {
+    type Item = TransactionSerialized<M>;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let Self { transactions } = self;
+        transactions.into_iter()
+    }
+}
+
+impl<M> TryFrom<Transactions<M>> for TransactionsSerialized<M>
+where
+    M: PrivacyMode,
+    TransactionSerialized<M>: TryFrom<Transaction<M>, Error = Error>,
+{
+    type Error = Error;
+
+    fn try_from(value: Transactions<M>) -> Result<Self> {
+        let transactions = value
+            .into_iter()
+            .map(|t| t.try_into())
+            .collect::<Result<Vec<TransactionSerialized<M>>>>()?;
+        Ok(Self { transactions })
+    }
+}
+
+impl<M> TryFrom<TransactionsSerialized<M>> for Transactions<M>
+where
+    M: PrivacyMode,
+    Transaction<M>: TryFrom<TransactionSerialized<M>, Error = Error>,
+{
+    type Error = Error;
+
+    fn try_from(value: TransactionsSerialized<M>) -> Result<Self> {
+        let TransactionsSerialized::<M> { transactions } = value;
+        let des = transactions
+            .into_iter()
+            .map(|t| t.try_into())
+            .collect::<Result<Vec<Transaction<M>>>>()?;
+        Ok(Self { transactions: des })
+    }
+}
+
+impl From<TransactionsSerialized<Full>> for TransactionsSerialized<Public> {
+    fn from(value: TransactionsSerialized<Full>) -> Self {
+        let TransactionsSerialized::<Full> { transactions } = value;
+        let stripped = transactions
+            .into_iter()
+            .map(|t| TransactionSerialized::<Public>::from(t))
+            .collect::<Vec<_>>();
+        Self { transactions: stripped }
+    }
+}
+
+impl<M> SerdeBinary for TransactionsSerialized<M>
+where
+    M: PrivacyMode,
+    TransactionsSerialized<M>: Encode + Decode,
+{
 }
 
 /// Allows creating DAG chains of transactions using a friendly and inviting syntax that will change

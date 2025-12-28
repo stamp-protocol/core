@@ -115,6 +115,17 @@ impl<M: PrivacyMode> CryptoKeypair<M> {
             }
         }
     }
+
+    /// Create a KeyID from this keypair.
+    pub fn key_id(&self) -> KeyID {
+        let public: CryptoKeypair<Public> = match self.clone() {
+            Self::Curve25519XChaCha20Poly1305 { public, secret: _secret } => CryptoKeypair::<Public>::Curve25519XChaCha20Poly1305 {
+                public,
+                secret: Private::<Public, BinarySecret<32>>::blank(),
+            },
+        };
+        KeyID::CryptoKeypair(public)
+    }
 }
 
 impl CryptoKeypair<Full> {
@@ -184,19 +195,6 @@ impl CryptoKeypair<Full> {
             }
         }
     }
-
-    /// Create a KeyID from this keypair.
-    pub fn key_id(&self) -> KeyID {
-        let (public, _) = self.clone().strip();
-        KeyID::CryptoKeypair(public)
-    }
-}
-
-impl CryptoKeypair<Public> {
-    /// Create a KeyID from this keypair.
-    pub fn key_id(&self) -> KeyID {
-        KeyID::CryptoKeypair(self.clone())
-    }
 }
 
 impl ReEncrypt for CryptoKeypair<Full> {
@@ -206,7 +204,6 @@ impl ReEncrypt for CryptoKeypair<Full> {
                 public,
                 secret: private.reencrypt(rng, previous_master_key, new_master_key)?,
             }),
-            _ => Err(Error::CryptoKeyMissing),
         }
     }
 }

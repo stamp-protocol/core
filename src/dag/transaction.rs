@@ -11,12 +11,12 @@ use crate::{
         base::{Hash, HashAlgo, KeyID, SecretKey},
         private::{IntoPublic, PrivateContainer, ReEncrypt},
     },
-    dag::{DagNode, DagUtil},
+    dag::{DagNode, DagUtil, Transactions, TransactionsSerialized},
     error::{Error, Result},
     identity::{
         claim::{ClaimID, ClaimSpec},
         identity::{Identity, IdentityID},
-        keychain::{AdminKey, AdminKeyID, AdminKeypair, ExtendKeypair, Key, RevocationReason},
+        keychain::{AdminKey, AdminKeyID, AdminKeypair, Key, RevocationReason},
         stamp::{Confidence, RevocationReason as StampRevocationReason, StampEntry, StampID},
     },
     policy::{Context, MultisigPolicySignature, Policy, PolicyContainer, PolicyID},
@@ -26,7 +26,7 @@ use crate::{
     },
 };
 use getset;
-use private_parts::{Full, PrivacyMode, PrivateDataContainer, PrivateParts, Public};
+use private_parts::{Full, PrivacyMode, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde::{Deserialize, Serialize};
@@ -199,7 +199,7 @@ pub enum TransactionBody<M: PrivacyMode> {
     #[rasn(tag(explicit(19)))]
     PublishV1 {
         #[rasn(tag(explicit(0)))]
-        transactions: Vec<TransactionSerialized<Public>>,
+        transactions: TransactionsSerialized<Public>,
     },
     /// Sign a message. The usual Stamp policy process applies here, so an official
     /// identity signing transaction must match an existing policy to be valid. This
@@ -459,7 +459,8 @@ impl IntoPublic for TransactionEntry<Full> {
     type Public = TransactionEntry<Public>;
 
     fn into_public(self) -> Self::Public {
-        self.strip().0
+        let (public, _) = self.strip();
+        public
     }
 }
 
@@ -566,7 +567,7 @@ where
 {
     /// Create a new Transaction from a [TransactionEntry].
     pub(crate) fn new(entry: TransactionEntry<M>, hash_with: &HashAlgo) -> Result<Self> {
-        let public = entry.into_public();
+        let public = entry.clone().into_public();
         let serialized = ser::serialize(&public)?;
         let hash = match hash_with {
             HashAlgo::Blake3 => Hash::new_blake3(&serialized)?,
@@ -665,6 +666,235 @@ impl<'a, M: PrivacyMode> From<&'a Transaction<M>> for DagNode<'a, TransactionID,
 
 impl SerText for Transaction<Public> {}
 impl DeText for Transaction<Public> {}
+
+/// Makes it easy to define wrapper transactions
+macro_rules! define_wrapper_tx {
+    ( $name:ident, $body_type:path ) => {
+        impl $name {
+            /// Convert this into a [`Transaction`]
+            pub fn into_inner(self) -> Transaction<Public> {
+                let Self(tx) = self;
+                tx
+            }
+        }
+
+        impl TryFrom<Transaction<Full>> for $name {
+            type Error = Error;
+            fn try_from(val: Transaction<Full>) -> std::result::Result<Self, Self::Error> {
+                if matches!(val.entry().body(), $body_type { .. }) {
+                    Ok(Self(val.strip().0))
+                } else {
+                    Err(Error::TransactionMismatch)
+                }
+            }
+        }
+
+        impl TryFrom<Transaction<Public>> for $name {
+            type Error = Error;
+            fn try_from(val: Transaction<Public>) -> std::result::Result<Self, Self::Error> {
+                if matches!(val.entry().body(), $body_type { .. }) {
+                    Ok(Self(val))
+                } else {
+                    Err(Error::TransactionMismatch)
+                }
+            }
+        }
+
+        impl TryFrom<TransactionSerialized<Full>> for $name {
+            type Error = Error;
+            fn try_from(val: TransactionSerialized<Full>) -> std::result::Result<Self, Self::Error> {
+                let transaction = Transaction::<Full>::try_from(val)?;
+                if matches!(transaction.entry().body(), $body_type { .. }) {
+                    Ok(Self(transaction.strip().0))
+                } else {
+                    Err(Error::TransactionMismatch)
+                }
+            }
+        }
+
+        impl TryFrom<TransactionSerialized<Public>> for $name {
+            type Error = Error;
+            fn try_from(val: TransactionSerialized<Public>) -> std::result::Result<Self, Self::Error> {
+                let transaction = Transaction::<Public>::try_from(val)?;
+                if matches!(transaction.entry().body(), $body_type { .. }) {
+                    Ok(Self(transaction))
+                } else {
+                    Err(Error::TransactionMismatch)
+                }
+            }
+        }
+
+        impl TryFrom<$name> for TransactionSerialized<Public> {
+            type Error = Error;
+            fn try_from(val: $name) -> std::result::Result<Self, Self::Error> {
+                let $name(inner) = val;
+                let transaction = TransactionSerialized::<Public>::try_from(inner)?;
+                Ok(transaction)
+            }
+        }
+
+        impl Deref for $name {
+            type Target = Transaction<Public>;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl DerefMut for $name {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+    };
+}
+
+/// A wrapper around `MakeStampV1` transactions
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct StampTransaction(Transaction<Public>);
+
+define_wrapper_tx!(StampTransaction, TransactionBody::MakeStampV1);
+
+impl StampTransaction {
+    /// IF (and this is a BIG if...) this is a `MakeStamp` transaction, grab the stamper's
+    /// identity ID
+    pub fn get_stamper(&self) -> Result<&IdentityID> {
+        match self.entry().body() {
+            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.stamper()),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// IF (and this is a BIG if...) this is a `MakeStamp` transaction, grab the stampee's
+    /// identity ID
+    pub fn get_stampee(&self) -> Result<&IdentityID> {
+        match self.entry().body() {
+            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.stampee()),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// Get the claim ID from this stamp
+    pub fn get_claim_id(&self) -> Result<&ClaimID> {
+        match self.entry().body() {
+            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.claim_id()),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// Get the confidence from this stamp
+    pub fn get_confidence(&self) -> Result<&Confidence> {
+        match self.entry().body() {
+            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.confidence()),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// Get this stamp's expiration date
+    pub fn get_expires(&self) -> Result<&Option<Timestamp>> {
+        match self.entry().body() {
+            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.expires()),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+}
+
+/// A wrapper around `Publish` transactions
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PublishTransaction(Transaction<Public>);
+
+define_wrapper_tx!(PublishTransaction, TransactionBody::PublishV1);
+
+impl PublishTransaction {
+    /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
+    /// [`Transaction::authorize`], and returns the contained [`crate::dag::Transactions`] and
+    /// [`crate::identity::Identity`].
+    pub fn validate_publish_transaction(&self) -> Result<(Transactions<Public>, Identity<Public>)> {
+        // do a verification of the full published identity.
+        match self.entry().body() {
+            TransactionBody::PublishV1 { transactions } => {
+                let transactions_pub: Transactions<Public> = transactions.clone().try_into()?;
+                let identity = transactions_pub.build_identity()?;
+                self.authorize(Some(&identity))?;
+                Ok((transactions_pub, identity))
+            }
+            _ => Err(Error::TransactionMismatch)?,
+        }
+    }
+}
+
+/// A wrapper around `Sign` transactions
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SignTransaction(Transaction<Public>);
+
+define_wrapper_tx!(SignTransaction, TransactionBody::SignV1);
+
+impl SignTransaction {
+    /// If this is an Sign transaction, grab the `creator` field.
+    pub fn get_creator(&self) -> Result<&IdentityID> {
+        match self.entry().body() {
+            TransactionBody::SignV1 { ref creator, .. } => Ok(creator),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is a Sign transaction, grab the `body_hash` field
+    pub fn get_body_hash(&self) -> Result<&Hash> {
+        match self.entry().body() {
+            TransactionBody::SignV1 { ref body_hash, .. } => Ok(body_hash),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+}
+
+/// A wrapper around `Ext` transactions
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExtTransaction(Transaction<Public>);
+
+define_wrapper_tx!(ExtTransaction, TransactionBody::ExtV1);
+
+impl ExtTransaction {
+    /// If this is an Ext transaction, grab the `creator` field.
+    pub fn get_creator(&self) -> Result<&IdentityID> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref creator, .. } => Ok(creator),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `ty` field.
+    pub fn get_ty(&self) -> Result<&Option<BinaryVec>> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref ty, .. } => Ok(ty),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `previous_transactions` field.
+    pub fn get_previous_transactions(&self) -> Result<&Vec<TransactionID>> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 {
+                ref previous_transactions, ..
+            } => Ok(previous_transactions),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `context` field.
+    pub fn get_context(&self) -> Result<&Option<HashMapAsn1<BinaryVec, BinaryVec>>> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref context, .. } => Ok(context),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is an Ext transaction, grab the `payload` field.
+    pub fn get_payload(&self) -> Result<&BinaryVec> {
+        match self.entry().body() {
+            TransactionBody::ExtV1 { ref payload, .. } => Ok(payload),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+}
 
 /// A [`Transaction`] where the [`TransactionEntry`] has been serialized. This enforces that our
 /// hash/signatures happen *on our serialized data* and prevents even getting a full
@@ -780,6 +1010,54 @@ impl<M: PrivacyMode> TransactionSerialized<M> {
     }
 }
 
+impl From<TransactionSerialized<Full>> for TransactionSerialized<Public> {
+    fn from(value: TransactionSerialized<Full>) -> Self {
+        let TransactionSerialized::<Full> {
+            id,
+            entry,
+            signatures,
+            private_data: _private_data,
+        } = value;
+        Self {
+            id,
+            entry,
+            signatures,
+            private_data: (),
+        }
+    }
+}
+
+impl TryFrom<Transaction<Full>> for TransactionSerialized<Full> {
+    type Error = Error;
+
+    fn try_from(value: Transaction<Full>) -> Result<Self> {
+        let Transaction::<Full> { id, entry, signatures } = value;
+        let (entry_pub, private_data) = entry.strip();
+        let ser = entry_pub.serialize_binary()?;
+        Ok(Self {
+            id,
+            entry: BinaryVec::from(ser),
+            signatures,
+            private_data,
+        })
+    }
+}
+
+impl TryFrom<Transaction<Public>> for TransactionSerialized<Public> {
+    type Error = Error;
+
+    fn try_from(value: Transaction<Public>) -> Result<Self> {
+        let Transaction::<Public> { id, entry, signatures } = value;
+        let ser = entry.serialize_binary()?;
+        Ok(Self {
+            id,
+            entry: BinaryVec::from(ser),
+            signatures,
+            private_data: (),
+        })
+    }
+}
+
 impl TryFrom<TransactionSerialized<Full>> for Transaction<Full> {
     type Error = Error;
 
@@ -803,249 +1081,15 @@ impl TryFrom<TransactionSerialized<Public>> for Transaction<Public> {
 
     fn try_from(value: TransactionSerialized<Public>) -> Result<Self> {
         value.verify_hash_and_signatures()?;
-        let TransactionSerialized::<Public> { id, entry, signatures, .. } = value;
+        let TransactionSerialized::<Public> {
+            id,
+            entry,
+            signatures,
+            private_data: _private_data,
+        } = value;
         let entry = TransactionEntry::<Public>::deserialize_binary(entry.as_slice())?;
         let trans = Transaction::<Public>::new_raw_with_sigs(id, entry, signatures);
         Ok(trans)
-    }
-}
-
-/// Makes it easy to define wrapper transactions
-macro_rules! define_wrapper_tx {
-    ( $name:ident, $body_type:path ) => {
-        impl $name {
-            /// Convert this into a [`Transaction`]
-            pub fn into_inner(self) -> Transaction<Public> {
-                let Self(tx) = self;
-                tx
-            }
-        }
-
-        impl TryFrom<Transaction<Full>> for $name {
-            type Error = Error;
-            fn try_from(val: Transaction<Full>) -> std::result::Result<Self, Self::Error> {
-                if matches!(val.entry().body(), $body_type { .. }) {
-                    Ok(Self(val.strip().0))
-                } else {
-                    Err(Error::TransactionMismatch)
-                }
-            }
-        }
-
-        impl TryFrom<Transaction<Public>> for $name {
-            type Error = Error;
-            fn try_from(val: Transaction<Public>) -> std::result::Result<Self, Self::Error> {
-                if matches!(val.entry().body(), $body_type { .. }) {
-                    Ok(Self(val))
-                } else {
-                    Err(Error::TransactionMismatch)
-                }
-            }
-        }
-
-        impl TryFrom<TransactionSerialized<Full>> for $name {
-            type Error = Error;
-            fn try_from(val: TransactionSerialized<Full>) -> std::result::Result<Self, Self::Error> {
-                let transaction = Transaction::<Full>::try_from(val)?;
-                if matches!(transaction.entry().body(), $body_type { .. }) {
-                    Ok(Self(transaction.strip().0))
-                } else {
-                    Err(Error::TransactionMismatch)
-                }
-            }
-        }
-
-        impl TryFrom<TransactionSerialized<Public>> for $name {
-            type Error = Error;
-            fn try_from(val: TransactionSerialized<Public>) -> std::result::Result<Self, Self::Error> {
-                let transaction = Transaction::<Public>::try_from(val)?;
-                if matches!(transaction.entry().body(), $body_type { .. }) {
-                    Ok(Self(transaction))
-                } else {
-                    Err(Error::TransactionMismatch)
-                }
-            }
-        }
-
-        impl Deref for $name {
-            type Target = Transaction<Public>;
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
-
-        impl DerefMut for $name {
-            fn deref_mut(&mut self) -> &mut Self::Target {
-                &mut self.0
-            }
-        }
-    };
-}
-
-/// A wrapper around `MakeStampV1` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct StampTransaction(Transaction<Public>);
-
-define_wrapper_tx!(StampTransaction, TransactionBody::MakeStampV1);
-
-impl StampTransaction {
-    /// IF (and this is a BIG if...) this is a `MakeStamp` transaction, grab the stamper's
-    /// identity ID
-    pub fn get_stamper(&self) -> Result<&IdentityID> {
-        match self.entry().body() {
-            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.stamper()),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// IF (and this is a BIG if...) this is a `MakeStamp` transaction, grab the stampee's
-    /// identity ID
-    pub fn get_stampee(&self) -> Result<&IdentityID> {
-        match self.entry().body() {
-            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.stampee()),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// Get the claim ID from this stamp
-    pub fn get_claim_id(&self) -> Result<&ClaimID> {
-        match self.entry().body() {
-            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.claim_id()),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// Get the confidence from this stamp
-    pub fn get_confidence(&self) -> Result<&Confidence> {
-        match self.entry().body() {
-            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.confidence()),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// Get this stamp's expiration date
-    pub fn get_expires(&self) -> Result<&Option<Timestamp>> {
-        match self.entry().body() {
-            TransactionBody::MakeStampV1 { stamp } => Ok(stamp.expires()),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-}
-
-/// A wrapper around `Publish` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PublishTransaction(Transaction<Public>);
-
-define_wrapper_tx!(PublishTransaction, TransactionBody::PublishV1);
-
-impl PublishTransaction {
-    /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
-    pub fn validate_publish_transaction(&self) -> Result<Identity<Public>> {
-        // do a verification of the full published identity.
-        let identity = match self.entry().body() {
-            TransactionBody::PublishV1 { transactions } => {
-                let identity = transactions.build_identity()?;
-                self.verify(Some(&identity))?;
-                identity
-            }
-            _ => Err(Error::TransactionMismatch)?,
-        };
-        Ok(identity)
-    }
-
-    /// Ensures that this transaction is a publish transaction, verifies it *fully* (as in, runs
-    /// [`Transaction::verify`], and returns the contained [`crate::dag::Transactions`] and
-    /// [`crate::identity::Identity`].
-    pub fn validate_and_open_publish_transaction(self) -> Result<(Vec<TransactionSerialized<Public>>, Identity<Public>)> {
-        // first, do a borrowed verification of the full published identity.
-        let identity = self.validate_publish_transaction()?;
-
-        // now we can fully deconstuct the transaction, get the inner identity, and return it
-        match self {
-            Self(Transaction {
-                entry:
-                    TransactionEntry {
-                        body: TransactionBody::PublishV1 { transactions },
-                        ..
-                    },
-                ..
-            }) => Ok((*transactions, identity)),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-}
-
-/// A wrapper around `Sign` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SignTransaction(Transaction<Public>);
-
-define_wrapper_tx!(SignTransaction, TransactionBody::SignV1);
-
-impl SignTransaction {
-    /// If this is an Sign transaction, grab the `creator` field.
-    pub fn get_creator(&self) -> Result<&IdentityID> {
-        match self.entry().body() {
-            TransactionBody::SignV1 { ref creator, .. } => Ok(creator),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is a Sign transaction, grab the `body_hash` field
-    pub fn get_body_hash(&self) -> Result<&Hash> {
-        match self.entry().body() {
-            TransactionBody::SignV1 { ref body_hash, .. } => Ok(body_hash),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-}
-
-/// A wrapper around `Ext` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ExtTransaction(Transaction<Public>);
-
-define_wrapper_tx!(ExtTransaction, TransactionBody::ExtV1);
-
-impl ExtTransaction {
-    /// If this is an Ext transaction, grab the `creator` field.
-    pub fn get_creator(&self) -> Result<&IdentityID> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref creator, .. } => Ok(creator),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `ty` field.
-    pub fn get_ty(&self) -> Result<&Option<BinaryVec>> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref ty, .. } => Ok(ty),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `previous_transactions` field.
-    pub fn get_previous_transactions(&self) -> Result<&Vec<TransactionID>> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 {
-                ref previous_transactions, ..
-            } => Ok(previous_transactions),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `context` field.
-    pub fn get_context(&self) -> Result<&Option<HashMapAsn1<BinaryVec, BinaryVec>>> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref context, .. } => Ok(context),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `payload` field.
-    pub fn get_payload(&self) -> Result<&BinaryVec> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref payload, .. } => Ok(payload),
-            _ => Err(Error::TransactionMismatch),
-        }
     }
 }
 

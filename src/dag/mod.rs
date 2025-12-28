@@ -16,15 +16,14 @@ pub use crate::{
     dag::{
         transaction::{
             ExtTransaction, PublishTransaction, SignTransaction, StampTransaction, Transaction, TransactionBody, TransactionEntry,
-            TransactionID,
+            TransactionID, TransactionSerialized,
         },
-        transactions::{tx_chain, Transactions},
+        transactions::{tx_chain, Transactions, TransactionsSerialized},
     },
     error::Result,
 };
 use crate::{error::Error, util::Timestamp};
 use getset::{Getters, MutGetters};
-use private_parts::PrivacyMode;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 

@@ -18,7 +18,7 @@ use crate::{
         private::{PrivateContainer, PrivateWithHmac, ReEncrypt},
     },
     error::{Error, Result},
-    util::{ser, sign::Signable},
+    util::ser,
 };
 use getset;
 use private_parts::{Full, PrivacyMode, PrivateDataContainer, PrivateParts, Public};
@@ -26,62 +26,6 @@ use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
-
-/// Allows us to create new signature types from the base SignKeypairSignature.
-pub trait ExtendKeypairSignature:
-    From<SignKeypairSignature> + Clone + PartialEq + Deref<Target = SignKeypairSignature> + serde::Serialize + serde::de::DeserializeOwned
-{
-}
-
-/// Allows us to create new signing keypair types from the base SignKeypair.
-///
-/// Now, says to myself, Colm, says I...
-pub trait ExtendKeypair<M: PrivacyMode>:
-    ReEncrypt
-    + PrivateParts
-    + From<SignKeypair<M>>
-    + Clone
-    + PartialEq
-    + Deref<Target = SignKeypair<M>>
-    + PartialEq
-    + Signable
-    + serde::Serialize
-    + serde::de::DeserializeOwned
-{
-    type Signature: ExtendKeypairSignature;
-
-    /// Create a new ed25519 keypair
-    fn new_ed25519<R: RngCore + CryptoRng>(rng: &mut R, master_key: &SecretKey) -> Result<Self> {
-        let sign = SignKeypair::new_ed25519(rng, master_key)?;
-        Ok(Self::from(sign))
-    }
-
-    /// Create a new ed25519 keypair
-    fn new_ed25519_from_bytes<R: RngCore + CryptoRng>(rng: &mut R, master_key: &SecretKey, secret_bytes: [u8; 32]) -> Result<Self> {
-        let sign = SignKeypair::new_ed25519_from_bytes(rng, master_key, secret_bytes)?;
-        Ok(Self::from(sign))
-    }
-
-    /// Sign a value with our secret signing key.
-    ///
-    /// Must be unlocked via our master key.
-    fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<Self::Signature> {
-        let sig = self.deref().sign(master_key, data)?;
-        Ok(Self::Signature::from(sig))
-    }
-
-    /// Verify a value with a detached signature given the public key of the
-    /// signer.
-    fn verify(&self, signature: &Self::Signature, data: &[u8]) -> Result<()> {
-        self.deref().verify(signature.deref(), data)
-    }
-
-    /// Create a KeyID from this keypair.
-    fn key_id(&self) -> KeyID {
-        let inner: &SignKeypair = self.deref();
-        KeyID::SignKeypair(inner.key_id())
-    }
-}
 
 /// A signature from an [`AdminKeypair`]. This basically just wraps [`SignKeypairSignature`]
 /// in a new type that allows specifying that specifically an admin key signature is required.
@@ -115,14 +59,54 @@ impl AsRef<[u8]> for AdminKeypairSignature {
     }
 }
 
-impl ExtendKeypairSignature for AdminKeypairSignature {}
-
 /// An admin keypair. This basically just wraps [`SignKeypair`] in a new type that allows
 /// specifying that specifically an admin key is required.
 #[derive(Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[parts(private_data = "PrivateContainer")]
 #[rasn(delegate)]
 pub struct AdminKeypair<M: PrivacyMode>(SignKeypair<M>);
+
+impl<M: PrivacyMode> AdminKeypair<M> {
+    /// Verify a value with a detached signature given the public key of the
+    /// signer.
+    pub fn verify(&self, signature: &AdminKeypairSignature, data: &[u8]) -> Result<()> {
+        self.deref().verify(signature.deref(), data)
+    }
+}
+
+impl AdminKeypair<Full> {
+    /// Create a new ed25519 keypair
+    pub fn new_ed25519<R: RngCore + CryptoRng>(rng: &mut R, master_key: &SecretKey) -> Result<Self> {
+        let sign = SignKeypair::new_ed25519(rng, master_key)?;
+        Ok(Self::from(sign))
+    }
+
+    /// Create a new ed25519 keypair
+    pub fn new_ed25519_from_bytes<R: RngCore + CryptoRng>(rng: &mut R, master_key: &SecretKey, secret_bytes: [u8; 32]) -> Result<Self> {
+        let sign = SignKeypair::new_ed25519_from_bytes(rng, master_key, secret_bytes)?;
+        Ok(Self::from(sign))
+    }
+
+    /// Sign a value with our secret signing key.
+    ///
+    /// Must be unlocked via our master key.
+    pub fn sign(&self, master_key: &SecretKey, data: &[u8]) -> Result<AdminKeypairSignature> {
+        let sig = self.deref().sign(master_key, data)?;
+        Ok(AdminKeypairSignature::from(sig))
+    }
+
+    /// Create a KeyID from this keypair.
+    pub fn key_id(&self) -> KeyID {
+        self.0.key_id()
+    }
+}
+
+impl AdminKeypair<Public> {
+    /// Create a KeyID from this keypair.
+    pub fn key_id(&self) -> KeyID {
+        self.0.key_id()
+    }
+}
 
 impl<M: PrivacyMode> From<SignKeypair<M>> for AdminKeypair<M> {
     fn from(sign: SignKeypair<M>) -> Self {
@@ -143,33 +127,10 @@ impl<M: PrivacyMode> PartialEq for AdminKeypair<M> {
     }
 }
 
-impl<M: PrivacyMode> Signable for AdminKeypair<M> {
-    type Item = AdminKeypair<Public>;
-    fn signable(&self) -> Self::Item {
-        Self::Item::from(self.deref().signable())
-    }
-}
-
 impl ReEncrypt for AdminKeypair<Full> {
     fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         Ok(Self::from(self.deref().clone().reencrypt(rng, previous_master_key, new_master_key)?))
     }
-}
-
-impl<M: PrivacyMode> ExtendKeypair<M> for AdminKeypair<M>
-where
-    AdminKeypair<M>: ReEncrypt,
-    AdminKeypair<M>: PrivateParts,
-    AdminKeypair<M>: From<SignKeypair<M>>,
-    AdminKeypair<M>: Clone,
-    AdminKeypair<M>: PartialEq,
-    AdminKeypair<M>: Deref<Target = SignKeypair<M>>,
-    AdminKeypair<M>: PartialEq,
-    AdminKeypair<M>: Signable,
-    AdminKeypair<M>: serde::Serialize,
-    AdminKeypair<M>: serde::de::DeserializeOwned,
-{
-    type Signature = AdminKeypairSignature;
 }
 
 // yes, we can just do stripe, but a lot of places in the code use .from() for this conversion and
@@ -293,7 +254,13 @@ impl<M: PrivacyMode> Key<M> {
             Self::Secret(pwh) => KeyID::SecretKey(pwh.hmac().clone()),
         }
     }
+}
 
+impl<M> Key<M>
+where
+    M: PrivacyMode,
+    Key<M>: Encode + Decode,
+{
     /// Serialize this Key in binary format.
     pub fn serialize(&self) -> Result<Vec<u8>> {
         ser::serialize(self)
@@ -428,7 +395,7 @@ impl<M: PrivacyMode> AdminKey<M> {
     /// Grab this key's [AdminKeyID].
     pub fn key_id(&self) -> AdminKeyID {
         let key_id: KeyID = self.key().key_id();
-        Ok(key_id.into())
+        key_id.into()
     }
 }
 

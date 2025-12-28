@@ -13,7 +13,7 @@
 
 use crate::{
     crypto::base::{Hash, KeyID},
-    dag::{Transaction, TransactionBody, TransactionEntry, TransactionID},
+    dag::{StampTransaction, Transaction, TransactionBody, TransactionID},
     error::{Error, Result},
     identity::{
         claim::ClaimSpec,
@@ -24,7 +24,7 @@ use crate::{
 };
 use getset;
 use glob::Pattern;
-use private_parts::{Full, PrivacyMode, Public};
+use private_parts::{Full, PrivacyMode, PrivateParts, Public};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
@@ -357,18 +357,14 @@ impl Context {
                 // TODO: look up the claim and grab its ContextClaimType
             }
             TransactionBody::AcceptStampV1 { stamp_transaction } => {
-                let res: Result<Transaction<Public>> = stamp_transaction.verify_hash_and_signatures().and_then(|tx| tx.try_into());
+                let res = stamp_transaction
+                    .verify_hash_and_signatures()
+                    .and_then(|_| StampTransaction::try_from(stamp_transaction.deref().clone()))
+                    .and_then(|stamp_tx| Ok((stamp_tx.get_stamper().cloned()?, stamp_tx.get_claim_id().map(|x| x.deref().clone())?)));
                 match res {
-                    Ok(Transaction::<Public> {
-                        entry:
-                            TransactionEntry::<Public> {
-                                body: TransactionBody::<Public>::MakeStampV1 { stamp },
-                                ..
-                            },
-                        ..
-                    }) => {
-                        contexts.push(Self::ObjectID(stamp.claim_id().deref().clone()));
-                        contexts.push(Self::IdentityID(stamp.stamper().clone()));
+                    Ok((stamper, claim_id)) => {
+                        contexts.push(Self::IdentityID(stamper));
+                        contexts.push(Self::ObjectID(claim_id));
                     }
                     _ => {}
                 }

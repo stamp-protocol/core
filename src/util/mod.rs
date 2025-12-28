@@ -9,7 +9,6 @@ use std::str::FromStr;
 
 #[macro_use]
 pub(crate) mod ser;
-pub(crate) mod sign;
 #[cfg(test)]
 pub(crate) mod test;
 

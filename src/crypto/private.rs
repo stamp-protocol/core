@@ -91,7 +91,7 @@ impl Decode for PrivateContainer {
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
     ) -> std::result::Result<Self, D::Error> {
-        let values_vec = Vec::<Sealed>::decode_with_tag_and_constraints(decoder, Tag::new(Class::Context, 0), constraints)?;
+        let values_vec = Vec::<Sealed>::decode_with_tag_and_constraints(decoder, tag, constraints)?;
         Ok(Self(values_vec.into()))
     }
 }
@@ -125,6 +125,16 @@ impl<T: Encode + Decode> Private<Full, T> {
         let open_bytes = seal_key.open(&self.sealed).map_err(|_| Error::CryptoOpenFailed)?;
         let obj: T = ser::deserialize(&open_bytes[..])?;
         Ok(obj)
+    }
+}
+
+impl<T: Encode + Decode> Private<Public, T> {
+    /// Create a blank `Private` for use when converting into a public field.
+    pub fn blank() -> Self {
+        Self {
+            _phantom: PhantomData::<T>,
+            sealed: (),
+        }
     }
 }
 
@@ -373,19 +383,6 @@ impl<T: Encode + Decode + Clone> MaybePrivate<Full, T> {
         match self {
             Self::Private(container) => Some(container.hmac()),
             _ => None,
-        }
-    }
-
-    /// Determines if this container has any data at all.
-    ///
-    /// If deserializing from a public identity representation, it's quite
-    /// possible that the private data has been stripped out, so this function
-    /// lets us check if it exists before we go stampeding toward grabbing the
-    /// value.
-    pub fn has_data(&self) -> bool {
-        match self {
-            Self::Public(_) => true,
-            Self::Private(container) => true,
         }
     }
 

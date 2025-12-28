@@ -13,14 +13,14 @@ use crate::{
     error::{Error, Result},
     identity::{
         claim::{Claim, ClaimID, ClaimSpec},
-        keychain::{AdminKey, AdminKeyID, ExtendKeypair, Key, Keychain, RevocationReason},
+        keychain::{AdminKey, AdminKeyID, Key, Keychain, RevocationReason},
         stamp::{RevocationReason as StampRevocationReason, Stamp, StampID},
     },
     policy::{PolicyContainer, PolicyID},
     util::{SerText, Timestamp, Url},
 };
 use getset;
-use private_parts::{Full, PrivacyMode, PrivateParts};
+use private_parts::{Full, PrivacyMode, PrivateDataContainer, PrivateParts};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;

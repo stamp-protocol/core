@@ -4,10 +4,7 @@ use crate::{
         private::{Private, PrivateContainer, ReEncrypt},
     },
     error::{Error, Result},
-    util::{
-        ser::{self, Binary, BinarySecret, SerdeBinary},
-        sign::Signable,
-    },
+    util::ser::{self, Binary, BinarySecret, SerdeBinary},
 };
 use private_parts::{Full, PrivacyMode, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
@@ -44,6 +41,39 @@ pub enum SignKeypair<M: PrivacyMode> {
         #[rasn(tag(explicit(1)))]
         secret: Private<M, BinarySecret<32>>,
     },
+}
+
+impl<M: PrivacyMode> SignKeypair<M> {
+    /// Verify a value with a detached signature given the public key of the
+    /// signer.
+    pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
+        match (self, signature) {
+            (
+                Self::Ed25519 {
+                    public: ref pubkey_bytes, ..
+                },
+                SignKeypairSignature::Ed25519(ref sig_bytes),
+            ) => {
+                let pubkey = ed25519_consensus::VerificationKey::try_from(*pubkey_bytes.deref())
+                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
+                let sig_arr: [u8; 64] = *sig_bytes.deref();
+                let sig = ed25519_consensus::Signature::from(sig_arr);
+                pubkey.verify(&sig, data).map_err(|_| Error::CryptoSignatureVerificationFailed)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Create a KeyID from this keypair.
+    pub fn key_id(&self) -> KeyID {
+        let public: SignKeypair<Public> = match self.clone() {
+            Self::Ed25519 { public, secret: _secret } => SignKeypair::<Public>::Ed25519 {
+                public,
+                secret: Private::<Public, BinarySecret<32>>::blank(),
+            },
+        };
+        KeyID::SignKeypair(public)
+    }
 }
 
 impl SignKeypair<Full> {
@@ -89,12 +119,6 @@ impl SignKeypair<Full> {
             }
         }
     }
-
-    /// Create a KeyID from this keypair.
-    pub fn key_id(&self) -> KeyID {
-        let (public, _) = self.clone().strip();
-        KeyID::SignKeypair(public)
-    }
 }
 
 impl SignKeypair<Public> {
@@ -107,33 +131,6 @@ impl SignKeypair<Public> {
     pub fn deserialize(bytes: &[u8]) -> Result<Self> {
         ser::deserialize(bytes)
     }
-
-    /// Create a KeyID from this keypair.
-    pub fn key_id(&self) -> KeyID {
-        KeyID::SignKeypair(self.clone())
-    }
-}
-
-impl<M: PrivacyMode> SignKeypair<M> {
-    /// Verify a value with a detached signature given the public key of the
-    /// signer.
-    pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
-        match (self, signature) {
-            (
-                Self::Ed25519 {
-                    public: ref pubkey_bytes, ..
-                },
-                SignKeypairSignature::Ed25519(ref sig_bytes),
-            ) => {
-                let pubkey = ed25519_consensus::VerificationKey::try_from(*pubkey_bytes.deref())
-                    .map_err(|_| Error::CryptoSignatureVerificationFailed)?;
-                let sig_arr: [u8; 64] = *sig_bytes.deref();
-                let sig = ed25519_consensus::Signature::from(sig_arr);
-                pubkey.verify(&sig, data).map_err(|_| Error::CryptoSignatureVerificationFailed)?;
-                Ok(())
-            }
-        }
-    }
 }
 
 impl ReEncrypt for SignKeypair<Full> {
@@ -143,7 +140,6 @@ impl ReEncrypt for SignKeypair<Full> {
                 public,
                 secret: private.reencrypt(rng, previous_master_key, new_master_key)?,
             }),
-            _ => Err(Error::CryptoKeyMissing),
         }
     }
 }
@@ -153,14 +149,6 @@ impl<M: PrivacyMode> PartialEq for SignKeypair<M> {
         match (self, other) {
             (Self::Ed25519 { public: public1, .. }, Self::Ed25519 { public: public2, .. }) => public1 == public2,
         }
-    }
-}
-
-impl Signable for SignKeypair<Full> {
-    type Item = SignKeypair<Public>;
-    fn signable(&self) -> Self::Item {
-        let (public, _) = self.clone().strip();
-        public
     }
 }
 
