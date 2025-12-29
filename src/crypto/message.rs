@@ -7,7 +7,7 @@ use crate::{
         SignedObject,
     },
     error::{Error, Result},
-    identity::{identity::IdentityID, keychain::Subkey},
+    identity::{instance::IdentityID, keychain::Subkey},
     util::ser::{self, BinaryVec},
 };
 use private_parts::{Full, Public};

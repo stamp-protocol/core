@@ -6,7 +6,7 @@ use crate::{
     identity::{
         claim::ClaimID,
         stamp::{Confidence, Stamp, StampEntry},
-        Identity, IdentityID,
+        IdentityID, IdentityInstance,
     },
 };
 use getset::{CopyGetters, Getters, MutGetters};
@@ -249,7 +249,7 @@ impl<'a> Network<'a> {
         }
     }
 
-    fn add_node(&mut self, identity: &'a Identity<Public>) {
+    fn add_node(&mut self, identity: &'a IdentityInstance<Public>) {
         for stamp in identity.stamps() {
             self.index_stamp(identity.id(), stamp);
         }
@@ -470,7 +470,7 @@ impl std::fmt::Display for TrustReport {
 pub fn find_paths<'a>(
     trust_mapping: &'a HashMap<TransactionID, Trust>,
     subject: &'a TransactionID,
-    identity_network: &[&'a Identity<Public>],
+    identity_network: &[&'a IdentityInstance<Public>],
     max_dist: usize,
 ) -> Vec<Path<'a>> {
     let mut network = Network::new();
@@ -501,7 +501,7 @@ pub fn find_paths<'a>(
 pub fn trust_score<T: TrustAlgo>(
     trust_mapping: &HashMap<TransactionID, Trust>,
     subject: &TransactionID,
-    identity_network: &[&Identity<Public>],
+    identity_network: &[&IdentityInstance<Public>],
     trust_algo: &T,
 ) -> Option<(i8, TrustReport)> {
     if trust_mapping.is_empty() {
@@ -586,7 +586,7 @@ mod tests {
             base::{HashAlgo, SecretKey},
             private::{Full, MaybePrivate},
         },
-        dag::Transactions,
+        dag::Identity,
         identity::{
             claim::ClaimSpec,
             keychain::AdminKey,
@@ -609,43 +609,43 @@ mod tests {
             struct IdentityKeys {
                 master: SecretKey,
                 admin: AdminKey<Full>,
-                transactions: Transactions<Public>,
+                transactions: Identity<Public>,
             }
             impl IdentityKeys {
-                fn new(master: SecretKey, admin: AdminKey, transactions: Transactions) -> Self {
+                fn new(master: SecretKey, admin: AdminKey, identity: Identity) -> Self {
                     Self {
                         master,
                         admin,
-                        transactions,
+                        identity,
                     }
                 }
 
                 fn add_claim(&mut self, claimtype: &'static str) {
                     let now = Timestamp::from_str("2016-04-04T02:00:00-0700").expect("make_trust_network!{} timestamp parsed");
                     let spec = match claimtype {
-                        "id" => ClaimSpec::Identity(MaybePrivate::new_public(self.transactions.identity_id().expect("identity has id"))),
+                        "id" => ClaimSpec::Identity(MaybePrivate::new_public(self.identity.identity_id().expect("identity has id"))),
                         "name" => ClaimSpec::Name(MaybePrivate::new_public("Butch".into())),
                         "email" => ClaimSpec::Email(MaybePrivate::new_public("butch@canineclub.info".into())),
                         _ => panic!("make_trust_network!::IdentityKeys::add_claim() -- unknown claim type {}", claimtype),
                     };
                     let trans = self
-                        .transactions
+                        .identity
                         .make_claim(&HashAlgo::Blake3, now, spec, Some(String::from(claimtype)))
                         .unwrap()
                         .sign(&self.master, &self.admin)
                         .unwrap();
-                    self.transactions = self.transactions.clone().push_transaction(trans).unwrap();
+                    self.identity = self.identity.clone().push_transaction(trans).unwrap();
                 }
 
                 fn make_stamp(&mut self, entry: StampEntry) {
                     let now = Timestamp::from_str("2016-04-04T02:00:00-0700").unwrap();
                     let trans = self
-                        .transactions
+                        .identity
                         .make_stamp(&HashAlgo::Blake3, now, entry)
                         .unwrap()
                         .sign(&self.master, &self.admin)
                         .unwrap();
-                    self.transactions = self.transactions.clone().push_transaction(trans).unwrap();
+                    self.identity = self.identity.clone().push_transaction(trans).unwrap();
                 }
             }
             let now = Timestamp::from_str("2016-04-04T02:00:00-0700").unwrap();
@@ -657,8 +657,8 @@ mod tests {
                 // can you hear me??
                 let seed = format!("{} boofed gently", name);
                 let mut rng = crate::util::test::rng_seeded(seed.as_bytes());
-                let (master, transactions, admin) = crate::util::test::create_fake_identity(&mut rng, now.clone());
-                let mut ik = IdentityKeys::new(master, admin, transactions);
+                let (master, identity, admin) = crate::util::test::create_fake_identity(&mut rng, now.clone());
+                let mut ik = IdentityKeys::new(master, admin, identity);
                 ik.add_claim("id"); // always the same.
                 $(
                 ik.add_claim(stringify!($claimtype));
@@ -670,7 +670,7 @@ mod tests {
                 let name = stringify!($names2);
                 let trust: Trust = $trust;
                 let ik = identities.get(name).expect("missing id");
-                let identity_id = ik.transactions.identity_id().unwrap().deref().clone();
+                let identity_id = ik.identity.identity_id().unwrap().deref().clone();
                 trust_mapping.insert(identity_id, trust);
             })*
 
@@ -684,12 +684,12 @@ mod tests {
                         Some(id) => id,
                         None => panic!("make_trust_network! -- referenced to id {} in stamps section, but it was not defined in the identities section", to_name),
                     };
-                    let to_id = to.transactions.build_identity().unwrap();
+                    let to_id = to.identity.build_identity_instance().unwrap();
                     let claim = match to_id.find_claim_by_name(claim_name) {
                         Some(claim) => claim,
                         None => panic!("make_trust_network! -- id {} is missing claim {} ...was it added to the definitions section??", to_name, claim_name),
                     };
-                    (to.transactions.identity_id().unwrap(), claim.id().clone())
+                    (to.identity.identity_id().unwrap(), claim.id().clone())
                 };
 
                 let from = match identities.get_mut(from_name) {
@@ -697,7 +697,7 @@ mod tests {
                     None => panic!("make_trust_network! -- referenced from id {} in stamps section, but it was not defined in the identities section", from_name),
                 };
                 from.make_stamp(StampEntry::new(
-                    from.transactions.identity_id().unwrap(),
+                    from.identity.identity_id().unwrap(),
                     to_id,
                     claim_id,
                     confidence,
@@ -706,11 +706,11 @@ mod tests {
             })*
             let lookup = identities
                 .iter()
-                .map(|(k, IdentityKeys { transactions, .. })| (transactions.identity_id().unwrap().deref().clone(), k.clone()))
+                .map(|(k, IdentityKeys { identity, .. })| (identity.identity_id().unwrap().deref().clone(), k.clone()))
                 .collect::<HashMap<_, _>>();
             let id_map = identities
                 .into_iter()
-                .map(|(k, IdentityKeys { transactions, .. })| (k, transactions))
+                .map(|(k, IdentityKeys { identity, .. })| (k, identity))
                 .collect::<HashMap<_, _>>();
             (id_map, trust_mapping, lookup)
         }};
@@ -735,13 +735,16 @@ mod tests {
     }
 
     fn trustnet_to_paths(
-        identity_network: &HashMap<&'static str, Transactions>,
+        identity_network: &HashMap<&'static str, Identity>,
         from: &'static str,
         to: &'static str,
         max_dist: usize,
     ) -> Vec<Vec<Vec<StampEntry>>> {
         let mut network = Network::new();
-        let identities = identity_network.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
+        let identities = identity_network
+            .values()
+            .map(|x| x.build_identity_instance().unwrap())
+            .collect::<Vec<_>>();
         for id in &identities {
             network.add_node(id);
         }
@@ -1163,10 +1166,10 @@ mod tests {
                 C -> D (email, Confidence::Medium),
             ],
         };
-        let id_a = trustnet.get("A").unwrap().build_identity().unwrap();
-        let id_b = trustnet.get("B").unwrap().build_identity().unwrap();
-        let id_c = trustnet.get("C").unwrap().build_identity().unwrap();
-        let id_d = trustnet.get("D").unwrap().build_identity().unwrap();
+        let id_a = trustnet.get("A").unwrap().build_identity_instance().unwrap();
+        let id_b = trustnet.get("B").unwrap().build_identity_instance().unwrap();
+        let id_c = trustnet.get("C").unwrap().build_identity_instance().unwrap();
+        let id_d = trustnet.get("D").unwrap().build_identity_instance().unwrap();
         let algo = TrustAlgoDefault::default();
 
         let stamps_a_b = id_a
@@ -1356,7 +1359,7 @@ mod tests {
             ],
         };
         let id_d = trustnet.get("D").unwrap().identity_id().unwrap();
-        let ids = trustnet.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
+        let ids = trustnet.values().map(|x| x.build_identity_instance().unwrap()).collect::<Vec<_>>();
         let ids_borrow = ids.iter().collect::<Vec<_>>();
         let trust_algo = TrustAlgoDefault::default();
         let (score, report) = trust_score(&trustmap, &id_d, ids_borrow.as_slice(), &trust_algo).unwrap();
@@ -1390,7 +1393,7 @@ mod tests {
         let id_c = trustnet.get("C").unwrap().identity_id().unwrap();
         let id_f = trustnet.get("F").unwrap().identity_id().unwrap();
         let id_g = trustnet.get("G").unwrap().identity_id().unwrap();
-        let ids = trustnet.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
+        let ids = trustnet.values().map(|x| x.build_identity_instance().unwrap()).collect::<Vec<_>>();
         let ids_borrow = ids.iter().collect::<Vec<_>>();
         let trust_algo = TrustAlgoDefault::new(i8::MAX / 5, 1, 5);
         {
@@ -1438,7 +1441,7 @@ mod tests {
                 ],
             };
             let id_e = trustnet.get("E").unwrap().identity_id().unwrap();
-            let ids = trustnet.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
+            let ids = trustnet.values().map(|x| x.build_identity_instance().unwrap()).collect::<Vec<_>>();
             let ids_borrow = ids.iter().collect::<Vec<_>>();
             let trust_algo = TrustAlgoDefault::new(50, 1, 4);
             let (score, report) = trust_score(&trustmap, &id_e, ids_borrow.as_slice(), &trust_algo).unwrap();
@@ -1474,7 +1477,7 @@ mod tests {
                 ],
             };
             let id_d = trustnet.get("D").unwrap().identity_id().unwrap();
-            let ids = trustnet.values().map(|x| x.build_identity().unwrap()).collect::<Vec<_>>();
+            let ids = trustnet.values().map(|x| x.build_identity_instance().unwrap()).collect::<Vec<_>>();
             let ids_borrow = ids.iter().collect::<Vec<_>>();
             let trust_algo = TrustAlgoDefault::default();
 

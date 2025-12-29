@@ -12,9 +12,9 @@
 //! and verification of data.
 
 pub mod claim;
-pub mod identity;
+pub mod instance;
 pub mod keychain;
 pub mod stamp;
 pub mod trust;
 
-pub use identity::*;
+pub use instance::*;

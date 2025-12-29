@@ -12,7 +12,7 @@ use crate::{
         private::{MaybePrivate, PrivateContainer, ReEncrypt},
     },
     error::{Error, Result},
-    identity::{identity::IdentityID, stamp::Stamp},
+    identity::{instance::IdentityID, stamp::Stamp},
     util::{BinaryVec, Date, SerText, Url},
 };
 use getset;

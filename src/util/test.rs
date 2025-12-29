@@ -1,9 +1,9 @@
 use crate::{
     crypto::base::{CryptoKeypair, Hash, HashAlgo, SecretKey, SignKeypair},
-    dag::{TransactionID, Transactions},
+    dag::{Identity, TransactionID},
     identity::{
-        identity::{Identity, IdentityID},
-        keychain::{AdminKey, AdminKeypair, ExtendKeypair, Key},
+        instance::{IdentityID, IdentityInstance},
+        keychain::{AdminKey, AdminKeypair, Key},
     },
     policy::{Capability, MultisigPolicy, Participant, Policy, PolicyContainer},
     util::Timestamp,
@@ -29,8 +29,8 @@ pub(crate) fn rng_seeded(seed: &[u8]) -> rand_chacha::ChaCha20Rng {
     crate::crypto::base::rng::chacha20_seeded(seed_bytes)
 }
 
-pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Timestamp) -> (SecretKey, Transactions<Full>, AdminKey<Full>) {
-    let transactions = Transactions::<Full>::new();
+pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Timestamp) -> (SecretKey, Identity<Full>, AdminKey<Full>) {
+    let identity = Identity::<Full>::new();
     let master_key = SecretKey::new_xchacha20poly1305(rng).unwrap();
     let admin = AdminKeypair::<Full>::new_ed25519(rng, &master_key).unwrap();
     let admin_key = AdminKey::<Full>::new(admin, "Alpha", None);
@@ -41,16 +41,16 @@ pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Tim
             participants: vec![admin_key.key().clone().into()],
         },
     );
-    let trans = transactions
+    let trans = identity
         .create_identity(&HashAlgo::Blake3, now, vec![admin_key.clone()], vec![policy])
         .unwrap()
         .sign(&master_key, &admin_key)
         .unwrap();
-    let transactions2 = transactions.push_transaction(trans).unwrap();
-    (master_key, transactions2, admin_key)
+    let identity2 = identity.push_transaction(trans).unwrap();
+    (master_key, identity2, admin_key)
 }
 
-pub(crate) fn setup_identity_with_subkeys<R: RngCore + CryptoRng>(rng: &mut R) -> (SecretKey, Identity<Full>) {
+pub(crate) fn setup_identity_with_subkeys<R: RngCore + CryptoRng>(rng: &mut R) -> (SecretKey, IdentityInstance<Full>) {
     let master_key = SecretKey::new_xchacha20poly1305(rng).unwrap();
     let admin_keypair = AdminKeypair::<Full>::new_ed25519(rng, &master_key).unwrap();
     let policy = Policy::new(
@@ -66,7 +66,7 @@ pub(crate) fn setup_identity_with_subkeys<R: RngCore + CryptoRng>(rng: &mut R) -
     let policy_transaction_id = TransactionID::from(Hash::new_blake3(b"policy").unwrap());
     let policy_con = PolicyContainer::from_policy_transaction(&policy_transaction_id, 0, policy).unwrap();
     let admin_key = AdminKey::<Full>::new(admin_keypair, "Alpha", None);
-    let identity = Identity::<Full>::create(IdentityID::random(), vec![admin_key], vec![policy_con], Timestamp::now())
+    let identity_instance = IdentityInstance::<Full>::create(IdentityID::random(), vec![admin_key], vec![policy_con], Timestamp::now())
         .add_subkey(Key::new_sign(SignKeypair::new_ed25519(rng, &master_key).unwrap()), "sign", None)
         .unwrap()
         .add_subkey(
@@ -75,7 +75,7 @@ pub(crate) fn setup_identity_with_subkeys<R: RngCore + CryptoRng>(rng: &mut R) -
             None,
         )
         .unwrap();
-    (master_key, identity)
+    (master_key, identity_instance)
 }
 
 /// Given a set of values, find all combinations of those values as present or
@@ -104,14 +104,14 @@ pub(crate) fn generate_combinations<T: Clone>(vals: &[T]) -> Vec<Vec<T>> {
 }
 
 macro_rules! sign_and_push {
-    ($master_key:expr, $admin_key:expr, $transactions:expr, $([ $fn:ident, $($args:expr),* ])*) => {{
-        let mut trans_tmp = $transactions;
+    ($master_key:expr, $admin_key:expr, $identity:expr, $([ $fn:ident, $($args:expr),* ])*) => {{
+        let mut identity_tmp = $identity;
         $(
-            let trans = trans_tmp.$fn(&crate::crypto::base::HashAlgo::Blake3, $($args),*).unwrap();
+            let trans = identity_tmp.$fn(&crate::crypto::base::HashAlgo::Blake3, $($args),*).unwrap();
             let trans_signed = trans.sign($master_key, $admin_key).unwrap();
-            trans_tmp = trans_tmp.push_transaction(trans_signed).unwrap();
+            identity_tmp = identity_tmp.push_transaction(trans_signed).unwrap();
         )*
-        trans_tmp
+        identity_tmp
     }};
 }
 pub(crate) use sign_and_push;

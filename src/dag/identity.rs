@@ -1,5 +1,4 @@
-//! This module holds the logic of the DAG and also assists in the create of
-//! valid [Transaction] objects.
+//! This models an identity as a DAG of [`Transaction`] objects.
 
 use crate::{
     crypto::{
@@ -10,13 +9,13 @@ use crate::{
     error::{Error, Result},
     identity::{
         claim::{ClaimID, ClaimSpec},
-        identity::{Identity, IdentityID},
+        instance::{IdentityID, IdentityInstance},
         keychain::{AdminKey, AdminKeyID, Key, RevocationReason},
         stamp::{RevocationReason as StampRevocationReason, Stamp, StampEntry, StampID},
     },
     policy::{Policy, PolicyContainer, PolicyID},
     util::{
-        ser::{BinaryVec, HashMapAsn1, SerdeBinary},
+        ser::{BinaryVec, HashMapAsn1, SerText, SerdeBinary},
         Timestamp,
     },
 };
@@ -31,12 +30,17 @@ use std::ops::Deref;
 /// A container that holds a set of transactions.
 #[derive(Debug, Default, Clone, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Transactions<M: PrivacyMode> {
+pub struct Identity<M: PrivacyMode> {
     /// The actual transactions.
     transactions: Vec<Transaction<M>>,
 }
 
-impl<M: PrivacyMode> Transactions<M> {
+impl<M: PrivacyMode> Identity<M> {
+    /// Create a new, empty transaction set.
+    pub fn new() -> Self {
+        Self { transactions: Vec::new() }
+    }
+
     /// Returns an iterator over these transactions
     pub fn iter(&self) -> core::slice::Iter<'_, Transaction<M>> {
         self.transactions().iter()
@@ -59,7 +63,7 @@ impl<M: PrivacyMode> Transactions<M> {
     }
 
     /// Run a transaction and return the output
-    fn apply_transaction(identity: Option<Identity<M>>, transaction: &Transaction<M>) -> Result<Identity<M>> {
+    fn apply_transaction(identity: Option<IdentityInstance<M>>, transaction: &Transaction<M>) -> Result<IdentityInstance<M>> {
         if identity.as_ref().map(|i| *i.revoked()).unwrap_or(false) {
             Err(Error::IdentityRevoked)?;
         }
@@ -74,7 +78,12 @@ impl<M: PrivacyMode> Transactions<M> {
                     .map(|(idx, x)| PolicyContainer::from_policy_transaction(transaction.id(), idx, x.clone()))
                     .collect::<Result<Vec<PolicyContainer>>>()?;
                 let identity_id = IdentityID::from(transaction.id().clone());
-                Ok(Identity::create(identity_id, admin_keys, policies_con, transaction.entry().created().clone()))
+                Ok(IdentityInstance::create(
+                    identity_id,
+                    admin_keys,
+                    policies_con,
+                    transaction.entry().created().clone(),
+                ))
             }
             TransactionBody::ResetIdentityV1 { admin_keys, policies } => {
                 let policies_con = if let Some(policies) = policies {
@@ -201,7 +210,7 @@ impl<M: PrivacyMode> Transactions<M> {
         }
     }
 
-    fn build_identity_impl(transactions: &[Transaction<M>]) -> Result<Identity<M>> {
+    fn build_identity_impl(transactions: &[Transaction<M>]) -> Result<IdentityInstance<M>> {
         if transactions.is_empty() {
             Err(Error::DagEmpty)?;
         }
@@ -212,16 +221,16 @@ impl<M: PrivacyMode> Transactions<M> {
             #[allow(suspicious_double_ref_op)]
             Err(Error::DagMissingTransactions(dag.missing().iter().map(|x| x.clone().clone()).collect::<Vec<_>>()))?;
         }
-        let mut branch_identities: HashMap<TransactionID, Identity<M>> = HashMap::new();
+        let mut branch_identities: HashMap<TransactionID, IdentityInstance<M>> = HashMap::new();
         let identity = dag
             .apply(
                 &mut branch_identities,
-                |node| Transactions::apply_transaction(None, node.node()),
+                |node| Identity::apply_transaction(None, node.node()),
                 |_node| false,
                 |identity, node| node.node().authorize(Some(identity)),
                 |identity, node| {
                     let id = identity.clone();
-                    (*identity) = Transactions::apply_transaction(Some(id), node.node())?;
+                    (*identity) = Identity::apply_transaction(Some(id), node.node())?;
                     Ok(())
                 },
             )?
@@ -252,7 +261,7 @@ impl<M: PrivacyMode> Transactions<M> {
     /// although the transaction is applied to all identities from previous
     /// branches as well. However, this algorithm does not handle other
     /// conflicts (such as duplicate entries).
-    pub fn build_identity(&self) -> Result<Identity<M>> {
+    pub fn build_identity_instance(&self) -> Result<IdentityInstance<M>> {
         Self::build_identity_impl(self.transactions())
     }
 
@@ -263,7 +272,7 @@ impl<M: PrivacyMode> Transactions<M> {
     /// tree. The idea here is that we can build the identity at a certain point in history to
     /// verify the validity of some transaction that may have been issued in the past (which is no
     /// longer valid).
-    pub fn build_identity_at_point_in_history(&self, past_transactions: &[TransactionID]) -> Result<Identity<M>> {
+    pub fn build_identity_instance_at_point_in_history(&self, past_transactions: &[TransactionID]) -> Result<IdentityInstance<M>> {
         let mut transactions_idx = HashMap::with_capacity(self.transactions().len());
         for trans in self.transactions().iter() {
             transactions_idx.insert(trans.id(), trans);
@@ -321,27 +330,27 @@ impl<M: PrivacyMode> Transactions<M> {
     /// identity created from running all transactions (including the one being
     /// pushed).
     ///
-    /// Unless you know you want an [`Identity`] instead of [`Transactions`], or
-    /// when in doubt, use [`push_transaction()`][Transactions::push_transaction]
+    /// Unless you know you want an [`IdentityInstance`] instead of [`Identity`], or
+    /// when in doubt, use [`push_transaction()`][Identity::push_transaction]
     /// instead of this method.
-    pub fn push_transaction_mut(&mut self, transaction: Transaction<M>) -> Result<Identity<M>> {
+    pub fn push_transaction_mut(&mut self, transaction: Transaction<M>) -> Result<IdentityInstance<M>> {
         if self.transactions().iter().any(|x| x.id() == transaction.id()) {
             Err(Error::DuplicateTransaction)?;
         }
-        let identity_maybe = match self.build_identity() {
+        let identity_instance_maybe = match self.build_identity_instance() {
             Ok(id) => Some(id),
             Err(Error::DagEmpty) => None,
             Err(e) => Err(e)?,
         };
-        let identity = Self::apply_transaction(identity_maybe, &transaction)?;
+        let identity_instance = Self::apply_transaction(identity_instance_maybe, &transaction)?;
         self.transactions_mut().push(transaction);
         // build it again
-        let _identity_maybe = match self.build_identity() {
+        let _identity_maybe = match self.build_identity_instance() {
             Ok(id) => Some(id),
             Err(Error::DagEmpty) => None,
             Err(e) => Err(e)?,
         };
-        Ok(identity)
+        Ok(identity_instance)
     }
 
     /// Merge the transactions from two transaction sets together.
@@ -361,7 +370,7 @@ impl<M: PrivacyMode> Transactions<M> {
             branch1.transactions_mut().push(trans2.clone());
         }
         // make sure it's all copasetic.
-        branch1.build_identity()?;
+        branch1.build_identity_instance()?;
         Ok(branch1)
     }
 
@@ -388,16 +397,11 @@ impl<M: PrivacyMode> Transactions<M> {
     }
 }
 
-impl Transactions<Full> {
-    /// Create a new, empty transaction set.
-    pub fn new() -> Self {
-        Self { transactions: Vec::new() }
-    }
-
+impl Identity<Full> {
     /// Test if a master key is correct.
     pub fn test_master_key(&self, master_key: &SecretKey) -> Result<()> {
-        let identity = self.build_identity()?;
-        identity.test_master_key(master_key)
+        let identity_instance = self.build_identity_instance()?;
+        identity_instance.test_master_key(master_key)
     }
 
     /// Creates a new transaction that references the trailing transactions in the
@@ -651,10 +655,10 @@ impl Transactions<Full> {
 
     /// Publish this identity
     pub fn publish<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T) -> Result<Transaction<Full>> {
-        let transactions_full = TransactionsSerialized::<Full>::try_from(self.clone())?;
-        let transactions_pub = TransactionsSerialized::<Public>::from(transactions_full);
+        let transactions_full = IdentitySerialized::<Full>::try_from(self.clone())?;
+        let transactions_pub = IdentitySerialized::<Public>::from(transactions_full);
         let body = TransactionBody::PublishV1 {
-            transactions: transactions_pub,
+            identity: transactions_pub,
         };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -667,11 +671,11 @@ impl Transactions<Full> {
         body_hash_with: &HashAlgo,
         body: &[u8],
     ) -> Result<Transaction<Full>> {
-        let identity = self.build_identity()?;
-        if *identity.revoked() {
+        let identity_instance = self.build_identity_instance()?;
+        if *identity_instance.revoked() {
             Err(Error::IdentityRevoked)?;
         }
-        let creator = identity.id().clone();
+        let creator = identity_instance.id().clone();
         let body_hash = match body_hash_with {
             HashAlgo::Blake3 => Hash::new_blake3(body)?,
         };
@@ -689,11 +693,11 @@ impl Transactions<Full> {
         context: Option<K>,
         payload: BinaryVec,
     ) -> Result<Transaction<Full>> {
-        let identity = self.build_identity()?;
-        if *identity.revoked() {
+        let identity_instance = self.build_identity_instance()?;
+        if *identity_instance.revoked() {
             Err(Error::IdentityRevoked)?;
         }
-        let creator = identity.id().clone();
+        let creator = identity_instance.id().clone();
         let body = TransactionBody::ExtV1 {
             creator,
             ty,
@@ -705,7 +709,7 @@ impl Transactions<Full> {
     }
 }
 
-impl ReEncrypt for Transactions<Full> {
+impl ReEncrypt for Identity<Full> {
     fn reencrypt<R: RngCore + CryptoRng>(mut self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         for trans in self.transactions_mut() {
             *trans = trans.clone().reencrypt(rng, old_master_key, new_master_key)?;
@@ -714,12 +718,12 @@ impl ReEncrypt for Transactions<Full> {
     }
 }
 
-impl<M: PrivacyMode> IntoIterator for Transactions<M> {
+impl<M: PrivacyMode> IntoIterator for Identity<M> {
     type Item = Transaction<M>;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
-        let Transactions { transactions } = self;
+        let Identity { transactions } = self;
         transactions.into_iter()
     }
 }
@@ -727,19 +731,19 @@ impl<M: PrivacyMode> IntoIterator for Transactions<M> {
 /// A container that holds a set of transactions.
 #[derive(Debug, Default, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct TransactionsSerialized<M: PrivacyMode> {
+pub struct IdentitySerialized<M: PrivacyMode> {
     /// The actual SERIALIZED transactions.
     #[rasn(tag(explicit(0)))]
     transactions: Vec<TransactionSerialized<M>>,
 }
 
-impl<M: PrivacyMode> TransactionsSerialized<M> {
+impl<M: PrivacyMode> IdentitySerialized<M> {
     pub fn iter(&self) -> core::slice::Iter<'_, TransactionSerialized<M>> {
         self.transactions().iter()
     }
 }
 
-impl<M: PrivacyMode> IntoIterator for TransactionsSerialized<M> {
+impl<M: PrivacyMode> IntoIterator for IdentitySerialized<M> {
     type Item = TransactionSerialized<M>;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
@@ -749,14 +753,14 @@ impl<M: PrivacyMode> IntoIterator for TransactionsSerialized<M> {
     }
 }
 
-impl<M> TryFrom<Transactions<M>> for TransactionsSerialized<M>
+impl<M> TryFrom<Identity<M>> for IdentitySerialized<M>
 where
     M: PrivacyMode,
     TransactionSerialized<M>: TryFrom<Transaction<M>, Error = Error>,
 {
     type Error = Error;
 
-    fn try_from(value: Transactions<M>) -> Result<Self> {
+    fn try_from(value: Identity<M>) -> Result<Self> {
         let transactions = value
             .into_iter()
             .map(|t| t.try_into())
@@ -765,15 +769,15 @@ where
     }
 }
 
-impl<M> TryFrom<TransactionsSerialized<M>> for Transactions<M>
+impl<M> TryFrom<IdentitySerialized<M>> for Identity<M>
 where
     M: PrivacyMode,
     Transaction<M>: TryFrom<TransactionSerialized<M>, Error = Error>,
 {
     type Error = Error;
 
-    fn try_from(value: TransactionsSerialized<M>) -> Result<Self> {
-        let TransactionsSerialized::<M> { transactions } = value;
+    fn try_from(value: IdentitySerialized<M>) -> Result<Self> {
+        let IdentitySerialized::<M> { transactions } = value;
         let des = transactions
             .into_iter()
             .map(|t| t.try_into())
@@ -782,9 +786,9 @@ where
     }
 }
 
-impl From<TransactionsSerialized<Full>> for TransactionsSerialized<Public> {
-    fn from(value: TransactionsSerialized<Full>) -> Self {
-        let TransactionsSerialized::<Full> { transactions } = value;
+impl From<IdentitySerialized<Full>> for IdentitySerialized<Public> {
+    fn from(value: IdentitySerialized<Full>) -> Self {
+        let IdentitySerialized::<Full> { transactions } = value;
         let stripped = transactions
             .into_iter()
             .map(|t| TransactionSerialized::<Public>::from(t))
@@ -793,10 +797,17 @@ impl From<TransactionsSerialized<Full>> for TransactionsSerialized<Public> {
     }
 }
 
-impl<M> SerdeBinary for TransactionsSerialized<M>
+impl<M> SerdeBinary for IdentitySerialized<M>
 where
     M: PrivacyMode,
-    TransactionsSerialized<M>: Encode + Decode,
+    IdentitySerialized<M>: Encode + Decode,
+{
+}
+
+impl<M> SerText for IdentitySerialized<M>
+where
+    M: PrivacyMode,
+    IdentitySerialized<M>: Serialize,
 {
 }
 
@@ -971,7 +982,7 @@ mod tests {
         },
         identity::{
             claim::{Relationship, RelationshipType},
-            keychain::{AdminKeypair, ExtendKeypair},
+            keychain::AdminKeypair,
             stamp::Confidence,
         },
         policy::{Capability, Context, MultisigPolicy, MultisigPolicySignature, Policy, PolicyContainer, TransactionBodyType},
@@ -984,21 +995,21 @@ mod tests {
     use std::str::FromStr;
 
     #[test]
-    fn transactions_identity_id_is_genesis_transaction() {
+    fn identity_identity_id_is_genesis_transaction() {
         let mut rng = crate::util::test::rng();
-        let (_master_key, transactions, _admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity = transactions.build_identity().unwrap();
-        assert_eq!(IdentityID::from(transactions.transactions()[0].id().clone()), identity.id().clone());
+        let (_master_key, identity, _admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_instance = identity.build_identity_instance().unwrap();
+        assert_eq!(IdentityID::from(identity.transactions()[0].id().clone()), identity_instance.id().clone());
     }
 
     #[test]
-    fn transactions_build_identity_at_point_in_history() {
+    fn identity_build_identity_instance_at_point_in_history() {
         let mut rng = crate::util::test::rng_seeded(b"beans");
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let mktx = |now, prev, body| Transaction::create_raw(&HashAlgo::Blake3, now, prev, body).unwrap();
         let (tx, name_to_tx, id_to_name): (Vec<Transaction>, HashMap<&'static str, Transaction>, HashMap<TransactionID, &'static str>) = tx_chain! {
             [
-                GEN = ("2024-01-01T00:00:00Z", |now, prev| mktx(now, prev, transactions.transactions()[0].entry().body().clone()));
+                GEN = ("2024-01-01T00:00:00Z", |now, prev| mktx(now, prev, identity.transactions()[0].entry().body().clone()));
                 NAM1 = ("2024-01-01T00:00:00Z", |now, prev| mktx(now, prev, TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_public("terrance".into())), name: None }));
                 DOM1 = ("2024-01-02T00:00:00Z", |now, prev| mktx(now, prev, TransactionBody::MakeClaimV1 { spec: ClaimSpec::Domain(MaybePrivate::new_public("plaque.is.a.figment.of.the.liberal.media".into())), name: Some("site/primary".into()) }));
                 DOM2 = ("2024-01-03T00:00:00Z", |now, prev| mktx(now, prev, TransactionBody::MakeClaimV1 { spec: ClaimSpec::Domain(MaybePrivate::new_public("plaque.is.a.figment.of.the.dental.industry".into())), name: Some("site/primary".into()) }));
@@ -1017,9 +1028,9 @@ mod tests {
         let names_to_ids =
             |names: &[&str]| -> Vec<TransactionID> { names.iter().map(|n| name_to_tx.get(n).unwrap().id().clone()).collect::<Vec<_>>() };
         let tx = tx.into_iter().map(|t| t.sign(&master_key, &admin_key).unwrap()).collect::<Vec<_>>();
-        let mut transactions = Transactions::new();
+        let mut identity = Identity::new();
         for t in tx {
-            transactions.push_transaction_mut(t).unwrap();
+            identity.push_transaction_mut(t).unwrap();
         }
 
         #[allow(unused_variables)]
@@ -1033,25 +1044,25 @@ mod tests {
         };
 
         {
-            let identity = transactions.build_identity().unwrap();
-            assert_eq!(identity.names(), vec!["terrance".to_string()]);
+            let identity_instance = identity.build_identity_instance().unwrap();
+            assert_eq!(identity_instance.names(), vec!["terrance".to_string()]);
             assert_eq!(
-                identity.emails(),
+                identity_instance.emails(),
                 vec!["fossil@niceyniceyzoozoo.com".to_string(), "balloon.face@artbyvince.com".to_string()]
             );
-            match identity.find_claim_by_name("site/primary").unwrap().spec() {
+            match identity_instance.find_claim_by_name("site/primary").unwrap().spec() {
                 ClaimSpec::Domain(MaybePrivate::Public(val)) => {
                     assert_eq!(val, "plaque.is.a.figment.of.the.dental.industry");
                 }
                 _ => panic!("bad variant"),
             }
-            match identity.find_claim_by_name("email/personal").unwrap().spec() {
+            match identity_instance.find_claim_by_name("email/personal").unwrap().spec() {
                 ClaimSpec::Email(MaybePrivate::Public(val)) => {
                     assert_eq!(val, "balloon.face@artbyvince.com");
                 }
                 _ => panic!("bad variant"),
             }
-            match identity.find_claim_by_name("urllol").unwrap().spec() {
+            match identity_instance.find_claim_by_name("urllol").unwrap().spec() {
                 ClaimSpec::Url(MaybePrivate::Public(val)) => {
                     assert_eq!(
                         val,
@@ -1066,54 +1077,56 @@ mod tests {
         }
 
         {
-            let identity = transactions.build_identity_at_point_in_history(&names_to_ids(&["DOM1"])).unwrap();
-            assert_eq!(identity.names(), vec!["terrance".to_string()]);
-            assert_eq!(identity.emails(), Vec::<String>::new());
-            match identity.find_claim_by_name("site/primary").unwrap().spec() {
+            let identity_instance = identity
+                .build_identity_instance_at_point_in_history(&names_to_ids(&["DOM1"]))
+                .unwrap();
+            assert_eq!(identity_instance.names(), vec!["terrance".to_string()]);
+            assert_eq!(identity_instance.emails(), Vec::<String>::new());
+            match identity_instance.find_claim_by_name("site/primary").unwrap().spec() {
                 ClaimSpec::Domain(MaybePrivate::Public(domain)) => {
                     assert_eq!(domain, "plaque.is.a.figment.of.the.liberal.media");
                 }
                 _ => panic!("bad variant"),
             }
-            assert!(identity.find_claim_by_name("email/personal").is_none());
-            assert!(identity.find_claim_by_name("urllol").is_none());
+            assert!(identity_instance.find_claim_by_name("email/personal").is_none());
+            assert!(identity_instance.find_claim_by_name("urllol").is_none());
         }
 
         {
-            let identity = transactions
-                .build_identity_at_point_in_history(&names_to_ids(&["DOM2", "EM1"]))
+            let identity_instance = identity
+                .build_identity_instance_at_point_in_history(&names_to_ids(&["DOM2", "EM1"]))
                 .unwrap();
-            assert_eq!(identity.names(), vec!["terrance".to_string()]);
-            assert_eq!(identity.emails(), vec!["fossil@niceyniceyzoozoo.com".to_string()]);
-            match identity.find_claim_by_name("site/primary").unwrap().spec() {
+            assert_eq!(identity_instance.names(), vec!["terrance".to_string()]);
+            assert_eq!(identity_instance.emails(), vec!["fossil@niceyniceyzoozoo.com".to_string()]);
+            match identity_instance.find_claim_by_name("site/primary").unwrap().spec() {
                 ClaimSpec::Domain(MaybePrivate::Public(val)) => {
                     assert_eq!(val, "plaque.is.a.figment.of.the.dental.industry");
                 }
                 _ => panic!("bad variant"),
             }
-            match identity.find_claim_by_name("email/personal").unwrap().spec() {
+            match identity_instance.find_claim_by_name("email/personal").unwrap().spec() {
                 ClaimSpec::Email(MaybePrivate::Public(val)) => {
                     assert_eq!(val, "fossil@niceyniceyzoozoo.com");
                 }
                 _ => panic!("bad variant"),
             }
-            assert!(identity.find_claim_by_name("urllol").is_none());
+            assert!(identity_instance.find_claim_by_name("urllol").is_none());
         }
 
         {
             let txid = TransactionID::from(Hash::new_blake3(b"not today, jerry").unwrap());
-            let res = transactions.build_identity_at_point_in_history(&[txid.clone()]);
+            let res = identity.build_identity_instance_at_point_in_history(&[txid.clone()]);
             assert_eq!(res.err().unwrap(), Error::DagMissingTransactions(vec![txid]));
         }
     }
 
     #[test]
-    fn transactions_push() {
+    fn identity_push() {
         let mut rng = crate::util::test::rng();
         let now = Timestamp::from_str("2021-04-20T00:00:10Z").unwrap();
-        let (master_key_1, transactions_1, admin_key_1) = test::create_fake_identity(&mut rng, now.clone());
-        let (_master_key_2, mut transactions_2, _admin_key_2) = test::create_fake_identity(&mut rng, now.clone());
-        let trans_claim_signed = transactions_1
+        let (master_key_1, identity1, admin_key_1) = test::create_fake_identity(&mut rng, now.clone());
+        let (_master_key_2, mut identity2, _admin_key_2) = test::create_fake_identity(&mut rng, now.clone());
+        let trans_claim_signed = identity1
             .make_claim(
                 &HashAlgo::Blake3,
                 now.clone(),
@@ -1123,9 +1136,9 @@ mod tests {
             .unwrap()
             .sign(&master_key_1, &admin_key_1)
             .unwrap();
-        transactions_1.push_transaction(trans_claim_signed.clone()).unwrap();
-        transactions_2.build_identity().unwrap();
-        match transactions_2.push_transaction_mut(trans_claim_signed.clone()) {
+        identity1.push_transaction(trans_claim_signed.clone()).unwrap();
+        identity2.build_identity_instance().unwrap();
+        match identity2.push_transaction_mut(trans_claim_signed.clone()) {
             Ok(_) => {
                 panic!("pushed a bad raw transaction: {}", trans_claim_signed.id().as_string())
             }
@@ -1139,89 +1152,88 @@ mod tests {
     }
 
     #[test]
-    fn transactions_merge_reset() {
+    fn identity_merge_reset() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) =
-            test::create_fake_identity(&mut rng, Timestamp::from_str("2021-04-20T00:00:00Z").unwrap());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::from_str("2021-04-20T00:00:00Z").unwrap());
         // make some claims on my smart refrigerator
         let admin_key_2 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()), "Alpha", None);
         let admin_key_3 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()), "Alpha", None);
-        let branch1 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let branch1 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ make_claim, Timestamp::from_str("2021-04-20T00:00:10Z").unwrap(), ClaimSpec::Name(MaybePrivate::new_public("Hooty McOwl".to_string())), None::<String> ]
             [ add_admin_key, Timestamp::from_str("2021-04-20T00:01:00Z").unwrap(), admin_key_2.clone() ]
             [ revoke_admin_key, Timestamp::from_str("2021-04-20T00:01:01Z").unwrap(), admin_key_2.key_id(), RevocationReason::Superseded, Some("CYA") ]
             [ make_claim, Timestamp::from_str("2021-04-20T00:01:33Z").unwrap(), ClaimSpec::Address(MaybePrivate::new_public("1112 Dirk Delta Ln.".to_string())), Some(String::from("primary")) ]
         };
         // make some claims on my Facebook (TM) (R) (C) Brain (AND NOW A WORD FROM OUR SPONSORS) Implant
-        let branch2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let branch2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ make_claim, Timestamp::from_str("2021-04-20T00:00:30Z").unwrap(), ClaimSpec::Url(MaybePrivate::new_public(Url::parse("https://www.cactus-petes.com/yeeeehawwww").unwrap())), None::<String> ]
             [ add_admin_key, Timestamp::from_str("2021-04-20T00:01:36Z").unwrap(), admin_key_3.clone() ]
             [ make_claim, Timestamp::from_str("2021-04-20T00:01:45Z").unwrap(), ClaimSpec::Address(MaybePrivate::new_public("1112 Liberal Hokes ave.".to_string())), Some(String::from("primary")) ]
             [ make_claim, Timestamp::from_str("2021-04-20T00:01:56Z").unwrap(), ClaimSpec::Email(MaybePrivate::new_public(String::from("dirk.delta@hollywood.com"))), None::<String> ]
         };
-        let identity1 = branch1.build_identity().unwrap();
-        assert_eq!(identity1.keychain().admin_keys().len(), 2);
-        assert_eq!(identity1.keychain().admin_keys()[0].key_id(), admin_key.key_id());
-        assert_eq!(identity1.keychain().admin_keys()[1].key_id(), admin_key_2.key_id());
-        assert_eq!(identity1.keychain().subkeys().len(), 0);
-        assert_eq!(identity1.claims().len(), 2);
-        match identity1.find_claim_by_name("primary").unwrap().spec() {
+        let identity1_instance = branch1.build_identity_instance().unwrap();
+        assert_eq!(identity1_instance.keychain().admin_keys().len(), 2);
+        assert_eq!(identity1_instance.keychain().admin_keys()[0].key_id(), admin_key.key_id());
+        assert_eq!(identity1_instance.keychain().admin_keys()[1].key_id(), admin_key_2.key_id());
+        assert_eq!(identity1_instance.keychain().subkeys().len(), 0);
+        assert_eq!(identity1_instance.claims().len(), 2);
+        match identity1_instance.find_claim_by_name("primary").unwrap().spec() {
             ClaimSpec::Address(val) => {
                 assert_eq!(val.open_public().unwrap().as_str(), "1112 Dirk Delta Ln.")
             }
             _ => panic!("wrong"),
         }
 
-        let identity2 = branch2.build_identity().unwrap();
-        assert_eq!(identity2.keychain().admin_keys()[1].key_id(), admin_key_3.key_id());
-        assert_eq!(identity2.keychain().admin_keys().len(), 2);
-        assert_eq!(identity2.claims().len(), 3);
-        match identity2.find_claim_by_name("primary").unwrap().spec() {
+        let identity2_instance = branch2.build_identity_instance().unwrap();
+        assert_eq!(identity2_instance.keychain().admin_keys()[1].key_id(), admin_key_3.key_id());
+        assert_eq!(identity2_instance.keychain().admin_keys().len(), 2);
+        assert_eq!(identity2_instance.claims().len(), 3);
+        match identity2_instance.find_claim_by_name("primary").unwrap().spec() {
             ClaimSpec::Address(val) => {
                 assert_eq!(val.open_public().unwrap().as_str(), "1112 Liberal Hokes ave.")
             }
             _ => panic!("wrong"),
         }
-        let transactions2 = Transactions::merge(branch1.clone(), branch2.clone()).unwrap();
+        let identity2 = Identity::merge(branch1.clone(), branch2.clone()).unwrap();
         assert_eq!(branch1.transactions().len(), 5);
         assert_eq!(branch2.transactions().len(), 5);
-        assert_eq!(transactions2.transactions().len(), 9);
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
+        assert_eq!(identity2.transactions().len(), 9);
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
             [ make_claim, Timestamp::from_str("2021-04-20T00:05:22Z").unwrap(), ClaimSpec::Url(MaybePrivate::new_public(Url::parse("https://www.ITSJUSTAFLU.com/logic-and-facts").unwrap())), None::<String> ]
         };
-        assert_eq!(transactions3.transactions().len(), 10);
-        let identity3 = transactions3.build_identity().unwrap();
-        match identity3.find_claim_by_name("primary").unwrap().spec() {
+        assert_eq!(identity3.transactions().len(), 10);
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        match identity3_instance.find_claim_by_name("primary").unwrap().spec() {
             ClaimSpec::Address(val) => {
                 assert_eq!(val.open_public().unwrap().as_str(), "1112 Liberal Hokes ave.")
             }
             _ => panic!("wrong"),
         }
-        assert_eq!(identity3.claims().len(), 6);
-        assert_eq!(identity3.keychain().admin_keys().len(), 3);
-        assert_eq!(identity3.keychain().admin_keys()[1].key_id(), admin_key_2.key_id());
-        assert_eq!(identity3.keychain().admin_keys()[2].key_id(), admin_key_3.key_id());
-        assert_eq!(identity3.keychain().subkeys().len(), 0);
+        assert_eq!(identity3_instance.claims().len(), 6);
+        assert_eq!(identity3_instance.keychain().admin_keys().len(), 3);
+        assert_eq!(identity3_instance.keychain().admin_keys()[1].key_id(), admin_key_2.key_id());
+        assert_eq!(identity3_instance.keychain().admin_keys()[2].key_id(), admin_key_3.key_id());
+        assert_eq!(identity3_instance.keychain().subkeys().len(), 0);
     }
 
     #[test]
-    fn transactions_genesis() {
+    fn identity_genesis() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity = transactions.build_identity().unwrap();
-        let policies = identity.policies().iter().map(|x| x.policy().clone()).collect::<Vec<_>>();
-        let res = transactions.clone().push_transaction(
-            transactions
-                .create_identity(&HashAlgo::Blake3, Timestamp::now(), identity.keychain().admin_keys().clone(), policies)
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_instance = identity.build_identity_instance().unwrap();
+        let policies = identity_instance.policies().iter().map(|x| x.policy().clone()).collect::<Vec<_>>();
+        let res = identity.clone().push_transaction(
+            identity
+                .create_identity(&HashAlgo::Blake3, Timestamp::now(), identity_instance.keychain().admin_keys().clone(), policies)
                 .unwrap()
                 .sign(&master_key, &admin_key)
                 .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::DagCreateIdentityOnExistingChain));
 
-        let transactions2 = Transactions::new();
-        let res = transactions2.clone().push_transaction(
-            transactions2
+        let identity2 = Identity::new();
+        let res = identity2.clone().push_transaction(
+            identity2
                 .make_claim(
                     &HashAlgo::Blake3,
                     Timestamp::now(),
@@ -1236,16 +1248,16 @@ mod tests {
     }
 
     #[test]
-    fn transactions_create_identity() {
+    fn identity_create_identity() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity = transactions.build_identity().unwrap();
-        assert_eq!(identity.id(), &IdentityID::from(transactions.transactions()[0].id().clone()));
-        assert_eq!(identity.keychain().admin_keys().len(), 1);
-        assert_eq!(identity.policies().len(), 1);
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_instance = identity.build_identity_instance().unwrap();
+        assert_eq!(identity_instance.id(), &IdentityID::from(identity.transactions()[0].id().clone()));
+        assert_eq!(identity_instance.keychain().admin_keys().len(), 1);
+        assert_eq!(identity_instance.policies().len(), 1);
 
-        let res = transactions.clone().push_transaction(
-            transactions
+        let res = identity.clone().push_transaction(
+            identity
                 .create_identity(&HashAlgo::Blake3, Timestamp::now(), vec![], vec![])
                 .unwrap()
                 .sign(&master_key, &admin_key)
@@ -1255,9 +1267,9 @@ mod tests {
     }
 
     #[test]
-    fn transactions_reset_identity() {
+    fn identity_reset_identity() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Alpha", None);
         let admin_key3 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Zing", None);
         let capability2 = Capability::Transaction {
@@ -1282,149 +1294,217 @@ mod tests {
                 participants: vec![],
             },
         );
-        let identity1 = transactions.build_identity().unwrap();
-        assert_eq!(identity1.keychain().admin_keys().len(), 1);
-        assert!(identity1.keychain().admin_key_by_name("Alpha").is_some());
-        assert_eq!(identity1.policies().len(), 1);
+        let identity1_instances = identity.build_identity_instance().unwrap();
+        assert_eq!(identity1_instances.keychain().admin_keys().len(), 1);
+        assert!(identity1_instances.keychain().admin_key_by_name("Alpha").is_some());
+        assert_eq!(identity1_instances.policies().len(), 1);
         assert_eq!(
-            identity1.policies()[0].id(),
-            &PolicyContainer::gen_id(transactions.transactions()[0].id(), 0).unwrap()
+            identity1_instances.policies()[0].id(),
+            &PolicyContainer::gen_id(identity.transactions()[0].id(), 0).unwrap()
         );
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ reset_identity, Timestamp::now(), Some(vec![admin_key2.clone(), admin_key3.clone()]), Some(vec![policy2.clone(), policy3.clone()]) ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.keychain().admin_keys().len(), 2);
-        assert_eq!(identity2.keychain().admin_key_by_name("Alpha").unwrap().key(), admin_key2.key());
-        assert!(identity2.keychain().admin_key_by_name("Zing").is_some());
-        assert_eq!(identity2.policies().len(), 2);
+        let identity2_instances = identity2.build_identity_instance().unwrap();
+        assert_eq!(identity2_instances.keychain().admin_keys().len(), 2);
+        assert_eq!(identity2_instances.keychain().admin_key_by_name("Alpha").unwrap().key(), admin_key2.key());
+        assert!(identity2_instances.keychain().admin_key_by_name("Zing").is_some());
+        assert_eq!(identity2_instances.policies().len(), 2);
         assert_eq!(
-            identity2.policies()[0].id(),
-            &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 0).unwrap()
+            identity2_instances.policies()[0].id(),
+            &PolicyContainer::gen_id(identity2.transactions()[1].id(), 0).unwrap()
         );
         assert_eq!(
-            identity2.policies()[1].id(),
-            &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 1).unwrap()
+            identity2_instances.policies()[1].id(),
+            &PolicyContainer::gen_id(identity2.transactions()[1].id(), 1).unwrap()
         );
     }
 
     #[test]
-    fn transactions_revoke_identity() {
+    fn identity_revoke_identity() {
         todo!("Revoked identities should bar any changes/updates");
     }
 
     #[test]
-    fn transactions_add_admin_key() {
+    fn identity_add_admin_key() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity1 = transactions.build_identity().unwrap();
-        assert_eq!(identity1.keychain().admin_keys().len(), 1);
-        assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).map(|x| x.key()), Some(admin_key.key()));
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity1_instance = identity.build_identity_instance().unwrap();
+        assert_eq!(identity1_instance.keychain().admin_keys().len(), 1);
+        assert_eq!(
+            identity1_instance
+                .keychain()
+                .admin_key_by_keyid(&admin_key.key_id())
+                .map(|x| x.key()),
+            Some(admin_key.key())
+        );
 
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "publish key lol", None);
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ add_admin_key, Timestamp::now(), admin_key2.clone() ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.keychain().admin_keys().len(), 2);
-        assert_eq!(identity2.keychain().admin_key_by_name("Alpha").map(|x| x.key()), Some(admin_key.key()));
-        assert_eq!(identity2.keychain().admin_key_by_name("publish key lol").map(|x| x.key()), Some(admin_key2.key()));
+        let identity2_instance = identity2.build_identity_instance().unwrap();
+        assert_eq!(identity2_instance.keychain().admin_keys().len(), 2);
+        assert_eq!(identity2_instance.keychain().admin_key_by_name("Alpha").map(|x| x.key()), Some(admin_key.key()));
+        assert_eq!(
+            identity2_instance.keychain().admin_key_by_name("publish key lol").map(|x| x.key()),
+            Some(admin_key2.key())
+        );
 
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
             [ add_admin_key, Timestamp::now(), admin_key2.clone() ]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.keychain().admin_keys().len(), 2);
-        assert_eq!(identity3.keychain().admin_key_by_name("Alpha").map(|x| x.key()), Some(admin_key.key()));
-        assert_eq!(identity3.keychain().admin_key_by_name("publish key lol").map(|x| x.key()), Some(admin_key2.key()));
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert_eq!(identity3_instance.keychain().admin_keys().len(), 2);
+        assert_eq!(identity3_instance.keychain().admin_key_by_name("Alpha").map(|x| x.key()), Some(admin_key.key()));
+        assert_eq!(
+            identity3_instance.keychain().admin_key_by_name("publish key lol").map(|x| x.key()),
+            Some(admin_key2.key())
+        );
     }
 
     #[test]
-    fn transactions_edit_admin_key() {
+    fn identity_edit_admin_key() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity1 = transactions.build_identity().unwrap();
-        assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Alpha");
-        assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(), &None);
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity1_instance = identity.build_identity_instance().unwrap();
+        assert_eq!(
+            identity1_instance
+                .keychain()
+                .admin_key_by_keyid(&admin_key.key_id())
+                .unwrap()
+                .name(),
+            "Alpha"
+        );
+        assert_eq!(
+            identity1_instance
+                .keychain()
+                .admin_key_by_keyid(&admin_key.key_id())
+                .unwrap()
+                .description(),
+            &None
+        );
 
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ edit_admin_key, Timestamp::now(), admin_key.key_id(), None, Some(Some("get a job")) ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Alpha");
+        let identity2_instance = identity2.build_identity_instance().unwrap();
         assert_eq!(
-            identity2.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(),
+            identity2_instance
+                .keychain()
+                .admin_key_by_keyid(&admin_key.key_id())
+                .unwrap()
+                .name(),
+            "Alpha"
+        );
+        assert_eq!(
+            identity2_instance
+                .keychain()
+                .admin_key_by_keyid(&admin_key.key_id())
+                .unwrap()
+                .description(),
             &Some("get a job".into())
         );
 
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
             [ edit_admin_key, Timestamp::now(), admin_key.key_id(), Some("Jerkface"), None ]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Jerkface");
+        let identity3_instance = identity3.build_identity_instance().unwrap();
         assert_eq!(
-            identity3.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(),
+            identity3_instance
+                .keychain()
+                .admin_key_by_keyid(&admin_key.key_id())
+                .unwrap()
+                .name(),
+            "Jerkface"
+        );
+        assert_eq!(
+            identity3_instance
+                .keychain()
+                .admin_key_by_keyid(&admin_key.key_id())
+                .unwrap()
+                .description(),
             &Some("get a job".into())
         );
 
-        let transactions4 = sign_and_push! { &master_key, &admin_key, transactions3.clone(),
+        let identity4 = sign_and_push! { &master_key, &admin_key, identity3.clone(),
             [ edit_admin_key, Timestamp::now(), admin_key.key_id(), None::<String>, Some(None) ]
         };
-        let identity4 = transactions4.build_identity().unwrap();
-        assert_eq!(identity4.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().name(), "Jerkface");
-        assert_eq!(identity4.keychain().admin_key_by_keyid(&admin_key.key_id()).unwrap().description(), &None);
+        let identity4_instance = identity4.build_identity_instance().unwrap();
+        assert_eq!(
+            identity4_instance
+                .keychain()
+                .admin_key_by_keyid(&admin_key.key_id())
+                .unwrap()
+                .name(),
+            "Jerkface"
+        );
+        assert_eq!(
+            identity4_instance
+                .keychain()
+                .admin_key_by_keyid(&admin_key.key_id())
+                .unwrap()
+                .description(),
+            &None
+        );
     }
 
     #[test]
-    fn transactions_revoke_admin_key() {
+    fn identity_revoke_admin_key() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity1 = transactions.build_identity().unwrap();
-        assert_eq!(identity1.keychain().admin_keys().len(), 1);
-        assert_eq!(identity1.keychain().subkeys().len(), 0);
-        assert_eq!(identity1.keychain().admin_key_by_keyid(&admin_key.key_id()).map(|x| x.key()), Some(admin_key.key()));
-        assert_eq!(identity1.keychain().admin_key_by_name("Alpha").unwrap().revocation(), &None);
-        assert_eq!(identity1.keychain().admin_key_by_name("Alpha").unwrap().name(), "Alpha");
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity1_instance = identity.build_identity_instance().unwrap();
+        assert_eq!(identity1_instance.keychain().admin_keys().len(), 1);
+        assert_eq!(identity1_instance.keychain().subkeys().len(), 0);
+        assert_eq!(
+            identity1_instance
+                .keychain()
+                .admin_key_by_keyid(&admin_key.key_id())
+                .map(|x| x.key()),
+            Some(admin_key.key())
+        );
+        assert_eq!(identity1_instance.keychain().admin_key_by_name("Alpha").unwrap().revocation(), &None);
+        assert_eq!(identity1_instance.keychain().admin_key_by_name("Alpha").unwrap().name(), "Alpha");
 
-        let key_id = identity1.keychain().admin_key_by_name("Alpha").unwrap().key_id();
+        let key_id = identity1_instance.keychain().admin_key_by_name("Alpha").unwrap().key_id();
 
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ revoke_admin_key, Timestamp::now(), admin_key.key_id(), RevocationReason::Compromised, Some("rotten") ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.keychain().admin_keys().len(), 1);
-        assert!(identity2.keychain().admin_key_by_name("Alpha").is_none());
+        let identity2_instance = identity2.build_identity_instance().unwrap();
+        assert_eq!(identity2_instance.keychain().admin_keys().len(), 1);
+        assert!(identity2_instance.keychain().admin_key_by_name("Alpha").is_none());
         assert_eq!(
-            identity2.keychain().admin_key_by_keyid(&key_id).unwrap().revocation(),
+            identity2_instance.keychain().admin_key_by_keyid(&key_id).unwrap().revocation(),
             &Some(RevocationReason::Compromised)
         );
-        assert_eq!(identity2.keychain().admin_key_by_keyid(&key_id).unwrap().name(), "rotten");
-        assert_eq!(identity2.keychain().subkeys().len(), 0);
-        assert!(identity2.keychain().subkey_by_name("Alpha").is_none());
-        assert!(identity2.keychain().subkey_by_name("rotten").is_none());
-        assert!(identity2.keychain().subkey_by_keyid(&key_id).is_none());
+        assert_eq!(identity2_instance.keychain().admin_key_by_keyid(&key_id).unwrap().name(), "rotten");
+        assert_eq!(identity2_instance.keychain().subkeys().len(), 0);
+        assert!(identity2_instance.keychain().subkey_by_name("Alpha").is_none());
+        assert!(identity2_instance.keychain().subkey_by_name("rotten").is_none());
+        assert!(identity2_instance.keychain().subkey_by_keyid(&key_id).is_none());
 
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
             [ revoke_admin_key, Timestamp::now(), admin_key.key_id(), RevocationReason::Compromised, Some("toast") ]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.keychain().admin_keys().len(), 1);
-        assert!(identity3.keychain().admin_key_by_name("Alpha").is_none());
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert_eq!(identity3_instance.keychain().admin_keys().len(), 1);
+        assert!(identity3_instance.keychain().admin_key_by_name("Alpha").is_none());
         assert_eq!(
-            identity3.keychain().admin_key_by_keyid(&key_id).unwrap().revocation(),
+            identity3_instance.keychain().admin_key_by_keyid(&key_id).unwrap().revocation(),
             &Some(RevocationReason::Compromised)
         );
-        assert_eq!(identity3.keychain().admin_key_by_keyid(&key_id).unwrap().name(), "toast");
-        assert_eq!(identity3.keychain().subkeys().len(), 0);
-        assert!(identity3.keychain().subkey_by_name("Alpha").is_none());
-        assert!(identity3.keychain().subkey_by_name("rotten").is_none());
-        assert!(identity3.keychain().subkey_by_keyid(&key_id).is_none());
+        assert_eq!(identity3_instance.keychain().admin_key_by_keyid(&key_id).unwrap().name(), "toast");
+        assert_eq!(identity3_instance.keychain().subkeys().len(), 0);
+        assert!(identity3_instance.keychain().subkey_by_name("Alpha").is_none());
+        assert!(identity3_instance.keychain().subkey_by_name("rotten").is_none());
+        assert!(identity3_instance.keychain().subkey_by_keyid(&key_id).is_none());
     }
 
     #[test]
-    fn transactions_add_policy() {
+    fn identity_add_policy() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let capability2 = Capability::Transaction {
             body_type: vec![TransactionBodyType::ResetIdentityV1],
             context: Context::Permissive,
@@ -1437,60 +1517,60 @@ mod tests {
             },
         );
 
-        let identity1 = transactions.build_identity().unwrap();
-        assert_eq!(identity1.policies().len(), 1);
+        let identity1_instance = identity.build_identity_instance().unwrap();
+        assert_eq!(identity1_instance.policies().len(), 1);
         assert_eq!(
-            identity1.policies()[0].id(),
-            &PolicyContainer::gen_id(transactions.transactions()[0].id(), 0).unwrap()
+            identity1_instance.policies()[0].id(),
+            &PolicyContainer::gen_id(identity.transactions()[0].id(), 0).unwrap()
         );
 
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ add_policy, Timestamp::now(), policy2.clone() ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.policies().len(), 2);
+        let identity2_instance = identity2.build_identity_instance().unwrap();
+        assert_eq!(identity2_instance.policies().len(), 2);
         assert_eq!(
-            identity2.policies()[0].id(),
-            &PolicyContainer::gen_id(transactions2.transactions()[0].id(), 0).unwrap()
+            identity2_instance.policies()[0].id(),
+            &PolicyContainer::gen_id(identity2.transactions()[0].id(), 0).unwrap()
         );
         assert_eq!(
-            identity2.policies()[1].id(),
-            &PolicyContainer::gen_id(transactions2.transactions()[1].id(), 0).unwrap()
+            identity2_instance.policies()[1].id(),
+            &PolicyContainer::gen_id(identity2.transactions()[1].id(), 0).unwrap()
         );
 
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
             [ add_policy, Timestamp::now(), policy2.clone() ]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.policies().len(), 3);
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert_eq!(identity3_instance.policies().len(), 3);
         assert_eq!(
-            identity3.policies()[0].id(),
-            &PolicyContainer::gen_id(transactions3.transactions()[0].id(), 0).unwrap()
+            identity3_instance.policies()[0].id(),
+            &PolicyContainer::gen_id(identity3.transactions()[0].id(), 0).unwrap()
         );
         assert_eq!(
-            identity3.policies()[1].id(),
-            &PolicyContainer::gen_id(transactions3.transactions()[1].id(), 0).unwrap()
+            identity3_instance.policies()[1].id(),
+            &PolicyContainer::gen_id(identity3.transactions()[1].id(), 0).unwrap()
         );
         assert_eq!(
-            identity3.policies()[2].id(),
-            &PolicyContainer::gen_id(transactions3.transactions()[2].id(), 0).unwrap()
+            identity3_instance.policies()[2].id(),
+            &PolicyContainer::gen_id(identity3.transactions()[2].id(), 0).unwrap()
         );
     }
 
     #[test]
-    fn transactions_delete_policy() {
+    fn identity_delete_policy() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity = transactions.build_identity().unwrap();
-        let policy_id = identity.policies()[0].id().clone();
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_instance = identity.build_identity_instance().unwrap();
+        let policy_id = identity_instance.policies()[0].id().clone();
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ delete_policy, Timestamp::now(), policy_id.clone() ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.policies().len(), 0);
+        let identity2_instance = identity2.build_identity_instance().unwrap();
+        assert_eq!(identity2_instance.policies().len(), 0);
 
-        let res = transactions2.clone().push_transaction(
-            transactions2
+        let res = identity2.clone().push_transaction(
+            identity2
                 .delete_policy(&HashAlgo::Blake3, Timestamp::now(), policy_id.clone())
                 .unwrap()
                 .sign(&master_key, &admin_key)
@@ -1500,9 +1580,9 @@ mod tests {
     }
 
     #[test]
-    fn transactions_make_claim() {
+    fn identity_make_claim() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
         macro_rules! make_specs {
             ($rng:expr, $master:expr, $claimmaker:expr, $val:expr) => {{
@@ -1521,23 +1601,23 @@ mod tests {
                 let val = $val;
                 let (spec_private, spec_public) = make_specs!(&mut rng, master_key, $claimmaker, val);
 
-                let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+                let identity2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
                     [ make_claim, Timestamp::now(), spec_private, None::<String> ]
                 };
-                let identity2 = transactions2.build_identity().unwrap();
-                let maybe = $get_maybe(identity2.claims()[0].spec().clone());
+                let identity2_instance = identity2.build_identity_instance().unwrap();
+                let maybe = $get_maybe(identity2_instance.claims()[0].spec().clone());
                 assert_eq!(maybe.open(&master_key).unwrap(), val);
-                assert_eq!(identity2.claims().len(), 1);
-                assert_eq!(transactions2.transactions().len(), 2);
+                assert_eq!(identity2_instance.claims().len(), 1);
+                assert_eq!(identity2.transactions().len(), 2);
 
-                let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+                let identity2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
                     [ make_claim, Timestamp::now(), spec_public, None::<String> ]
                 };
-                let identity2 = transactions2.build_identity().unwrap();
-                let maybe = $get_maybe(identity2.claims()[0].spec().clone());
+                let identity2_instance = identity2.build_identity_instance().unwrap();
+                let maybe = $get_maybe(identity2_instance.claims()[0].spec().clone());
                 assert_eq!(maybe.open(&master_key).unwrap(), val);
-                assert_eq!(identity2.claims().len(), 1);
-                assert_eq!(transactions2.transactions().len(), 2);
+                assert_eq!(identity2_instance.claims().len(), 1);
+                assert_eq!(identity2.transactions().len(), 2);
             };
 
             ($claimty:ident, $val:expr) => {
@@ -1550,11 +1630,11 @@ mod tests {
             };
         }
 
-        let identity = transactions.build_identity().unwrap();
-        assert_eq!(identity.claims().len(), 0);
-        assert_eq!(transactions.transactions().len(), 1);
+        let identity_instance = identity.build_identity_instance().unwrap();
+        assert_eq!(identity_instance.claims().len(), 0);
+        assert_eq!(identity.transactions().len(), 1);
 
-        assert_claim! { Identity, identity.id().clone() }
+        assert_claim! { Identity, identity_instance.id().clone() }
         assert_claim! { Name, String::from("Marty Malt") }
         assert_claim! { Birthday, Date::from_str("2010-01-03").unwrap() }
         assert_claim! { Email, String::from("marty@sids.com") }
@@ -1574,173 +1654,179 @@ mod tests {
     }
 
     #[test]
-    fn transactions_edit_claim() {
+    fn identity_edit_claim() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ make_claim, Timestamp::now(), ClaimSpec::Url(MaybePrivate::new_public(Url::parse("https://www.cactus-petes.com/yeeeehawwww").unwrap())), Some("OpenID") ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.claims().len(), 1);
-        assert_eq!(identity2.claims()[0].name(), &Some("OpenID".into()));
+        let identity2_instance = identity2.build_identity_instance().unwrap();
+        assert_eq!(identity2_instance.claims().len(), 1);
+        assert_eq!(identity2_instance.claims()[0].name(), &Some("OpenID".into()));
 
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
-            [ edit_claim, Timestamp::now(), identity2.claims()[0].id().clone(), None::<String> ]
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
+            [ edit_claim, Timestamp::now(), identity2_instance.claims()[0].id().clone(), None::<String> ]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.claims().len(), 1);
-        assert_eq!(identity3.claims()[0].name(), &None);
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert_eq!(identity3_instance.claims().len(), 1);
+        assert_eq!(identity3_instance.claims()[0].name(), &None);
     }
 
     #[test]
-    fn transactions_delete_claim() {
+    fn identity_delete_claim() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity = transactions.build_identity().unwrap();
-        assert_eq!(identity.claims().len(), 0);
-        assert_eq!(transactions.transactions().len(), 1);
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_instance = identity.build_identity_instance().unwrap();
+        assert_eq!(identity_instance.claims().len(), 0);
+        assert_eq!(identity.transactions().len(), 1);
 
-        let identity_id = IdentityID::from(transactions.transactions()[0].id().clone());
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let identity_id = IdentityID::from(identity.transactions()[0].id().clone());
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ make_claim, Timestamp::now(), ClaimSpec::Identity(MaybePrivate::new_public(identity_id)), None::<String> ]
         };
-        assert_eq!(transactions2.transactions().len(), 2);
+        assert_eq!(identity2.transactions().len(), 2);
 
-        let identity = transactions2.build_identity().unwrap();
-        let claim_id = identity.claims()[0].id().clone();
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
+        let identity_instance = identity2.build_identity_instance().unwrap();
+        let claim_id = identity_instance.claims()[0].id().clone();
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
             [delete_claim, Timestamp::now(), claim_id.clone()]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.claims().len(), 0);
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert_eq!(identity3_instance.claims().len(), 0);
 
-        let transactions4 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
+        let identity4 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
             [ delete_claim, Timestamp::now(), ClaimID::random() ]
         };
-        let identity4 = transactions4.build_identity().unwrap();
-        assert_eq!(identity4.claims().len(), 1);
+        let identity4_instance = identity4.build_identity_instance().unwrap();
+        assert_eq!(identity4_instance.claims().len(), 1);
 
-        let transactions5 = sign_and_push! { &master_key, &admin_key, transactions3.clone(),
+        let identity5 = sign_and_push! { &master_key, &admin_key, identity3.clone(),
             [ delete_claim, Timestamp::now(), claim_id.clone() ]
         };
-        let identity5 = transactions5.build_identity().unwrap();
-        assert_eq!(identity5.claims().len(), 0);
+        let identity5_instance = identity5.build_identity_instance().unwrap();
+        assert_eq!(identity5_instance.claims().len(), 0);
     }
 
     #[test]
-    fn transactions_make_stamp() {
+    fn identity_make_stamp() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity_id = IdentityID::from(transactions.transactions()[0].id().clone());
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_id = IdentityID::from(identity.transactions()[0].id().clone());
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ make_claim, Timestamp::now(), ClaimSpec::Identity(MaybePrivate::new_public(identity_id)), None::<String> ]
         };
-        let identity = transactions2.build_identity().unwrap();
-        let claim = identity.claims()[0].clone();
+        let identity_instance = identity2.build_identity_instance().unwrap();
+        let claim = identity_instance.claims()[0].clone();
 
-        let (master_key_stamper, transactions_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key_stamper, identity_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
 
-        let identity_stamper1 = transactions_stamper.build_identity().unwrap();
+        let identity_stamper1 = identity_stamper.build_identity_instance().unwrap();
         assert_eq!(identity_stamper1.stamps().len(), 0);
 
         let entry = StampEntry::new(
-            IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
-            identity.id().clone(),
+            IdentityID::from(identity_stamper.transactions()[0].id().clone()),
+            identity_instance.id().clone(),
             claim.id().clone(),
             Confidence::Low,
             Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
         );
 
-        let make_stamp_trans = transactions_stamper
+        let make_stamp_trans = identity_stamper
             .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry)
             .unwrap()
             .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();
-        let transactions_stamper2 = transactions_stamper.push_transaction(make_stamp_trans.clone()).unwrap();
-        let identity_stamper2 = transactions_stamper2.build_identity().unwrap();
-        assert_eq!(identity_stamper2.stamps().len(), 1);
-        assert_eq!(identity_stamper2.stamps()[0].revocation(), &None);
+        let identity_stamper2 = identity_stamper.push_transaction(make_stamp_trans.clone()).unwrap();
+        let identity_stamper2_instance = identity_stamper2.build_identity_instance().unwrap();
+        assert_eq!(identity_stamper2_instance.stamps().len(), 1);
+        assert_eq!(identity_stamper2_instance.stamps()[0].revocation(), &None);
     }
 
     #[test]
-    fn transactions_revoke_stamp() {
+    fn identity_revoke_stamp() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity_id = IdentityID::from(transactions.transactions()[0].id().clone());
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_id = IdentityID::from(identity.transactions()[0].id().clone());
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ make_claim, Timestamp::now(), ClaimSpec::Identity(MaybePrivate::new_public(identity_id)), None::<String> ]
         };
 
-        let (master_key_stamper, transactions_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity_stamper1 = transactions_stamper.build_identity().unwrap();
-        assert_eq!(identity_stamper1.stamps().len(), 0);
+        let (master_key_stamper, identity_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_stamper1_instance = identity_stamper.build_identity_instance().unwrap();
+        assert_eq!(identity_stamper1_instance.stamps().len(), 0);
 
-        let identity_stampee2 = transactions2.build_identity().unwrap();
-        let claim = identity_stampee2.claims()[0].clone();
+        let identity_stampee2_instance = identity2.build_identity_instance().unwrap();
+        let claim = identity_stampee2_instance.claims()[0].clone();
         let entry = StampEntry::new(
-            IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
-            identity_stampee2.id().clone(),
+            IdentityID::from(identity_stamper.transactions()[0].id().clone()),
+            identity_stampee2_instance.id().clone(),
             claim.id().clone(),
             Confidence::Low,
             Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
         );
 
-        let make_stamp_trans = transactions_stamper
+        let make_stamp_trans = identity_stamper
             .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry)
             .unwrap()
             .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();
-        let transactions_stamper2 = transactions_stamper.push_transaction(make_stamp_trans.clone()).unwrap();
-        let identity_stamper2 = transactions_stamper2.build_identity().unwrap();
-        assert_eq!(identity_stamper2.stamps().len(), 1);
-        assert_eq!(identity_stamper2.stamps()[0].revocation(), &None);
+        let identity_stamper2 = identity_stamper.push_transaction(make_stamp_trans.clone()).unwrap();
+        let identity_stamper2_instance = identity_stamper2.build_identity_instance().unwrap();
+        assert_eq!(identity_stamper2_instance.stamps().len(), 1);
+        assert_eq!(identity_stamper2_instance.stamps()[0].revocation(), &None);
 
-        let stamp_id = identity_stamper2.stamps()[0].id();
-        let revoke_trans = transactions_stamper2
+        let stamp_id = identity_stamper2_instance.stamps()[0].id();
+        let revoke_trans = identity_stamper2
             .revoke_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_id.clone(), StampRevocationReason::Compromised)
             .unwrap()
             .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();
-        let transactions_stamper3 = transactions_stamper2.clone().push_transaction(revoke_trans.clone()).unwrap();
-        let identity_stamper3 = transactions_stamper3.build_identity().unwrap();
-        assert_eq!(identity_stamper3.stamps().len(), 1);
-        assert_eq!(identity_stamper3.stamps()[0].revocation().as_ref().unwrap(), &StampRevocationReason::Compromised);
+        let identity_stamper3 = identity_stamper2.clone().push_transaction(revoke_trans.clone()).unwrap();
+        let identity_stamper3_instance = identity_stamper3.build_identity_instance().unwrap();
+        assert_eq!(identity_stamper3_instance.stamps().len(), 1);
+        assert_eq!(
+            identity_stamper3_instance.stamps()[0].revocation().as_ref().unwrap(),
+            &StampRevocationReason::Compromised
+        );
 
         // same revocation, different id, should work fine
-        let transactions_stamper4 = sign_and_push! { &master_key_stamper, &admin_key_stamper, transactions_stamper3.clone(),
+        let identity_stamper4 = sign_and_push! { &master_key_stamper, &admin_key_stamper, identity_stamper3.clone(),
             [ revoke_stamp, Timestamp::now(), stamp_id.clone(), StampRevocationReason::Unspecified ]
         };
-        let identity_stamper4 = transactions_stamper4.build_identity().unwrap();
+        let identity_stamper4_instance = identity_stamper4.build_identity_instance().unwrap();
         // should use the reason from the most recent transaction
-        assert_eq!(identity_stamper4.stamps()[0].revocation().as_ref().unwrap(), &StampRevocationReason::Unspecified);
+        assert_eq!(
+            identity_stamper4_instance.stamps()[0].revocation().as_ref().unwrap(),
+            &StampRevocationReason::Unspecified
+        );
     }
 
     #[test]
-    fn transactions_accept_stamp() {
+    fn identity_accept_stamp() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity_id = IdentityID::from(transactions.transactions()[0].id().clone());
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_id = IdentityID::from(identity.transactions()[0].id().clone());
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ make_claim, Timestamp::now(), ClaimSpec::Identity(MaybePrivate::new_public(identity_id)), None::<String> ]
         };
-        let identity = transactions2.build_identity().unwrap();
-        assert_eq!(identity.claims()[0].stamps().len(), 0);
-        let claim = identity.claims()[0].clone();
+        let identity_instance = identity2.build_identity_instance().unwrap();
+        assert_eq!(identity_instance.claims()[0].stamps().len(), 0);
+        let claim = identity_instance.claims()[0].clone();
 
-        let (master_key_stamper, transactions_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key_stamper, identity_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
         let entry = StampEntry::new(
-            IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
-            identity.id().clone(),
+            IdentityID::from(identity_stamper.transactions()[0].id().clone()),
+            identity_instance.id().clone(),
             claim.id().clone(),
             Confidence::Low,
             Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
         );
-        let stamp_transaction_unsigned = transactions_stamper.make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry).unwrap();
+        let stamp_transaction_unsigned = identity_stamper.make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry).unwrap();
         let stamp_transaction = stamp_transaction_unsigned
             .clone()
             .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();
-        let not_stamp_transaction = transactions_stamper
+        let not_stamp_transaction = identity_stamper
             .make_claim(
                 &HashAlgo::Blake3,
                 Timestamp::now(),
@@ -1751,15 +1837,15 @@ mod tests {
             .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();
 
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2,
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2,
             [ accept_stamp, Timestamp::now(), stamp_transaction.clone() ]
         };
-        assert_eq!(transactions3.transactions().len(), 3);
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.claims()[0].stamps().len(), 1);
+        assert_eq!(identity3.transactions().len(), 3);
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert_eq!(identity3_instance.claims()[0].stamps().len(), 1);
 
-        let res = transactions3.clone().push_transaction(
-            transactions3
+        let res = identity3.clone().push_transaction(
+            identity3
                 .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction_unsigned.clone())
                 .unwrap()
                 .sign(&master_key, &admin_key)
@@ -1767,11 +1853,11 @@ mod tests {
         );
         assert_eq!(res.err(), Some(Error::TransactionNoSignatures));
 
-        let res = transactions3.accept_stamp(&HashAlgo::Blake3, Timestamp::now(), not_stamp_transaction.clone());
+        let res = identity3.accept_stamp(&HashAlgo::Blake3, Timestamp::now(), not_stamp_transaction.clone());
         assert_eq!(res.err(), Some(Error::TransactionMismatch));
 
-        let res = transactions3.clone().push_transaction(
-            transactions3
+        let res = identity3.clone().push_transaction(
+            identity3
                 .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction.clone())
                 .unwrap()
                 .sign(&master_key, &admin_key)
@@ -1779,11 +1865,11 @@ mod tests {
         );
         assert_eq!(res.err(), None);
 
-        let transactions4 = sign_and_push! { &master_key, &admin_key, transactions3.clone(),
+        let identity4 = sign_and_push! { &master_key, &admin_key, identity3.clone(),
             [ delete_claim, Timestamp::now(), claim.id().clone() ]
         };
-        let res = transactions4.clone().push_transaction(
-            transactions4
+        let res = identity4.clone().push_transaction(
+            identity4
                 .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction.clone())
                 .unwrap()
                 .sign(&master_key, &admin_key)
@@ -1793,46 +1879,46 @@ mod tests {
     }
 
     #[test]
-    fn transactions_delete_stamp() {
+    fn identity_delete_stamp() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity_id = IdentityID::from(transactions.transactions()[0].id().clone());
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_id = IdentityID::from(identity.transactions()[0].id().clone());
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ make_claim, Timestamp::now(), ClaimSpec::Identity(MaybePrivate::new_public(identity_id)), None::<String> ]
         };
-        let identity = transactions2.build_identity().unwrap();
-        assert_eq!(identity.claims()[0].stamps().len(), 0);
-        let claim = identity.claims()[0].clone();
+        let identity_instance = identity2.build_identity_instance().unwrap();
+        assert_eq!(identity_instance.claims()[0].stamps().len(), 0);
+        let claim = identity_instance.claims()[0].clone();
 
-        let (master_key_stamper, transactions_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key_stamper, identity_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
         let entry = StampEntry::new(
-            IdentityID::from(transactions_stamper.transactions()[0].id().clone()),
-            identity.id().clone(),
+            IdentityID::from(identity_stamper.transactions()[0].id().clone()),
+            identity_instance.id().clone(),
             claim.id().clone(),
             Confidence::Low,
             Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
         );
-        let stamp_transaction = transactions_stamper
+        let stamp_transaction = identity_stamper
             .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry)
             .unwrap()
             .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();
 
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2,
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2,
             [ accept_stamp, Timestamp::now(), stamp_transaction.clone() ]
         };
-        assert_eq!(transactions3.transactions().len(), 3);
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.claims()[0].stamps().len(), 1);
+        assert_eq!(identity3.transactions().len(), 3);
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert_eq!(identity3_instance.claims()[0].stamps().len(), 1);
 
-        let transactions4 = sign_and_push! { &master_key, &admin_key, transactions3.clone(),
+        let identity4 = sign_and_push! { &master_key, &admin_key, identity3.clone(),
             [ delete_stamp, Timestamp::now(), StampID::from(stamp_transaction.id().clone()) ]
         };
-        let identity4 = transactions4.build_identity().unwrap();
-        assert_eq!(identity4.claims()[0].stamps().len(), 0);
+        let identity4_instance = identity4.build_identity_instance().unwrap();
+        assert_eq!(identity4_instance.claims()[0].stamps().len(), 0);
 
-        let res = transactions4.clone().push_transaction(
-            transactions4
+        let res = identity4.clone().push_transaction(
+            identity4
                 .delete_stamp(&HashAlgo::Blake3, Timestamp::now(), StampID::from(stamp_transaction.id().clone()))
                 .unwrap()
                 .sign(&master_key, &admin_key)
@@ -1842,77 +1928,85 @@ mod tests {
     }
 
     #[test]
-    fn transactions_add_subkey() {
+    fn identity_add_subkey() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity = transactions.build_identity().unwrap();
-        assert_eq!(identity.keychain().subkeys().len(), 0);
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_instance = identity.build_identity_instance().unwrap();
+        assert_eq!(identity_instance.keychain().subkeys().len(), 0);
 
         let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
         let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair.clone()), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair.clone()), "default:crypto", Some("Use this to send me emails") ]
             [ add_subkey, Timestamp::now(), Key::new_secret(secret_key.clone()), "default:secret", Some("Encrypt/decrypt things locally with this key") ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.keychain().subkeys()[0].name(), "default:sign");
-        assert_eq!(identity2.keychain().subkeys()[1].name(), "default:crypto");
-        assert_eq!(identity2.keychain().subkeys()[2].name(), "default:secret");
-        assert_eq!(identity2.keychain().subkeys().len(), 3);
+        let identity2_instance = identity2.build_identity_instance().unwrap();
+        assert_eq!(identity2_instance.keychain().subkeys()[0].name(), "default:sign");
+        assert_eq!(identity2_instance.keychain().subkeys()[1].name(), "default:crypto");
+        assert_eq!(identity2_instance.keychain().subkeys()[2].name(), "default:secret");
+        assert_eq!(identity2_instance.keychain().subkeys().len(), 3);
 
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair.clone()), "get a job", None ]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.keychain().subkeys()[0].name(), "default:sign");
-        assert_eq!(identity3.keychain().subkeys()[1].name(), "default:crypto");
-        assert_eq!(identity3.keychain().subkeys()[2].name(), "default:secret");
-        assert_eq!(identity3.keychain().subkeys().len(), 3);
-        assert!(identity3.keychain().subkey_by_name("get a job").is_none());
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert_eq!(identity3_instance.keychain().subkeys()[0].name(), "default:sign");
+        assert_eq!(identity3_instance.keychain().subkeys()[1].name(), "default:crypto");
+        assert_eq!(identity3_instance.keychain().subkeys()[2].name(), "default:secret");
+        assert_eq!(identity3_instance.keychain().subkeys().len(), 3);
+        assert!(identity3_instance.keychain().subkey_by_name("get a job").is_none());
     }
 
     #[test]
-    fn transactions_edit_subkey() {
+    fn identity_edit_subkey() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
         let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
         let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
             [ add_subkey, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key") ]
         };
 
-        let identity2 = transactions2.build_identity().unwrap();
-        assert_eq!(identity2.keychain().subkeys().len(), 3);
+        let identity2_instance = identity2.build_identity_instance().unwrap();
+        assert_eq!(identity2_instance.keychain().subkeys().len(), 3);
 
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
-            [ edit_subkey, Timestamp::now(), identity2.keychain().subkey_by_name("default:crypto").unwrap().key_id(), Some("default:MYLITTLEPONY"), Some(Some("Tonga")) ]
-            [ edit_subkey, Timestamp::now(), identity2.keychain().subkey_by_name("default:secret").unwrap().key_id(), Some("default:secret"), None ]
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
+            [ edit_subkey, Timestamp::now(), identity2_instance.keychain().subkey_by_name("default:crypto").unwrap().key_id(), Some("default:MYLITTLEPONY"), Some(Some("Tonga")) ]
+            [ edit_subkey, Timestamp::now(), identity2_instance.keychain().subkey_by_name("default:secret").unwrap().key_id(), Some("default:secret"), None ]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.keychain().subkeys().len(), 3);
-        assert!(identity3.keychain().subkey_by_name("default:sign").is_some());
-        assert!(identity3.keychain().subkey_by_name("default:MYLITTLEPONY").is_some());
-        assert!(identity3.keychain().subkey_by_name("default:crypto").is_none());
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert_eq!(identity3_instance.keychain().subkeys().len(), 3);
+        assert!(identity3_instance.keychain().subkey_by_name("default:sign").is_some());
+        assert!(identity3_instance.keychain().subkey_by_name("default:MYLITTLEPONY").is_some());
+        assert!(identity3_instance.keychain().subkey_by_name("default:crypto").is_none());
         assert_eq!(
-            identity3.keychain().subkey_by_name("default:MYLITTLEPONY").unwrap().description(),
+            identity3_instance
+                .keychain()
+                .subkey_by_name("default:MYLITTLEPONY")
+                .unwrap()
+                .description(),
             &Some("Tonga".into())
         );
         assert_eq!(
-            identity3.keychain().subkey_by_name("default:secret").unwrap().description(),
+            identity3_instance
+                .keychain()
+                .subkey_by_name("default:secret")
+                .unwrap()
+                .description(),
             &Some("Encrypt/decrypt things locally with this key".into())
         );
 
         let randkey = KeyID::random_secret();
-        let res = transactions3.clone().push_transaction(
-            transactions3
+        let res = identity3.clone().push_transaction(
+            identity3
                 .edit_subkey(
                     &HashAlgo::Blake3,
                     Timestamp::now(),
@@ -1928,132 +2022,138 @@ mod tests {
     }
 
     #[test]
-    fn transactions_revoke_subkey() {
+    fn identity_revoke_subkey() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
         let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
         let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
             [ add_subkey, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key") ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
-            [ revoke_subkey, Timestamp::now(), identity2.keychain().subkey_by_name("default:crypto").unwrap().key_id(), RevocationReason::Superseded, Some("revoked:default:crypto") ]
+        let identity2_instance = identity2.build_identity_instance().unwrap();
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
+            [ revoke_subkey, Timestamp::now(), identity2_instance.keychain().subkey_by_name("default:crypto").unwrap().key_id(), RevocationReason::Superseded, Some("revoked:default:crypto") ]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert!(identity3.keychain().subkeys()[0].revocation().is_none());
-        assert_eq!(identity3.keychain().subkeys()[1].revocation().as_ref(), Some(&RevocationReason::Superseded));
-        assert_eq!(identity3.keychain().subkeys()[1].name(), "revoked:default:crypto");
-        assert!(identity3.keychain().subkeys()[2].revocation().is_none());
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert!(identity3_instance.keychain().subkeys()[0].revocation().is_none());
+        assert_eq!(
+            identity3_instance.keychain().subkeys()[1].revocation().as_ref(),
+            Some(&RevocationReason::Superseded)
+        );
+        assert_eq!(identity3_instance.keychain().subkeys()[1].name(), "revoked:default:crypto");
+        assert!(identity3_instance.keychain().subkeys()[2].revocation().is_none());
 
-        let transactions4 = sign_and_push! { &master_key, &admin_key, transactions3.clone(),
-            [ revoke_subkey, Timestamp::now(), identity2.keychain().subkey_by_name("default:crypto").unwrap().key_id(), RevocationReason::Unspecified, Some("zingg") ]
+        let identity4 = sign_and_push! { &master_key, &admin_key, identity3.clone(),
+            [ revoke_subkey, Timestamp::now(), identity2_instance.keychain().subkey_by_name("default:crypto").unwrap().key_id(), RevocationReason::Unspecified, Some("zingg") ]
         };
-        let identity4 = transactions4.build_identity().unwrap();
-        assert!(identity4.keychain().subkeys()[0].revocation().is_none());
-        assert_eq!(identity4.keychain().subkeys()[1].revocation().as_ref(), Some(&RevocationReason::Superseded));
-        assert_eq!(identity4.keychain().subkeys()[1].name(), "revoked:default:crypto");
-        assert!(identity4.keychain().subkeys()[2].revocation().is_none());
+        let identity4_instance = identity4.build_identity_instance().unwrap();
+        assert!(identity4_instance.keychain().subkeys()[0].revocation().is_none());
+        assert_eq!(
+            identity4_instance.keychain().subkeys()[1].revocation().as_ref(),
+            Some(&RevocationReason::Superseded)
+        );
+        assert_eq!(identity4_instance.keychain().subkeys()[1].name(), "revoked:default:crypto");
+        assert!(identity4_instance.keychain().subkeys()[2].revocation().is_none());
     }
 
     #[test]
-    fn transactions_delete_subkey() {
+    fn identity_delete_subkey() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
         let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
         let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
             [ add_subkey, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key") ]
         };
-        let identity2 = transactions2.build_identity().unwrap();
-        let sign_id = identity2.keychain().subkey_by_name("default:sign").unwrap().key_id();
+        let identity2_instance = identity2.build_identity_instance().unwrap();
+        let sign_id = identity2_instance.keychain().subkey_by_name("default:sign").unwrap().key_id();
 
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions2.clone(),
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity2.clone(),
             [ delete_subkey, Timestamp::now(), sign_id.clone() ]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert_eq!(identity3.keychain().subkeys()[0].name(), "default:crypto");
-        assert_eq!(identity3.keychain().subkeys()[1].name(), "default:secret");
-        assert_eq!(identity3.keychain().subkeys().len(), 2);
+        let identity3_instance = identity3.build_identity_instance().unwrap();
+        assert_eq!(identity3_instance.keychain().subkeys()[0].name(), "default:crypto");
+        assert_eq!(identity3_instance.keychain().subkeys()[1].name(), "default:secret");
+        assert_eq!(identity3_instance.keychain().subkeys().len(), 2);
 
-        let transactions4 = sign_and_push! { &master_key, &admin_key, transactions3.clone(),
+        let identity4 = sign_and_push! { &master_key, &admin_key, identity3.clone(),
             [ delete_subkey, Timestamp::now(), sign_id.clone() ]
         };
-        let identity4 = transactions4.build_identity().unwrap();
-        assert_eq!(identity4.keychain().subkeys()[0].name(), "default:crypto");
-        assert_eq!(identity4.keychain().subkeys()[1].name(), "default:secret");
-        assert_eq!(identity4.keychain().subkeys().len(), 2);
+        let identity4_instance = identity4.build_identity_instance().unwrap();
+        assert_eq!(identity4_instance.keychain().subkeys()[0].name(), "default:crypto");
+        assert_eq!(identity4_instance.keychain().subkeys()[1].name(), "default:secret");
+        assert_eq!(identity4_instance.keychain().subkeys().len(), 2);
     }
 
     #[test]
-    fn transactions_publish() {
+    fn identity_publish() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Miner 49er".into())), None::<String> ]
             [ make_claim, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public("miner@49ers.net".into())), Some(String::from("primary")) ]
         };
-        let published = transactions2
+        let published = identity2
             .publish(&HashAlgo::Blake3, Timestamp::now())
             .unwrap()
             .sign(&master_key, &admin_key)
             .unwrap();
         match published.entry().body() {
             TransactionBody::PublishV1 {
-                transactions: published_trans,
+                identity: published_identity,
             } => {
-                assert!(!published_trans.has_private());
-                assert_eq!(published_trans.transactions().len(), 3);
-                assert_eq!(published_trans.transactions()[0].id(), transactions2.transactions()[0].id());
-                assert_eq!(published_trans.transactions()[1].id(), transactions2.transactions()[1].id());
-                assert_eq!(published_trans.transactions()[2].id(), transactions2.transactions()[2].id());
+                assert!(!published_identity.has_private());
+                assert_eq!(published_identity.transactions().len(), 3);
+                assert_eq!(published_identity.transactions()[0].id(), identity2.transactions()[0].id());
+                assert_eq!(published_identity.transactions()[1].id(), identity2.transactions()[1].id());
+                assert_eq!(published_identity.transactions()[2].id(), identity2.transactions()[2].id());
             }
             _ => panic!("Unexpected transaction: {published:?}"),
         }
 
-        let identity = transactions2.build_identity().unwrap();
-        published.verify(Some(&identity)).unwrap();
+        let identity_instance = identity2.build_identity_instance().unwrap();
+        published.verify(Some(&identity_instance)).unwrap();
 
         let mut published2 = published.clone();
         match published2.entry_mut().body_mut() {
             TransactionBody::PublishV1 {
-                transactions: ref mut published_trans2,
+                identity: ref mut published_identity2,
             } => {
-                published_trans2
+                published_identity2
                     .transactions_mut()
-                    .retain(|x| x.id() != transactions2.transactions()[1].id());
-                assert_eq!(published_trans2.transactions().len(), 2);
+                    .retain(|x| x.id() != identity2.transactions()[1].id());
+                assert_eq!(published_identity2.transactions().len(), 2);
             }
             _ => panic!("Unexpected transaction: {published2:?}"),
         }
 
-        assert!(matches!(published2.verify(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
+        assert!(matches!(published2.verify(Some(&identity_instance)).unwrap_err(), Error::TransactionIDMismatch(..)));
     }
 
     #[test]
-    fn transactions_sign() {
+    fn identity_sign() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let sig = transactions
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let sig = identity
             .sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from(b"get a job").as_slice())
             .unwrap()
             .sign(&master_key, &admin_key)
             .unwrap();
-        let identity = transactions.build_identity().unwrap();
+        let identity = identity.build_identity_instance().unwrap();
         sig.verify(Some(&identity)).unwrap();
 
-        let transactions_blank = Transactions::new();
-        let blank_res = transactions_blank.sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from("get a job").as_slice());
+        let identity_blank = Identity::new();
+        let blank_res = identity_blank.sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from("get a job").as_slice());
         assert!(matches!(blank_res, Err(Error::DagEmpty)));
 
         let mut sig_mod = sig.clone();
@@ -2070,10 +2170,10 @@ mod tests {
     }
 
     #[test]
-    fn transactions_ext() {
+    fn identity_ext() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let ext = transactions
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let ext = identity
             .ext(
                 &HashAlgo::Blake3,
                 Timestamp::now(),
@@ -2085,11 +2185,11 @@ mod tests {
             .unwrap()
             .sign(&master_key, &admin_key)
             .unwrap();
-        let identity = transactions.build_identity().unwrap();
+        let identity = identity.build_identity_instance().unwrap();
         ext.verify(Some(&identity)).unwrap();
 
-        let transactions_blank = Transactions::new();
-        let blank_res = transactions_blank.sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from(b"get a job").as_slice());
+        let identity_blank = Identity::new();
+        let blank_res = identity_blank.sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from(b"get a job").as_slice());
         assert!(matches!(blank_res, Err(Error::DagEmpty)));
 
         let mut ext_mod = ext.clone();
@@ -2104,10 +2204,10 @@ mod tests {
     }
 
     #[test]
-    fn transactions_push_invalid_sig() {
+    fn identity_push_invalid_sig() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let mut claim_trans = transactions
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let mut claim_trans = identity
             .make_claim(
                 &HashAlgo::Blake3,
                 Timestamp::now(),
@@ -2121,14 +2221,14 @@ mod tests {
             signature: sig,
         };
         claim_trans.signatures_mut().push(policy_sig);
-        let res = transactions.clone().push_transaction(claim_trans);
+        let res = identity.clone().push_transaction(claim_trans);
         assert!(matches!(res.err(), Some(Error::TransactionSignatureInvalid(_))));
     }
 
     #[test]
-    fn transactions_policy_multisig_verify() {
+    fn identity_policy_multisig_verify() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let admin_key1 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Frank", None);
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Gina", None);
         let admin_key3 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Ralph", None);
@@ -2174,12 +2274,12 @@ mod tests {
         ]);
         let policy2 = Policy::new(cap2, multisig2);
 
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ add_policy, Timestamp::now(), policy1 ]
             [ add_policy, Timestamp::now(), policy2 ]
         };
 
-        let trans1 = transactions2
+        let trans1 = identity2
             .make_claim(
                 &HashAlgo::Blake3,
                 Timestamp::now(),
@@ -2187,15 +2287,15 @@ mod tests {
                 None::<String>,
             )
             .unwrap();
-        assert_eq!(transactions2.clone().push_transaction(trans1.clone()).err(), Some(Error::TransactionNoSignatures));
+        assert_eq!(identity2.clone().push_transaction(trans1.clone()).err(), Some(Error::TransactionNoSignatures));
         assert_eq!(
-            transactions2
+            identity2
                 .clone()
                 .push_transaction(trans1.clone().sign(&master_key, &admin_key1).unwrap())
                 .err(),
             Some(Error::PolicyNotFound)
         );
-        transactions2
+        identity2
             .clone()
             .push_transaction(
                 trans1
@@ -2206,7 +2306,7 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-        transactions2
+        identity2
             .clone()
             .push_transaction(
                 trans1
@@ -2217,7 +2317,7 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-        transactions2
+        identity2
             .clone()
             .push_transaction(
                 trans1
@@ -2228,7 +2328,7 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-        transactions2
+        identity2
             .clone()
             .push_transaction(
                 trans1
@@ -2243,18 +2343,18 @@ mod tests {
             .unwrap();
 
         let subkey = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
-        let trans2 = transactions2
+        let trans2 = identity2
             .add_subkey(&HashAlgo::Blake3, Timestamp::now(), subkey.clone(), "logins/websites/booots.com", None)
             .unwrap();
         assert_eq!(
-            transactions2
+            identity2
                 .clone()
                 .push_transaction(trans2.clone().sign(&master_key, &admin_key1).unwrap())
                 .err(),
             Some(Error::PolicyNotFound)
         );
         assert_eq!(
-            transactions2
+            identity2
                 .clone()
                 .push_transaction(
                     trans2
@@ -2270,17 +2370,17 @@ mod tests {
             Some(Error::PolicyNotFound)
         );
 
-        let trans3 = transactions2
+        let trans3 = identity2
             .add_subkey(&HashAlgo::Blake3, Timestamp::now(), subkey.clone(), "logins/websites/beeets.com", None)
             .unwrap();
         assert_eq!(
-            transactions2
+            identity2
                 .clone()
                 .push_transaction(trans3.clone().sign(&master_key, &admin_key1).unwrap())
                 .err(),
             Some(Error::PolicyNotFound)
         );
-        transactions2
+        identity2
             .clone()
             .push_transaction(
                 trans3
@@ -2291,7 +2391,7 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-        transactions2
+        identity2
             .clone()
             .push_transaction(
                 trans3
@@ -2302,7 +2402,7 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-        transactions2
+        identity2
             .clone()
             .push_transaction(
                 trans3
@@ -2313,7 +2413,7 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-        transactions2
+        identity2
             .clone()
             .push_transaction(
                 trans3
@@ -2327,14 +2427,14 @@ mod tests {
             )
             .unwrap();
 
-        let trans4 = transactions2.publish(&HashAlgo::Blake3, Timestamp::now()).unwrap();
-        let identity2 = transactions2.build_identity().unwrap();
+        let trans4 = identity2.publish(&HashAlgo::Blake3, Timestamp::now()).unwrap();
+        let identity2_instance = identity2.build_identity_instance().unwrap();
         assert_eq!(
             trans4
                 .clone()
                 .sign(&master_key, &admin_key1)
                 .unwrap()
-                .verify(Some(&identity2))
+                .verify(Some(&identity2_instance))
                 .err(),
             Some(Error::PolicyNotFound)
         );
@@ -2345,7 +2445,7 @@ mod tests {
                 .unwrap()
                 .sign(&master_key, &admin_key2)
                 .unwrap()
-                .verify(Some(&identity2))
+                .verify(Some(&identity2_instance))
                 .err(),
             Some(Error::PolicyNotFound)
         );
@@ -2358,7 +2458,7 @@ mod tests {
                 .unwrap()
                 .sign(&master_key, &admin_key3)
                 .unwrap()
-                .verify(Some(&identity2))
+                .verify(Some(&identity2_instance))
                 .err(),
             Some(Error::PolicyNotFound)
         );
@@ -2369,7 +2469,7 @@ mod tests {
                 .unwrap()
                 .sign(&master_key, &admin_key3)
                 .unwrap()
-                .verify(Some(&identity2))
+                .verify(Some(&identity2_instance))
                 .err(),
             Some(Error::PolicyNotFound)
         );
@@ -2381,7 +2481,7 @@ mod tests {
             .unwrap()
             .sign(&master_key, &admin_key2)
             .unwrap()
-            .verify(Some(&identity2))
+            .verify(Some(&identity2_instance))
             .unwrap();
         trans4
             .clone()
@@ -2391,7 +2491,7 @@ mod tests {
             .unwrap()
             .sign(&master_key, &admin_key3)
             .unwrap()
-            .verify(Some(&identity2))
+            .verify(Some(&identity2_instance))
             .unwrap();
         trans4
             .clone()
@@ -2403,7 +2503,7 @@ mod tests {
             .unwrap()
             .sign(&master_key, &admin_key3)
             .unwrap()
-            .verify(Some(&identity2))
+            .verify(Some(&identity2_instance))
             .unwrap();
 
         let mut trans5 = trans4
@@ -2417,58 +2517,58 @@ mod tests {
             signature: admin_key4.sign(&master_key, b"GET A JOB").unwrap(),
         };
         trans5.signatures_mut().push(fakesig);
-        assert!(matches!(trans5.verify(Some(&identity2)), Err(Error::TransactionSignatureInvalid(_))));
+        assert!(matches!(trans5.verify(Some(&identity2_instance)), Err(Error::TransactionSignatureInvalid(_))));
     }
 
     #[test]
-    fn transactions_prohibit_duplicates() {
+    fn identity_prohibit_duplicates() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let now = Timestamp::now();
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ make_claim, now.clone(), ClaimSpec::Name(MaybePrivate::new_public("Dirk Delta from........Hollywood".into())), None::<String> ]
         };
-        let claim_trans = transactions2.transactions()[1].clone();
-        let res = transactions2.clone().push_transaction(claim_trans);
+        let claim_trans = identity2.transactions()[1].clone();
+        let res = identity2.clone().push_transaction(claim_trans);
         assert_eq!(res.err(), Some(Error::DuplicateTransaction));
     }
 
     #[test]
-    fn transactions_reencrypt() {
+    fn identity_reencrypt() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Second", None);
-        let transactions = sign_and_push! { &master_key, &admin_key, transactions,
+        let identity = sign_and_push! { &master_key, &admin_key, identity,
             [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, "Hooty McOwl".to_string()).unwrap()), None::<String> ]
             [ add_admin_key, Timestamp::now(), admin_key2 ]
             [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("dirk-delta".to_string())), Some(String::from("name")) ]
         };
-        transactions.test_master_key(&master_key).unwrap();
-        let identity = transactions.build_identity().unwrap();
-        match identity.claims()[0].spec() {
+        identity.test_master_key(&master_key).unwrap();
+        let identity_instance = identity.build_identity_instance().unwrap();
+        match identity_instance.claims()[0].spec() {
             ClaimSpec::Name(maybe) => {
                 let val = maybe.open(&master_key).unwrap();
                 assert_eq!(val, "Hooty McOwl".to_string());
             }
             _ => panic!("bad claim type"),
         }
-        let sig = identity.keychain().admin_keys()[0]
+        let sig = identity_instance.keychain().admin_keys()[0]
             .key()
             .sign(&master_key, b"KILL...ME....")
             .unwrap();
 
         let master_key_new = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let transactions2 = transactions.reencrypt(&mut rng, &master_key, &master_key_new).unwrap();
-        transactions2.test_master_key(&master_key_new).unwrap();
-        let res = transactions2.test_master_key(&master_key);
+        let identity2 = identity.reencrypt(&mut rng, &master_key, &master_key_new).unwrap();
+        identity2.test_master_key(&master_key_new).unwrap();
+        let res = identity2.test_master_key(&master_key);
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
-        let identity2 = transactions2.build_identity().unwrap();
-        let sig2 = identity2.keychain().admin_keys()[0]
+        let identity2_instance = identity2.build_identity_instance().unwrap();
+        let sig2 = identity2_instance.keychain().admin_keys()[0]
             .key()
             .sign(&master_key_new, b"KILL...ME....")
             .unwrap();
         assert_eq!(sig, sig2);
-        match identity2.claims()[0].spec() {
+        match identity2_instance.claims()[0].spec() {
             ClaimSpec::Name(maybe) => {
                 let val = maybe.open(&master_key_new).unwrap();
                 assert_eq!(val, "Hooty McOwl".to_string());
@@ -2480,36 +2580,36 @@ mod tests {
     }
 
     #[test]
-    fn transactions_is_owned() {
+    fn identity_is_owned() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity = transactions.build_identity().unwrap();
-        assert!(transactions.is_owned());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity_instance = identity.build_identity_instance().unwrap();
         assert!(identity.is_owned());
+        assert!(identity_instance.is_owned());
 
-        let mut transactions2 = transactions.clone();
-        transactions2.transactions_mut()[0] = transactions2.transactions_mut()[0].strip_private();
-        let identity2 = transactions2.build_identity().unwrap();
-        assert!(!transactions2.is_owned());
+        let mut identity2 = identity.clone();
+        identity2.transactions_mut()[0] = identity2.transactions_mut()[0].strip_private();
+        let identity2_instance = identity2.build_identity_instance().unwrap();
         assert!(!identity2.is_owned());
+        assert!(!identity2_instance.is_owned());
 
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Second", None);
         let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
         let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
-        let transactions3 = sign_and_push! { &master_key, &admin_key, transactions.clone(),
+        let identity3 = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
             [ add_subkey, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key") ]
             [ add_admin_key, Timestamp::now(), admin_key2 ]
         };
-        let identity3 = transactions3.build_identity().unwrap();
-        assert!(transactions3.is_owned());
+        let identity3_instance = identity3.build_identity_instance().unwrap();
         assert!(identity3.is_owned());
+        assert!(identity3_instance.is_owned());
 
-        let mut transactions4 = transactions3.clone();
-        for trans in transactions4.transactions_mut() {
+        let mut identity4 = identity3.clone();
+        for trans in identity4.transactions_mut() {
             let entry = trans.entry().clone();
             match entry.body() {
                 TransactionBody::CreateIdentityV1 { .. } | TransactionBody::AddAdminKeyV1 { .. } => {
@@ -2518,32 +2618,32 @@ mod tests {
                 _ => {}
             }
         }
-        let identity4 = transactions4.build_identity().unwrap();
-        assert!(!transactions4.is_owned());
+        let identity4_instance = identity4.build_identity_instance().unwrap();
         assert!(!identity4.is_owned());
+        assert!(!identity4_instance.is_owned());
     }
 
     #[test]
-    fn transactions_test_master_key() {
+    fn identity_test_master_key() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, _admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        transactions.test_master_key(&master_key).unwrap();
+        let (master_key, identity, _admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        identity.test_master_key(&master_key).unwrap();
         let master_key_fake = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         assert!(master_key_fake != master_key);
-        let res = transactions.test_master_key(&master_key_fake);
+        let res = identity.test_master_key(&master_key_fake);
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
     }
 
     #[test]
-    fn transactions_strip_has_private() {
+    fn identity_strip_has_private() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
 
         let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
         let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
-        let transactions2 = sign_and_push! { &master_key, &admin_key, transactions,
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
             [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
             [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
             [ add_subkey, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key") ]
@@ -2552,41 +2652,41 @@ mod tests {
         };
 
         let mut has_priv: Vec<bool> = Vec::new();
-        for trans in transactions2.transactions() {
+        for trans in identity2.transactions() {
             has_priv.push(trans.has_private());
         }
         assert_eq!(has_priv.iter().filter(|x| **x).count(), 5);
 
-        assert!(transactions2.has_private());
-        let transactions3 = transactions2.strip_private();
-        assert!(!transactions3.has_private());
+        assert!(identity2.has_private());
+        let identity3 = identity2.strip_private();
+        assert!(!identity3.has_private());
 
         let mut has_priv: Vec<bool> = Vec::new();
-        for trans in transactions3.transactions() {
+        for trans in identity3.transactions() {
             has_priv.push(trans.has_private());
         }
         assert_eq!(has_priv.iter().filter(|x| **x).count(), 0);
     }
 
     #[test]
-    fn transactions_serde_binary() {
+    fn identity_serde_binary() {
         let mut rng = crate::util::test::rng();
-        let (master_key, transactions, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let transactions = sign_and_push! { &master_key, &admin_key, transactions,
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let identity = sign_and_push! { &master_key, &admin_key, identity,
             [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Andrew".into())), Some("given-name".to_string()) ]
         };
-        let identity = transactions.build_identity().unwrap();
-        let ser = transactions.serialize_binary().unwrap();
-        let des = Transactions::deserialize_binary(ser.as_slice()).unwrap();
-        let identity2 = des.build_identity().unwrap();
+        let identity_instance = identity.build_identity_instance().unwrap();
+        let ser = identity.serialize_binary().unwrap();
+        let des = Identity::deserialize_binary(ser.as_slice()).unwrap();
+        let identity2_instance = des.build_identity_instance().unwrap();
         // quick and dirty. oh well.
-        assert_eq!(identity.id(), identity2.id());
+        assert_eq!(identity_instance.id(), identity2_instance.id());
     }
 
     #[test]
     fn tx_chain() {
         let mut rng = test::rng_seeded(b"hi there!");
-        let (_master_key, transactions, _admin_key) =
+        let (_master_key, identity, _admin_key) =
             test::create_fake_identity(&mut rng, Timestamp::from_str("2024-01-01T00:00:06Z").unwrap());
 
         let ext = |now, prev, ref_id: &[&TransactionID], data: &[u8]| {
@@ -2594,7 +2694,7 @@ mod tests {
             for id in ref_id {
                 ref_str.push(format!("{id}"));
             }
-            transactions
+            identity
                 .ext(
                     &HashAlgo::Blake3,
                     now,
@@ -2606,7 +2706,7 @@ mod tests {
                 .unwrap()
         };
 
-        let (transactions, _name_to_op, _id_to_name) = tx_chain! {
+        let (identity, _name_to_op, _id_to_name) = tx_chain! {
             [
                 G = ("2024-01-04T00:01:01Z", |now, prev| ext(now, prev, &[A.id(), F.id()], b"bathroom??!"));
                 B = ("2024-01-02T00:01:01Z", |now, prev| ext(now, prev, &[A.id(), C.id()], b"me"));
@@ -2624,14 +2724,14 @@ mod tests {
                 [D, F] <- [G],
             ],
         };
-        let datas = transactions
+        let datas = identity
             .iter()
             .map(|t| match t.entry().body() {
                 TransactionBody::ExtV1 { payload, .. } => payload.clone(),
                 _ => panic!("oh no"),
             })
             .collect::<Vec<_>>();
-        let contexts = transactions
+        let contexts = identity
             .iter()
             .map(|t| match t.entry().body() {
                 TransactionBody::ExtV1 { context, .. } => context.as_ref().unwrap().get(&BinaryVec::from(Vec::from(b"ref"))).unwrap(),
