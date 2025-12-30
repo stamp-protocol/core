@@ -17,7 +17,7 @@ pub use crate::{
         identity::{tx_chain, Identity, IdentitySerialized},
         transaction::{
             ExtTransaction, PublishTransaction, SignTransaction, StampTransaction, Transaction, TransactionBody, TransactionEntry,
-            TransactionID, TransactionSerialized, TransactionSigner,
+            TransactionID, TransactionSerialized,
         },
     },
     error::Result,

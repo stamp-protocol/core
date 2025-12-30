@@ -475,43 +475,6 @@ impl IntoPublic for TransactionEntry<Public> {
 impl SerdeBinary for TransactionEntry<Public> {}
 impl SerdeBinary for TransactionEntry<Full> {}
 
-pub trait TransactionSigner: Sized {
-    /// Get this transaction's ID
-    fn get_id(&self) -> &TransactionID;
-
-    /// Get the signature list for this transaction
-    fn get_signatures(&self) -> &[MultisigPolicySignature];
-
-    /// Get this transaction's mutable signature list.
-    fn push_signature(&mut self, signature: MultisigPolicySignature);
-
-    /// Sign this transaction in-place.
-    fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
-        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
-        let sig_exists = self.get_signatures().iter().find(|sig| match sig {
-            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
-        });
-        if sig_exists.is_some() {
-            Err(Error::DuplicateSignature)?;
-        }
-        let serialized = ser::serialize(self.get_id().deref())?;
-        let sig = admin_key.sign(master_key, &serialized[..])?;
-        let policy_sig = MultisigPolicySignature::Key {
-            key: admin_key.clone().into(),
-            signature: sig,
-        };
-        self.push_signature(policy_sig);
-        Ok(())
-    }
-
-    /// Sign this transaction. This consumes the transaction, adds the signature
-    /// to the `signatures` list, then returns the new transaction.
-    fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
-        self.sign_mut(master_key, admin_key)?;
-        Ok(self)
-    }
-}
-
 /// A transaction represents a single change on an identity object. In order to
 /// build an identity, all transactions are played in order from start to finish.
 ///
@@ -594,6 +557,32 @@ impl<M: PrivacyMode> Transaction<M> {
             }
         }
     }
+
+    /// Sign this transaction in-place.
+    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
+        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
+        let sig_exists = self.signatures().iter().find(|sig| match sig {
+            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
+        });
+        if sig_exists.is_some() {
+            Err(Error::DuplicateSignature)?;
+        }
+        let serialized = ser::serialize(self.id().deref())?;
+        let sig = admin_key.sign(master_key, &serialized[..])?;
+        let policy_sig = MultisigPolicySignature::Key {
+            key: admin_key.clone().into(),
+            signature: sig,
+        };
+        self.signatures_mut().push(policy_sig);
+        Ok(())
+    }
+
+    /// Sign this transaction. This consumes the transaction, adds the signature
+    /// to the `signatures` list, then returns the new transaction.
+    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
+        self.sign_mut(master_key, admin_key)?;
+        Ok(self)
+    }
 }
 
 impl<M> Transaction<M>
@@ -615,20 +604,6 @@ where
             entry,
             signatures: Vec::new(),
         })
-    }
-}
-
-impl<M: PrivacyMode> TransactionSigner for Transaction<M> {
-    fn get_id(&self) -> &TransactionID {
-        self.id()
-    }
-
-    fn get_signatures(&self) -> &[MultisigPolicySignature] {
-        self.signatures()
-    }
-
-    fn push_signature(&mut self, signature: MultisigPolicySignature) {
-        self.signatures_mut().push(signature);
     }
 }
 
@@ -1031,20 +1006,6 @@ impl<M: PrivacyMode> TransactionSerialized<M> {
                 MultisigPolicySignature::Key { key, .. } => key == admin_key,
             })
             .is_some()
-    }
-}
-
-impl<M: PrivacyMode> TransactionSigner for TransactionSerialized<M> {
-    fn get_id(&self) -> &TransactionID {
-        self.id()
-    }
-
-    fn get_signatures(&self) -> &[MultisigPolicySignature] {
-        self.signatures()
-    }
-
-    fn push_signature(&mut self, signature: MultisigPolicySignature) {
-        self.signatures_mut().push(signature);
     }
 }
 
