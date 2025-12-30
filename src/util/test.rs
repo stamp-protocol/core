@@ -1,6 +1,6 @@
 use crate::{
     crypto::base::{CryptoKeypair, Hash, HashAlgo, SecretKey, SignKeypair},
-    dag::{Identity, TransactionID},
+    dag::{Identity, TransactionID, TransactionSigner},
     identity::{
         instance::{IdentityID, IdentityInstance},
         keychain::{AdminKey, AdminKeypair, Key},

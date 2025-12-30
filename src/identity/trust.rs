@@ -584,7 +584,7 @@ mod tests {
     use crate::{
         crypto::{
             base::{HashAlgo, SecretKey},
-            private::{Full, MaybePrivate},
+            private::MaybePrivate,
         },
         dag::Identity,
         identity::{
@@ -594,6 +594,7 @@ mod tests {
         },
         util::Timestamp,
     };
+    use private_parts::Full;
     use std::str::FromStr;
 
     /// Makes it stupid easy to build a network of identities that link to each other via valid
@@ -609,10 +610,10 @@ mod tests {
             struct IdentityKeys {
                 master: SecretKey,
                 admin: AdminKey<Full>,
-                transactions: Identity<Public>,
+                identity: Identity<Public>,
             }
             impl IdentityKeys {
-                fn new(master: SecretKey, admin: AdminKey, identity: Identity) -> Self {
+                fn new(master: SecretKey, admin: AdminKey<Full>, identity: Identity<Public>) -> Self {
                     Self {
                         master,
                         admin,
@@ -735,7 +736,7 @@ mod tests {
     }
 
     fn trustnet_to_paths(
-        identity_network: &HashMap<&'static str, Identity>,
+        identity_network: &HashMap<&'static str, Identity<Public>>,
         from: &'static str,
         to: &'static str,
         max_dist: usize,

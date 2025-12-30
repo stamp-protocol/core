@@ -433,7 +433,7 @@ mod tests {
     fn private_seal_open() {
         let mut rng = crate::util::test::rng();
         let key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let sealed: Private<String> = Private::seal(&mut rng, &key, &String::from("get a job")).unwrap();
+        let sealed: Private<Full, String> = Private::seal(&mut rng, &key, &String::from("get a job")).unwrap();
         let opened: String = sealed.open(&key).unwrap();
         assert_eq!(&opened, "get a job");
         let key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
@@ -447,25 +447,12 @@ mod tests {
         let mut rng = crate::util::test::rng();
         let key1 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let sealed: Private<String> = Private::seal(&mut rng, &key1, &String::from("get a job")).unwrap();
+        let sealed: Private<Full, String> = Private::seal(&mut rng, &key1, &String::from("get a job")).unwrap();
         let sealed2 = sealed.reencrypt(&mut rng, &key1, &key2).unwrap();
         let opened: String = sealed2.open(&key2).unwrap();
         assert_eq!(&opened, "get a job");
         let res: Result<String> = sealed2.open(&key1);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
-    }
-
-    #[test]
-    fn maybe_private_has_private() {
-        let mut rng = crate::util::test::rng();
-        let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = maybe2.strip_private();
-
-        assert!(!maybe1.has_private());
-        assert!(maybe2.has_private());
-        assert!(!maybe3.has_private());
     }
 
     #[test]
@@ -479,10 +466,12 @@ mod tests {
         }
         let fake_mac_key = HmacKey::new_blake3(&mut rng).unwrap();
 
-        let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> =
-            MaybePrivate::Private(PrivateWithHmac::new(Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(), None));
+        let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
+        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
+        let maybe3: MaybePrivate<Public, String> = MaybePrivate::Private(PrivateWithHmac::new(
+            Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
+            Private::<Public, DataWithHmacKey<String>>::blank(),
+        ));
         let maybe2_tampered = match maybe2.clone() {
             MaybePrivate::Private(PrivateWithHmac { data, .. }) => {
                 MaybePrivate::Private(PrivateWithHmac::new(Hmac::new(&fake_mac_key, String::from("loool").as_bytes()).unwrap(), data))
@@ -517,9 +506,9 @@ mod tests {
         }
         let fake_mac_key = HmacKey::new_blake3(&mut rng).unwrap();
 
-        let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> =
+        let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
+        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
+        let maybe3: MaybePrivate<Full, String> =
             MaybePrivate::Private(PrivateWithHmac::new(Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(), None));
 
         assert_eq!(maybe1.open_public().unwrap(), "hello");
@@ -535,9 +524,9 @@ mod tests {
         assert!(seal_key != fake_key);
         let fake_mac_key = HmacKey::new_blake3(&mut rng).unwrap();
 
-        let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> =
+        let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
+        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
+        let maybe3: MaybePrivate<Full, String> =
             MaybePrivate::Private(PrivateWithHmac::new(Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(), None));
 
         assert_eq!(maybe1.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("hello")));
@@ -556,9 +545,9 @@ mod tests {
         let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let seal_key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
 
-        let maybe1: MaybePrivate<String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<String> = maybe2.strip_private();
+        let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
+        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
+        let maybe3: MaybePrivate<Public, String> = maybe2.strip().0;
 
         let maybe1_2 = maybe1.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
         let maybe2_2 = maybe2.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
@@ -579,20 +568,5 @@ mod tests {
         assert_eq!(maybe1_2.hmac(), None);
         assert_eq!(maybe2.hmac().unwrap(), maybe2_2.hmac().unwrap());
         assert_eq!(maybe3.hmac().unwrap(), maybe3_2.hmac().unwrap());
-    }
-
-    #[test]
-    fn maybe_private_strip() {
-        let mut rng = crate::util::test::rng();
-        let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let maybe: MaybePrivate<String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
-        assert!(maybe.has_data());
-        let maybe2 = maybe.strip_private();
-        let hmac = match &maybe {
-            MaybePrivate::Private(PrivateWithHmac { hmac, .. }) => hmac.clone(),
-            _ => panic!("weird"),
-        };
-        assert_eq!(maybe2, MaybePrivate::Private(PrivateWithHmac { hmac, data: None }));
-        assert!(!maybe2.has_data());
     }
 }

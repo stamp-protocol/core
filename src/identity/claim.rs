@@ -451,100 +451,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn claimcontainer_claimspec_has_private() {
-        macro_rules! claim_pub_priv {
-            (raw, $claimmaker:expr, $val:expr, $getmaybe:expr) => {
-                let mut rng = crate::util::test::rng();
-                let (_master_key, spec, spec2) = make_specs!(&mut rng, $claimmaker, $val);
-                assert_eq!(spec.has_private(), true);
-                match $getmaybe(spec.clone()) {
-                    MaybePrivate::Private(PrivateWithHmac { data: Some(_), .. }) => {}
-                    _ => panic!("bad maybe val: {}", stringify!($claimtype)),
-                }
-                let claim = Claim::new(ClaimID::random(), spec, None);
-                assert_eq!(claim.has_private(), true);
-
-                assert_eq!(spec2.has_private(), false);
-                let claim2 = Claim::new(ClaimID::random(), spec2, None);
-                assert_eq!(claim2.has_private(), false);
-            };
-            ($claimty:ident, $val:expr) => {
-                claim_pub_priv! {
-                    raw,
-                    |maybe, _| ClaimSpec::$claimty(maybe),
-                    $val,
-                    |spec: ClaimSpec| if let ClaimSpec::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
-                }
-            };
-        }
-
-        claim_pub_priv! { Identity, IdentityID::random() }
-        claim_pub_priv! { Name, String::from("I LIKE FOOTBALL") }
-        claim_pub_priv! { Birthday, Date::from_str("1990-03-04").unwrap() }
-        claim_pub_priv! { Email, String::from("IT@IS.FUN") }
-        claim_pub_priv! { Photo, BinaryVec::from(vec![1, 2, 3]) }
-        claim_pub_priv! { Pgp, String::from("I LIKE FOOTBALL") }
-        claim_pub_priv! { Domain, String::from("I-LIKE.TO.RUN") }
-        claim_pub_priv! { Url, Url::parse("https://www.imdb.com/title/tt0101660/").unwrap() }
-        claim_pub_priv! { Address, String::from("22334 FOOTBALL LANE, FOOTBALLSVILLE, CA 00001") }
-        claim_pub_priv! { PhoneNumber, String::from("415-888-0001") }
-        claim_pub_priv! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        claim_pub_priv! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
-        claim_pub_priv! {
-            raw,
-            |maybe, _| ClaimSpec::Extension { key: Vec::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THIS POEM IS GREAT".as_bytes()).into(), value: maybe },
-            BinaryVec::from(vec![42, 22]),
-            |spec| {
-                match spec {
-                    ClaimSpec::Extension { value: maybe, .. } => maybe,
-                    _ => panic!("bad claim type: Extension"),
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn claimspec_strip() {
-        macro_rules! thtrip {
-            (next, $val:expr, $createfn:expr) => {
-                let val = $val;
-                let mut rng = crate::util::test::rng();
-                let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-                let private = MaybePrivate::new_private(&mut rng, &master_key, val.clone()).unwrap();
-                let claimspec = $createfn(private);
-                let claimspec2 = claimspec.clone().strip_private();
-                assert_eq!(claimspec.has_private(), true);
-                assert_eq!(claimspec2.has_private(), false);
-            };
-            ($claimtype:ident, $val:expr) => {
-                thtrip! {
-                    next,
-                    $val,
-                    |maybe| { ClaimSpec::$claimtype(maybe) }
-                }
-            };
-        }
-
-        thtrip! { Identity, IdentityID::random() }
-        thtrip! { Name, String::from("I LIKE FOOTBALL") }
-        thtrip! { Birthday, Date::from_str("1967-12-03").unwrap() }
-        thtrip! { Email, String::from("IT.MAKES@ME.GLAD") }
-        thtrip! { Photo, BinaryVec::from(vec![1, 2, 3]) }
-        thtrip! { Pgp, String::from("I PLAY FOOTBALL") }
-        thtrip! { Domain, String::from("WITH.MY.DAD") }
-        thtrip! { Url, Url::parse("https://facebookdomainplus03371kz.free-vidsnet.com/best.football.videos.touchdowns.sports.team.extreme.NORTON-SCAN-RESULT-VIRUS-FREE.avi.mp4.zip.rar.exe").unwrap() }
-        thtrip! { Address, String::from("445 Elite Football Sports Street, Football, KY 44666") }
-        thtrip! { PhoneNumber, String::from("+22 222 4444 22") }
-        thtrip! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()) }
-        thtrip! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
-        thtrip! {
-            next,
-            BinaryVec::from(vec![42, 17, 86]),
-            |maybe| { ClaimSpec::Extension { key: Vec::from("best poem ever".as_bytes()).into(), value: maybe } }
-        }
-    }
-
-    #[test]
     fn claim_instant_verify() {
         macro_rules! match_container {
             ($container:expr, $expected:expr) => {
@@ -623,12 +529,9 @@ pub(crate) mod tests {
                 let mut rng = crate::util::test::rng();
                 let (master_key, spec_private, spec_public) = make_specs!(&mut rng, $claimmaker, $val);
                 let fake_master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-                let container_private = Claim::new(ClaimID::random(), spec_private, None);
-                let container_public = Claim::new(ClaimID::random(), spec_public, None);
+                let container_private = Claim::<Full>::new(ClaimID::random(), spec_private, None);
+                let container_public = Claim::<Full>::new(ClaimID::random(), spec_public, None);
                 let opened_claim = container_private.as_public(&master_key).unwrap();
-                assert_eq!(container_private.has_private(), true);
-                assert_eq!(container_public.has_private(), false);
-                assert_eq!(opened_claim.spec().has_private(), false);
                 assert_eq!($getmaybe(opened_claim.spec().clone()), $getmaybe(container_public.spec().clone()));
                 assert_eq!(container_private.as_public(&fake_master_key).err(), Some(Error::CryptoOpenFailed));
             };
@@ -660,41 +563,5 @@ pub(crate) mod tests {
             BinaryVec::from(vec![42, 22]),
             |spec: ClaimSpec| if let ClaimSpec::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }
-    }
-
-    #[test]
-    fn claimcontainer_has_private_strip() {
-        macro_rules! has_priv {
-            (raw, $claimmaker:expr, $val:expr, $haspriv:expr) => {
-                let mut rng = crate::util::test::rng();
-                let (_master_key, spec_private, spec_public) = make_specs!(&mut rng, $claimmaker, $val);
-                let container_private = Claim::new(ClaimID::random(), spec_private, None);
-                let container_public = Claim::new(ClaimID::random(), spec_public, None);
-                assert_eq!(container_private.has_private(), $haspriv);
-                assert_eq!(container_public.has_private(), false);
-
-                let container_private_stripped = container_private.strip_private();
-                let container_public_stripped = container_public.strip_private();
-                assert_eq!(container_private_stripped.has_private(), false);
-                assert_eq!(container_public_stripped.has_private(), false);
-            };
-
-            ($claimty:ident, $val:expr, $haspriv:expr) => {
-                has_priv! { raw, |maybe, _| ClaimSpec::$claimty(maybe), $val, $haspriv }
-            };
-        }
-        has_priv! { Identity, IdentityID::random(), true }
-        has_priv! { Name, String::from("Goleen Jundersun"), true }
-        has_priv! { Birthday, Date::from_str("1969-12-03").unwrap(), true }
-        has_priv! { Email, String::from("jerry@karate.com"), true }
-        has_priv! { Photo, BinaryVec::from(vec![1, 2, 3]), true }
-        has_priv! { Pgp, String::from("45de280a"), true }
-        has_priv! { Domain, String::from("good-times.great-trucks.nsf"), true }
-        has_priv! { Url, Url::parse("https://you-might.be/wrong").unwrap(), true }
-        has_priv! { Address, String::from("Mojave Desert"), true }
-        has_priv! { PhoneNumber, String::from("555-6969"), true }
-        has_priv! { Relation, Relationship::new(RelationshipType::OrganizationMember, IdentityID::random()), true }
-        has_priv! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])), true }
-        has_priv! { raw, |maybe, _| ClaimSpec::Extension { key: Vec::from("tuna-melt-tuna-melt-TUNA-MELT-TUNA-MELT".as_bytes()).into(), value: maybe }, BinaryVec::from(vec![123, 122, 100]), true }
     }
 }

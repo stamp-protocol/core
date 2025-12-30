@@ -56,7 +56,7 @@
 //! use stamp_core::{
 //!     crypto::base::{derive_secret_key, rng, Hash, HashAlgo, KDF_OPS_MODERATE, KDF_MEM_MODERATE, SecretKey},
 //!     dag::Identity,
-//!     identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
+//!     identity::keychain::{AdminKey, AdminKeypair, },
 //!     policy::{Capability, MultisigPolicy, Policy},
 //!     util::Timestamp,
 //! };

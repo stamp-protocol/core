@@ -152,12 +152,20 @@ mod tests {
         let recipient_subkey = recipient_identity.keychain().subkey_by_name("cryptololol").unwrap();
 
         let msg = b"And if you ever put your goddamn hands on my wife again, I will...";
-        let sealed = seal(&mut rng, &sender_master_key, sender_identity.id(), sender_subkey, recipient_subkey, msg).unwrap();
+        let sealed = seal(
+            &mut rng,
+            &sender_master_key,
+            sender_identity.id(),
+            sender_subkey,
+            &recipient_subkey.clone().into(),
+            msg,
+        )
+        .unwrap();
         match sealed {
             Message::Signed(_) => {}
             _ => panic!("Bad message format returned"),
         }
-        let opened = open(&recipient_master_key, recipient_subkey, sender_subkey, &sealed).unwrap();
+        let opened = open(&recipient_master_key, recipient_subkey, &sender_subkey.clone().into(), &sealed).unwrap();
 
         // Now read it back to me, Francine
         assert_eq!(opened.as_slice(), msg);
@@ -178,7 +186,7 @@ mod tests {
             }
             _ => panic!("How??"),
         }
-        let res = open(&recipient_master_key, recipient_subkey, sender_subkey, &sealed2);
+        let res = open(&recipient_master_key, recipient_subkey, &sender_subkey.clone().into(), &sealed2);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
 
         // now generate a NEW crypto key and try to open the message with it.
@@ -190,7 +198,7 @@ mod tests {
             )
             .unwrap();
         let sender_fake_subkey = sender_identity2.keychain().subkey_by_name("fake-ass-key").unwrap();
-        let res = open(&recipient_master_key, recipient_subkey, sender_fake_subkey, &sealed);
+        let res = open(&recipient_master_key, recipient_subkey, &sender_fake_subkey.clone().into(), &sealed);
         assert_eq!(res, Err(Error::CryptoOpenFailed));
 
         let res = open_anonymous(&recipient_master_key, recipient_subkey, &sealed);
@@ -205,7 +213,7 @@ mod tests {
         let recipient_subkey = recipient_identity.keychain().subkey_by_name("cryptololol").unwrap();
 
         let msg = b"The government protecting their profits from the poor. The rich and the fortunate chaining up the door";
-        let sealed = send_anonymous(&mut rng, recipient_subkey, msg).unwrap();
+        let sealed = send_anonymous(&mut rng, &recipient_subkey.clone().into(), msg).unwrap();
         match sealed {
             Message::Anonymous(_) => {}
             _ => panic!("Bad message format returned"),

@@ -475,6 +475,43 @@ impl IntoPublic for TransactionEntry<Public> {
 impl SerdeBinary for TransactionEntry<Public> {}
 impl SerdeBinary for TransactionEntry<Full> {}
 
+pub trait TransactionSigner: Sized {
+    /// Get this transaction's ID
+    fn get_id(&self) -> &TransactionID;
+
+    /// Get the signature list for this transaction
+    fn get_signatures(&self) -> &[MultisigPolicySignature];
+
+    /// Get this transaction's mutable signature list.
+    fn push_signature(&mut self, signature: MultisigPolicySignature);
+
+    /// Sign this transaction in-place.
+    fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
+        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
+        let sig_exists = self.get_signatures().iter().find(|sig| match sig {
+            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
+        });
+        if sig_exists.is_some() {
+            Err(Error::DuplicateSignature)?;
+        }
+        let serialized = ser::serialize(self.get_id().deref())?;
+        let sig = admin_key.sign(master_key, &serialized[..])?;
+        let policy_sig = MultisigPolicySignature::Key {
+            key: admin_key.clone().into(),
+            signature: sig,
+        };
+        self.push_signature(policy_sig);
+        Ok(())
+    }
+
+    /// Sign this transaction. This consumes the transaction, adds the signature
+    /// to the `signatures` list, then returns the new transaction.
+    fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
+        self.sign_mut(master_key, admin_key)?;
+        Ok(self)
+    }
+}
+
 /// A transaction represents a single change on an identity object. In order to
 /// build an identity, all transactions are played in order from start to finish.
 ///
@@ -578,6 +615,20 @@ where
             entry,
             signatures: Vec::new(),
         })
+    }
+}
+
+impl<M: PrivacyMode> TransactionSigner for Transaction<M> {
+    fn get_id(&self) -> &TransactionID {
+        self.id()
+    }
+
+    fn get_signatures(&self) -> &[MultisigPolicySignature] {
+        self.signatures()
+    }
+
+    fn push_signature(&mut self, signature: MultisigPolicySignature) {
+        self.signatures_mut().push(signature);
     }
 }
 
@@ -972,33 +1023,6 @@ impl<M: PrivacyMode> TransactionSerialized<M> {
         Ok(())
     }
 
-    /// Sign this transaction in-place.
-    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
-        self.verify_hash()?;
-        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
-        let sig_exists = self.signatures().iter().find(|sig| match sig {
-            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
-        });
-        if sig_exists.is_some() {
-            Err(Error::DuplicateSignature)?;
-        }
-        let serialized = ser::serialize(self.id().deref())?;
-        let sig = admin_key.sign(master_key, &serialized[..])?;
-        let policy_sig = MultisigPolicySignature::Key {
-            key: admin_key.clone().into(),
-            signature: sig,
-        };
-        self.signatures_mut().push(policy_sig);
-        Ok(())
-    }
-
-    /// Sign this transaction. This consumes the transaction, adds the signature
-    /// to the `signatures` list, then returns the new transaction.
-    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
-        self.sign_mut(master_key, admin_key)?;
-        Ok(self)
-    }
-
     /// Determines if this transaction has been signed by a given key.
     pub fn is_signed_by(&self, admin_key: &AdminKeypair<Public>) -> bool {
         self.signatures()
@@ -1007,6 +1031,20 @@ impl<M: PrivacyMode> TransactionSerialized<M> {
                 MultisigPolicySignature::Key { key, .. } => key == admin_key,
             })
             .is_some()
+    }
+}
+
+impl<M: PrivacyMode> TransactionSigner for TransactionSerialized<M> {
+    fn get_id(&self) -> &TransactionID {
+        self.id()
+    }
+
+    fn get_signatures(&self) -> &[MultisigPolicySignature] {
+        self.signatures()
+    }
+
+    fn push_signature(&mut self, signature: MultisigPolicySignature) {
+        self.signatures_mut().push(signature);
     }
 }
 
@@ -1140,208 +1178,6 @@ mod tests {
     }
 
     #[test]
-    fn trans_body_strip_has_private() {
-        fn test_privates(body: &TransactionBody<Full>) {
-            match body {
-                TransactionBody::CreateIdentityV1 { admin_keys, policies } => {
-                    assert!(body.has_private());
-                    assert!(!body.strip_private().has_private());
-                    let body2 = TransactionBody::CreateIdentityV1 {
-                        admin_keys: admin_keys.clone().into_iter().map(|x| x.strip_private()).collect::<Vec<_>>(),
-                        policies: policies.clone(),
-                    };
-                    assert!(!body2.has_private());
-                }
-                TransactionBody::ResetIdentityV1 { admin_keys, policies } => {
-                    assert!(body.has_private());
-                    assert!(!body.strip_private().has_private());
-                    let body2 = TransactionBody::ResetIdentityV1 {
-                        admin_keys: admin_keys
-                            .clone()
-                            .map(|x| x.into_iter().map(|y| y.strip_private()).collect::<Vec<_>>()),
-                        policies: policies.clone(),
-                    };
-                    assert!(!body2.has_private());
-                }
-                TransactionBody::RevokeIdentityV1 => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::AddAdminKeyV1 { admin_key } => {
-                    assert!(body.has_private());
-                    let body2 = TransactionBody::AddAdminKeyV1 {
-                        admin_key: admin_key.strip_private(),
-                    };
-                    assert!(!body2.has_private());
-                }
-                TransactionBody::EditAdminKeyV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::RevokeAdminKeyV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::AddPolicyV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::DeletePolicyV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::MakeClaimV1 { spec, name } => {
-                    assert_eq!(body.has_private(), spec.has_private());
-                    let body2 = TransactionBody::MakeClaimV1 {
-                        spec: spec.strip_private(),
-                        name: name.clone(),
-                    };
-                    assert!(!body2.has_private());
-                    let body3 = body.strip_private();
-                    assert!(!body3.has_private());
-                    let body4 = body3.strip_private();
-                    assert!(!body4.has_private());
-                }
-                TransactionBody::EditClaimV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::DeleteClaimV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::MakeStampV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::RevokeStampV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::AcceptStampV1 { stamp_transaction } => {
-                    assert!(!body.has_private());
-                    assert!(!stamp_transaction.has_private());
-                }
-                TransactionBody::DeleteStampV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::AddSubkeyV1 { key, name, desc } => {
-                    assert!(body.has_private());
-                    let body2 = TransactionBody::AddSubkeyV1 {
-                        key: key.strip_private(),
-                        name: name.clone(),
-                        desc: desc.clone(),
-                    };
-                    assert!(!body2.has_private());
-                    let body3 = body.strip_private();
-                    assert!(!body3.has_private());
-                }
-                TransactionBody::EditSubkeyV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::RevokeSubkeyV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                TransactionBody::DeleteSubkeyV1 { .. } => {
-                    assert!(!body.has_private());
-                }
-                // blehhhh...
-                TransactionBody::PublishV1 { .. } => {}
-                // blehhhh...
-                TransactionBody::SignV1 { .. } => {}
-                // blehhhh...
-                TransactionBody::ExtV1 { .. } => {}
-            }
-        }
-
-        let mut rng = crate::util::test::rng();
-        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-
-        test_privates(&TransactionBody::CreateIdentityV1 {
-            admin_keys: vec![admin_key.clone()],
-            policies: Vec::new(),
-        });
-        test_privates(&TransactionBody::ResetIdentityV1 {
-            admin_keys: Some(vec![admin_key.clone()]),
-            policies: None,
-        });
-        test_privates(&TransactionBody::AddAdminKeyV1 {
-            admin_key: admin_key.clone(),
-        });
-        test_privates(&TransactionBody::EditAdminKeyV1 {
-            id: admin_key.key_id(),
-            name: Some("poopy".into()),
-            description: None,
-        });
-        test_privates(&TransactionBody::RevokeAdminKeyV1 {
-            id: admin_key.key_id(),
-            reason: RevocationReason::Compromised,
-            new_name: Some("old key".into()),
-        });
-
-        let policy = Policy::new(
-            vec![],
-            MultisigPolicy::MOfN {
-                must_have: 0,
-                participants: vec![],
-            },
-        );
-        test_privates(&TransactionBody::AddPolicyV1 { policy });
-        test_privates(&TransactionBody::DeletePolicyV1 { id: PolicyID::random() });
-        test_privates(&TransactionBody::MakeClaimV1 {
-            spec: ClaimSpec::Name(MaybePrivate::new_public(String::from("Negative Nancy"))),
-            name: None,
-        });
-        test_privates(&TransactionBody::MakeClaimV1 {
-            spec: ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, String::from("Positive Pyotr")).unwrap()),
-            name: Some("Grover".into()),
-        });
-        test_privates(&TransactionBody::DeleteClaimV1 {
-            claim_id: ClaimID::random(),
-        });
-
-        let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::Low, None);
-        test_privates(&TransactionBody::MakeStampV1 { stamp: entry.clone() });
-        test_privates(&TransactionBody::RevokeStampV1 {
-            stamp_id: StampID::random(),
-            reason: StampRevocationReason::Unspecified,
-        });
-        let stamp_transaction = identity.make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry.clone()).unwrap();
-        test_privates(&TransactionBody::AcceptStampV1 {
-            stamp_transaction: Box::new(stamp_transaction),
-        });
-        test_privates(&TransactionBody::DeleteStampV1 {
-            stamp_id: StampID::random(),
-        });
-
-        let key = Key::new_sign(admin_key.key().deref().clone());
-        let key_id = key.key_id();
-        test_privates(&TransactionBody::AddSubkeyV1 {
-            key,
-            name: "MY DOGECOIN KEY".into(),
-            desc: Some("plz send doge".into()),
-        });
-        test_privates(&TransactionBody::EditSubkeyV1 {
-            id: key_id.clone(),
-            new_name: Some("MAI DOGE KEY".into()),
-            new_desc: Some(None),
-        });
-        test_privates(&TransactionBody::RevokeSubkeyV1 {
-            id: key_id.clone(),
-            reason: RevocationReason::Compromised,
-            new_name: Some("REVOKED DOGE KEY".into()),
-        });
-        test_privates(&TransactionBody::DeleteSubkeyV1 { id: key_id.clone() });
-    }
-
-    #[test]
-    fn trans_entry_strip_has_private() {
-        let mut rng = crate::util::test::rng();
-        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let body = TransactionBody::MakeClaimV1 {
-            spec: ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, "Jackie Chrome".into()).unwrap()),
-            name: None,
-        };
-        let entry = TransactionEntry::new(Timestamp::now(), vec![TransactionID::from(Hash::random_blake3())], body);
-        assert!(entry.has_private());
-        assert!(entry.body().has_private());
-        let entry2 = entry.strip_private();
-        assert!(!entry2.has_private());
-        assert!(!entry2.body().has_private());
-    }
-
-    #[test]
     fn trans_verify_hash_and_signatures() {
         let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
@@ -1410,22 +1246,6 @@ mod tests {
     #[test]
     fn trans_validate_and_open_publish_transaction() {
         todo!();
-    }
-
-    #[test]
-    fn trans_strip_has_private() {
-        let mut rng = crate::util::test::rng();
-        let now = Timestamp::now();
-        let (_master_key, identity, _admin_key) = test::create_fake_identity(&mut rng, now.clone());
-        let trans = identity.transactions()[0].clone();
-
-        assert!(trans.has_private());
-        assert!(trans.entry().has_private());
-        assert!(trans.entry().body().has_private());
-        let trans2 = trans.strip_private();
-        assert!(!trans2.has_private());
-        assert!(!trans2.entry().has_private());
-        assert!(!trans2.entry().body().has_private());
     }
 
     #[test]

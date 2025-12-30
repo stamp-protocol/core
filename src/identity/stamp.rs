@@ -246,23 +246,12 @@ mod tests {
         identity::{
             claim::{Claim, ClaimSpec, Relationship, RelationshipType},
             instance::IdentityID,
-            keychain::{AdminKey, AdminKeypair, ExtendKeypair, Key, Keychain},
+            keychain::{AdminKey, AdminKeypair, Key, Keychain},
             stamp::Confidence,
         },
         util::{ser::BinaryVec, Date, Timestamp, Url},
     };
     use std::str::FromStr;
-
-    #[test]
-    fn stamp_strip() {
-        let entry = StampEntry::new::<Timestamp>(IdentityID::random(), IdentityID::random(), ClaimID::random(), Confidence::Low, None);
-        let stamp = Stamp::new(StampID::random(), entry, Timestamp::now());
-        let stamp2 = stamp.strip_private();
-        // we only really need strip_private() so we can serialized_human, but
-        // stamps don't hold ANY private data at all, so a stripped stamp should
-        // equal an unstripped stamp.
-        assert_eq!(stamp, stamp2);
-    }
 
     #[test]
     fn stamp_request_new_open() {

@@ -247,7 +247,7 @@ pub(crate) mod tests {
         let our_master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let our_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &our_master_key).unwrap();
         let fake_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &our_master_key).unwrap();
-        let our_pubkey = CryptoKeypairPublic::from(our_keypair.clone());
+        let our_pubkey = CryptoKeypair::<Public>::from(our_keypair.clone());
 
         let message = String::from("HI JERRY I'M BUTCH");
         let sealed1 = our_keypair.seal_anonymous(&mut rng, message.as_bytes()).unwrap();
@@ -269,10 +269,12 @@ pub(crate) mod tests {
         let mut rng = crate::util::test::rng();
         let sender_master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let sender_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &sender_master_key).unwrap();
+        let sender_pubkey = CryptoKeypair::<Public>::from(sender_keypair.clone());
         let recipient_master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let recipient_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &recipient_master_key).unwrap();
-        let recipient_pubkey = CryptoKeypairPublic::from(recipient_keypair.clone());
-        let fake_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &recipient_master_key).unwrap();
+        let recipient_pubkey = CryptoKeypair::<Public>::from(recipient_keypair.clone());
+        let fake_keypair =
+            CryptoKeypair::<Public>::from(CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &recipient_master_key).unwrap());
 
         let message = b"HI JERRY I'M BUTCH";
         let sealed1 = recipient_keypair
@@ -281,8 +283,8 @@ pub(crate) mod tests {
         let sealed2 = recipient_pubkey
             .seal(&mut rng, &sender_master_key, &sender_keypair, message)
             .unwrap();
-        let opened1 = recipient_keypair.open(&recipient_master_key, &sender_keypair, &sealed1).unwrap();
-        let opened2 = recipient_keypair.open(&recipient_master_key, &sender_keypair, &sealed2).unwrap();
+        let opened1 = recipient_keypair.open(&recipient_master_key, &sender_pubkey, &sealed1).unwrap();
+        let opened2 = recipient_keypair.open(&recipient_master_key, &sender_pubkey, &sealed2).unwrap();
 
         assert_eq!(&opened1[..], message);
         assert_eq!(&opened2[..], message);
@@ -309,25 +311,5 @@ pub(crate) mod tests {
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
         let res = keypair.open_anonymous(&master_key1, &sealed);
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
-    }
-
-    #[test]
-    fn cryptokeypair_curve25519xchacha20poly1305_strip_has_private() {
-        let mut rng = crate::util::test::rng();
-        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
-        match &keypair {
-            CryptoKeypair::Curve25519XChaCha20Poly1305 { secret: Some(_), .. } => {
-                assert!(keypair.has_private());
-            }
-            _ => panic!("private mismatch"),
-        }
-        let keypair_pub = keypair.strip_private();
-        match &keypair_pub {
-            CryptoKeypair::Curve25519XChaCha20Poly1305 { secret: None, .. } => {
-                assert!(!keypair_pub.has_private());
-            }
-            _ => panic!("private mismatch"),
-        }
     }
 }

@@ -270,26 +270,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn signkeypair_ed25519_strip_has_private() {
-        let mut rng = crate::util::test::rng();
-        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
-        match &keypair {
-            SignKeypair::Ed25519 { secret: Some(_), .. } => {
-                assert!(keypair.has_private());
-            }
-            _ => panic!("private mismatch"),
-        }
-        let keypair_pub = keypair.strip_private();
-        match &keypair_pub {
-            SignKeypair::Ed25519 { secret: None, .. } => {
-                assert!(!keypair_pub.has_private());
-            }
-            _ => panic!("private mismatch"),
-        }
-    }
-
-    #[test]
     fn signkeypair_ed25519_eq() {
         let mut rng = crate::util::test::rng();
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();

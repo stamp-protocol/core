@@ -794,7 +794,7 @@ mod tests {
             base::{HashAlgo, SecretKey},
             private::MaybePrivate,
         },
-        identity::keychain::{AdminKey, AdminKeypair, ExtendKeypair},
+        identity::keychain::{AdminKey, AdminKeypair},
         util::{self, test::sign_and_push, Timestamp, Url},
     };
 

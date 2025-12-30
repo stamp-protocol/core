@@ -2112,7 +2112,6 @@ mod tests {
             TransactionBody::PublishV1 {
                 identity: published_identity,
             } => {
-                assert!(!published_identity.has_private());
                 assert_eq!(published_identity.transactions().len(), 3);
                 assert_eq!(published_identity.transactions()[0].id(), identity2.transactions()[0].id());
                 assert_eq!(published_identity.transactions()[1].id(), identity2.transactions()[1].id());
@@ -2580,50 +2579,6 @@ mod tests {
     }
 
     #[test]
-    fn identity_is_owned() {
-        let mut rng = crate::util::test::rng();
-        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity_instance = identity.build_identity_instance().unwrap();
-        assert!(identity.is_owned());
-        assert!(identity_instance.is_owned());
-
-        let mut identity2 = identity.clone();
-        identity2.transactions_mut()[0] = identity2.transactions_mut()[0].strip_private();
-        let identity2_instance = identity2.build_identity_instance().unwrap();
-        assert!(!identity2.is_owned());
-        assert!(!identity2_instance.is_owned());
-
-        let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Second", None);
-        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
-        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
-        let identity3 = sign_and_push! { &master_key, &admin_key, identity.clone(),
-            [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
-            [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
-            [ add_subkey, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key") ]
-            [ add_admin_key, Timestamp::now(), admin_key2 ]
-        };
-        let identity3_instance = identity3.build_identity_instance().unwrap();
-        assert!(identity3.is_owned());
-        assert!(identity3_instance.is_owned());
-
-        let mut identity4 = identity3.clone();
-        for trans in identity4.transactions_mut() {
-            let entry = trans.entry().clone();
-            match entry.body() {
-                TransactionBody::CreateIdentityV1 { .. } | TransactionBody::AddAdminKeyV1 { .. } => {
-                    trans.set_entry(entry.strip_private());
-                }
-                _ => {}
-            }
-        }
-        let identity4_instance = identity4.build_identity_instance().unwrap();
-        assert!(!identity4.is_owned());
-        assert!(!identity4_instance.is_owned());
-    }
-
-    #[test]
     fn identity_test_master_key() {
         let mut rng = crate::util::test::rng();
         let (master_key, identity, _admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
@@ -2632,40 +2587,6 @@ mod tests {
         assert!(master_key_fake != master_key);
         let res = identity.test_master_key(&master_key_fake);
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
-    }
-
-    #[test]
-    fn identity_strip_has_private() {
-        let mut rng = crate::util::test::rng();
-        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-
-        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
-        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let secret_key = PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap();
-        let identity2 = sign_and_push! { &master_key, &admin_key, identity,
-            [ add_subkey, Timestamp::now(), Key::new_sign(sign_keypair), "default:sign", Some("The key I use to sign things") ]
-            [ add_subkey, Timestamp::now(), Key::new_crypto(crypto_keypair), "default:crypto", Some("Use this to send me emails") ]
-            [ add_subkey, Timestamp::now(), Key::new_secret(secret_key), "default:secret", Some("Encrypt/decrypt things locally with this key") ]
-            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, "Danny Dinkel".to_string()).unwrap()), None::<String> ]
-            [ make_claim, Timestamp::now(), ClaimSpec::Email(MaybePrivate::new_public("twinkie.doodle@amateur-spotlight.net".to_string())), None::<String> ]
-        };
-
-        let mut has_priv: Vec<bool> = Vec::new();
-        for trans in identity2.transactions() {
-            has_priv.push(trans.has_private());
-        }
-        assert_eq!(has_priv.iter().filter(|x| **x).count(), 5);
-
-        assert!(identity2.has_private());
-        let identity3 = identity2.strip_private();
-        assert!(!identity3.has_private());
-
-        let mut has_priv: Vec<bool> = Vec::new();
-        for trans in identity3.transactions() {
-            has_priv.push(trans.has_private());
-        }
-        assert_eq!(has_priv.iter().filter(|x| **x).count(), 0);
     }
 
     #[test]

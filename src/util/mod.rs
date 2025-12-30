@@ -245,15 +245,6 @@ impl FromStr for Date {
     }
 }
 
-/// Marks a type as having a public mode, ie stripped of all private data.
-pub trait Public {
-    /// Strip the private data from a object, returning only public data.
-    fn strip_private(&self) -> Self;
-
-    /// Returns whether or not this object has private data.
-    fn has_private(&self) -> bool;
-}
-
 /// A wrapper around URLs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Url(url::Url);

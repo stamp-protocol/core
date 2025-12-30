@@ -765,24 +765,4 @@ stamps: []
 revoked: false"#
         );
     }
-
-    #[test]
-    fn identity_strip_has_private() {
-        let mut rng = crate::util::test::rng();
-        let (master_key, identity) = create_identity(&mut rng);
-        let identity = identity
-            .make_claim(
-                ClaimID::random(),
-                ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, "Bozotron".to_string()).unwrap()),
-                None,
-            )
-            .unwrap();
-        assert!(identity.has_private());
-        assert!(identity.keychain().has_private());
-        assert!(identity.claims().iter().find(|c| c.has_private()).is_some());
-        let identity2 = identity.strip_private();
-        assert!(!identity2.has_private());
-        assert!(!identity2.keychain().has_private());
-        assert!(identity2.claims().iter().find(|c| c.has_private()).is_none());
-    }
 }

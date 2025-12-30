@@ -133,14 +133,6 @@ impl ReEncrypt for AdminKeypair<Full> {
     }
 }
 
-// yes, we can just do stripe, but a lot of places in the code use .from() for this conversion and
-// i don't want to change them all
-impl From<AdminKeypair<Full>> for AdminKeypair<Public> {
-    fn from(key: AdminKeypair<Full>) -> Self {
-        key.strip().0
-    }
-}
-
 /// A [`KeyID`] but for an [`AdminKeypair`]
 #[derive(Debug, Clone, PartialEq, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(delegate)]
@@ -726,37 +718,13 @@ mod tests {
         assert_eq!(res6, Err(Error::CryptoOpenFailed));
     }
 
-    #[test]
-    fn key_strip_private_has_private() {
-        let mut rng = crate::util::test::rng();
-        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let sign_keypair = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
-        let crypto_keypair = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
-        let secret_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let key4 = Key::Sign(sign_keypair.clone());
-        let key5 = Key::Crypto(crypto_keypair.clone());
-        let key6 = Key::Secret(PrivateWithHmac::seal(&mut rng, &master_key, secret_key).unwrap());
-
-        assert!(key4.has_private());
-        assert!(key5.has_private());
-        assert!(key6.has_private());
-
-        let key4_2 = key4.strip_private();
-        let key5_2 = key5.strip_private();
-        let key6_2 = key6.strip_private();
-
-        assert!(!key4_2.has_private());
-        assert!(!key5_2.has_private());
-        assert!(!key6_2.has_private());
-    }
-
-    fn keychain_new() -> (SecretKey, Keychain) {
+    fn keychain_new() -> (SecretKey, Keychain<Full>) {
         let mut rng = crate::util::test::rng();
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
         let admin_keypair = AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         let admin_key = AdminKey::new(admin_keypair, "Default", None);
 
-        let keychain = Keychain::new(vec![admin_key]);
+        let keychain = Keychain::<Full>::new(vec![admin_key]);
         (master_key, keychain)
     }
 
@@ -990,33 +958,5 @@ mod tests {
         let cryptokey2 = keychain.subkey_by_name("crypto");
         // checkmate, liberals
         assert!(cryptokey2.is_none());
-    }
-
-    #[test]
-    fn keychain_strip_private() {
-        let mut rng = crate::util::test::rng();
-        let (master_key, keychain) = keychain_new();
-        let sign = Key::new_sign(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap());
-        let crypto = Key::new_crypto(CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap());
-        let sk_tmp = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let secret = Key::new_secret(PrivateWithHmac::seal(&mut rng, &master_key, sk_tmp).unwrap());
-        let keychain = keychain
-            .add_subkey(sign, "sign", None)
-            .unwrap()
-            .add_subkey(crypto, "crypto", None)
-            .unwrap()
-            .add_subkey(secret, "secret", None)
-            .unwrap();
-        assert!(keychain.admin_keys().iter().any(|x| x.has_private()));
-        assert!(keychain.subkey_by_name("sign").unwrap().key().has_private());
-        assert!(keychain.subkey_by_name("crypto").unwrap().key().has_private());
-        assert!(keychain.subkey_by_name("secret").is_some());
-
-        let keychain = keychain.strip_private();
-
-        assert!(!keychain.admin_keys().iter().any(|x| x.has_private()));
-        assert!(!keychain.subkey_by_name("sign").unwrap().key().has_private());
-        assert!(!keychain.subkey_by_name("crypto").unwrap().key().has_private());
-        assert!(!keychain.subkey_by_name("secret").unwrap().key().has_private());
     }
 }
