@@ -20,7 +20,7 @@ use crate::{
     },
 };
 use getset;
-use private_parts::{Full, PrivacyMode, Public};
+use private_parts::{Full, PrivacyMode, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde::{Deserialize, Serialize};
@@ -334,6 +334,9 @@ impl<M: PrivacyMode> Identity<M> {
     /// when in doubt, use [`push_transaction()`][Identity::push_transaction]
     /// instead of this method.
     pub fn push_transaction_mut(&mut self, transaction: Transaction<M>) -> Result<IdentityInstance<M>> {
+        if transaction.signatures().is_empty() {
+            Err(Error::TransactionNoSignatures)?;
+        }
         if self.transactions().iter().any(|x| x.id() == transaction.id()) {
             Err(Error::DuplicateTransaction)?;
         }
@@ -709,6 +712,14 @@ impl Identity<Full> {
     }
 }
 
+impl From<Identity<Full>> for Identity<Public> {
+    fn from(value: Identity<Full>) -> Self {
+        let Identity::<Full> { transactions } = value;
+        let tx_pub = transactions.into_iter().map(|t| t.strip().0).collect::<Vec<_>>();
+        Self { transactions: tx_pub }
+    }
+}
+
 impl ReEncrypt for Identity<Full> {
     fn reencrypt<R: RngCore + CryptoRng>(mut self, rng: &mut R, old_master_key: &SecretKey, new_master_key: &SecretKey) -> Result<Self> {
         for trans in self.transactions_mut() {
@@ -880,7 +891,7 @@ macro_rules! tx_chain {
         // maps temporary node ids to real/new node ids
         let mut node_id_map: std::collections::HashMap<TransactionID, TransactionID> = Default::default();
         // maps node name (ie, "A", "B", ...) to a transaction ID
-        let mut name_to_tx: std::collections::HashMap<&'static str, Transaction> = Default::default();
+        let mut name_to_tx: std::collections::HashMap<&'static str, Transaction<Full>> = Default::default();
         // holds our `Node` objects, to be turned into a DAG
         let mut nodes_tmp = Vec::new();
 
@@ -918,7 +929,7 @@ macro_rules! tx_chain {
         // DAG nodes. nobody thinks you're funny, Parker.
         //
         // this also saves us from having to pass a name->transaction mapping hash in each call!
-        let fake_trans = $crate::dag::Transaction::create_raw_with_id(
+        let fake_trans = $crate::dag::Transaction::<Full>::create_raw_with_id(
             $crate::dag::TransactionID::from($crate::crypto::base::Hash::new_blake3_from_bytes([0u8; 32])),
             $crate::util::Timestamp::from_str("1900-01-01T06:43:22Z").expect("tx_chain!{} timestamp parsed"),
             Vec::new(),
@@ -928,11 +939,11 @@ macro_rules! tx_chain {
             // start each named transaction with a fake clone. we'll populate these properly as the
             // DAG progresses.
             #[allow(non_snake_case, unused, unused_mut)]
-            let mut $name: Transaction = fake_trans.clone();
+            let mut $name: Transaction<Full> = fake_trans.clone();
         )*
 
         // holds our final transaction list
-        let mut transactions: Vec<Transaction> = Vec::with_capacity(nodes_tmp.len());
+        let mut transactions: Vec<Transaction<Full>> = Vec::with_capacity(nodes_tmp.len());
         // holds a mapping of final node ids (not temporary) to node name
         let mut id_to_name = std::collections::HashMap::new();
         // convert our temp node list a list of `DagNode`s, then build our DAG and walk it.
@@ -980,6 +991,7 @@ mod tests {
             base::{CryptoKeypair, SignKeypair},
             private::{MaybePrivate, PrivateWithHmac},
         },
+        dag::DagUtil,
         identity::{
             claim::{Relationship, RelationshipType},
             keychain::AdminKeypair,
@@ -1007,7 +1019,11 @@ mod tests {
         let mut rng = crate::util::test::rng_seeded(b"beans");
         let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let mktx = |now, prev, body| Transaction::create_raw(&HashAlgo::Blake3, now, prev, body).unwrap();
-        let (tx, name_to_tx, id_to_name): (Vec<Transaction>, HashMap<&'static str, Transaction>, HashMap<TransactionID, &'static str>) = tx_chain! {
+        let (tx, name_to_tx, _id_to_name): (
+            Vec<Transaction<Full>>,
+            HashMap<&'static str, Transaction<Full>>,
+            HashMap<TransactionID, &'static str>,
+        ) = tx_chain! {
             [
                 GEN = ("2024-01-01T00:00:00Z", |now, prev| mktx(now, prev, identity.transactions()[0].entry().body().clone()));
                 NAM1 = ("2024-01-01T00:00:00Z", |now, prev| mktx(now, prev, TransactionBody::MakeClaimV1 { spec: ClaimSpec::Name(MaybePrivate::new_public("terrance".into())), name: None }));
@@ -1027,21 +1043,21 @@ mod tests {
         };
         let names_to_ids =
             |names: &[&str]| -> Vec<TransactionID> { names.iter().map(|n| name_to_tx.get(n).unwrap().id().clone()).collect::<Vec<_>>() };
-        let tx = tx.into_iter().map(|t| t.sign(&master_key, &admin_key).unwrap()).collect::<Vec<_>>();
+        let tx = tx
+            .into_iter()
+            .map(|t| {
+                t.into_serialized()
+                    .unwrap()
+                    .sign(&master_key, &admin_key)
+                    .unwrap()
+                    .into_transaction()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
         let mut identity = Identity::new();
         for t in tx {
             identity.push_transaction_mut(t).unwrap();
         }
-
-        #[allow(unused_variables)]
-        let dump_transactions = |transactions: &[Transaction]| {
-            for tx in transactions {
-                println!("-- {}: {}", id_to_name.get(tx.id()).unwrap(), tx.id());
-                for prev in tx.entry().previous_transactions() {
-                    println!("   prev: {prev}");
-                }
-            }
-        };
 
         {
             let identity_instance = identity.build_identity_instance().unwrap();
@@ -1134,7 +1150,11 @@ mod tests {
                 None::<String>,
             )
             .unwrap()
+            .into_serialized()
+            .unwrap()
             .sign(&master_key_1, &admin_key_1)
+            .unwrap()
+            .into_transaction()
             .unwrap();
         identity1.push_transaction(trans_claim_signed.clone()).unwrap();
         identity2.build_identity_instance().unwrap();
@@ -1226,7 +1246,11 @@ mod tests {
             identity
                 .create_identity(&HashAlgo::Blake3, Timestamp::now(), identity_instance.keychain().admin_keys().clone(), policies)
                 .unwrap()
+                .into_serialized()
+                .unwrap()
                 .sign(&master_key, &admin_key)
+                .unwrap()
+                .into_transaction()
                 .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::DagCreateIdentityOnExistingChain));
@@ -1241,7 +1265,11 @@ mod tests {
                     None::<String>,
                 )
                 .unwrap()
+                .into_serialized()
+                .unwrap()
                 .sign(&master_key, &admin_key)
+                .unwrap()
+                .into_transaction()
                 .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::DagMissingIdentity));
@@ -1623,9 +1651,9 @@ mod tests {
             ($claimty:ident, $val:expr) => {
                 assert_claim! {
                     raw,
-                    |maybe, _| ClaimSpec::$claimty(maybe),
+                    |maybe, _| ClaimSpec::<Full>::$claimty(maybe),
                     $val,
-                    |spec: ClaimSpec| if let ClaimSpec::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimty)) }
+                    |spec: ClaimSpec<Full>| if let ClaimSpec::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimty)) }
                 }
             };
         }
@@ -1647,9 +1675,9 @@ mod tests {
         assert_claim! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
         assert_claim! {
             raw,
-            |maybe, _| ClaimSpec::Extension { key: Vec::from("id:state:ca".as_bytes()).into(), value: maybe },
+            |maybe, _| ClaimSpec::<Full>::Extension { key: Vec::from("id:state:ca".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![7, 3, 2, 90]),
-            |spec: ClaimSpec| if let ClaimSpec::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+            |spec: ClaimSpec<Full>| if let ClaimSpec::<Full>::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }
     }
 
@@ -1838,7 +1866,7 @@ mod tests {
             .unwrap();
 
         let identity3 = sign_and_push! { &master_key, &admin_key, identity2,
-            [ accept_stamp, Timestamp::now(), stamp_transaction.clone() ]
+            [ accept_stamp, Timestamp::now(), stamp_transaction.clone().try_into().unwrap() ]
         };
         assert_eq!(identity3.transactions().len(), 3);
         let identity3_instance = identity3.build_identity_instance().unwrap();
@@ -1846,19 +1874,19 @@ mod tests {
 
         let res = identity3.clone().push_transaction(
             identity3
-                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction_unsigned.clone())
+                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction_unsigned.clone().try_into().unwrap())
                 .unwrap()
                 .sign(&master_key, &admin_key)
                 .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::TransactionNoSignatures));
 
-        let res = identity3.accept_stamp(&HashAlgo::Blake3, Timestamp::now(), not_stamp_transaction.clone());
+        let res: Result<StampTransaction> = not_stamp_transaction.clone().try_into();
         assert_eq!(res.err(), Some(Error::TransactionMismatch));
 
         let res = identity3.clone().push_transaction(
             identity3
-                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction.clone())
+                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction.clone().try_into().unwrap())
                 .unwrap()
                 .sign(&master_key, &admin_key)
                 .unwrap(),
@@ -1870,7 +1898,7 @@ mod tests {
         };
         let res = identity4.clone().push_transaction(
             identity4
-                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction.clone())
+                .accept_stamp(&HashAlgo::Blake3, Timestamp::now(), stamp_transaction.clone().try_into().unwrap())
                 .unwrap()
                 .sign(&master_key, &admin_key)
                 .unwrap(),
@@ -1905,7 +1933,7 @@ mod tests {
             .unwrap();
 
         let identity3 = sign_and_push! { &master_key, &admin_key, identity2,
-            [ accept_stamp, Timestamp::now(), stamp_transaction.clone() ]
+            [ accept_stamp, Timestamp::now(), stamp_transaction.clone().try_into().unwrap() ]
         };
         assert_eq!(identity3.transactions().len(), 3);
         let identity3_instance = identity3.build_identity_instance().unwrap();
@@ -2121,7 +2149,7 @@ mod tests {
         }
 
         let identity_instance = identity2.build_identity_instance().unwrap();
-        published.verify(Some(&identity_instance)).unwrap();
+        published.authorize(Some(&identity_instance)).unwrap();
 
         let mut published2 = published.clone();
         match published2.entry_mut().body_mut() {
@@ -2136,7 +2164,8 @@ mod tests {
             _ => panic!("Unexpected transaction: {published2:?}"),
         }
 
-        assert!(matches!(published2.verify(Some(&identity_instance)).unwrap_err(), Error::TransactionIDMismatch(..)));
+        let published2_ser = TransactionSerialized::try_from(published2).unwrap();
+        assert!(matches!(published2_ser.verify_hash_and_signatures(), Err(Error::TransactionIDMismatch(..))));
     }
 
     #[test]
@@ -2149,7 +2178,7 @@ mod tests {
             .sign(&master_key, &admin_key)
             .unwrap();
         let identity = identity.build_identity_instance().unwrap();
-        sig.verify(Some(&identity)).unwrap();
+        sig.authorize(Some(&identity)).unwrap();
 
         let identity_blank = Identity::new();
         let blank_res = identity_blank.sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from("get a job").as_slice());
@@ -2165,7 +2194,7 @@ mod tests {
             }
             _ => panic!("Unexpected transaction: {sig_mod:?}"),
         }
-        assert!(matches!(sig_mod.verify(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
+        assert!(matches!(sig_mod.authorize(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
     }
 
     #[test]
@@ -2185,7 +2214,7 @@ mod tests {
             .sign(&master_key, &admin_key)
             .unwrap();
         let identity = identity.build_identity_instance().unwrap();
-        ext.verify(Some(&identity)).unwrap();
+        ext.authorize(Some(&identity)).unwrap();
 
         let identity_blank = Identity::new();
         let blank_res = identity_blank.sign(&HashAlgo::Blake3, Timestamp::now(), &HashAlgo::Blake3, Vec::from(b"get a job").as_slice());
@@ -2199,7 +2228,8 @@ mod tests {
             }
             _ => panic!("Unexpected transaction: {ext_mod:?}"),
         }
-        assert!(matches!(ext_mod.verify(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
+        let ext_mod_ser: TransactionSerialized<_> = ext_mod.try_into().unwrap();
+        assert!(matches!(ext_mod_ser.verify_hash().unwrap_err(), Error::TransactionIDMismatch(..)));
     }
 
     #[test]
@@ -2221,7 +2251,10 @@ mod tests {
         };
         claim_trans.signatures_mut().push(policy_sig);
         let res = identity.clone().push_transaction(claim_trans);
-        assert!(matches!(res.err(), Some(Error::TransactionSignatureInvalid(_))));
+        assert!(matches!(res.err(), None));
+
+        let claim_trans_ser = TransactionSerialized::try_from(claim_trans).unwrap();
+        let claim_trans2 = Transaction::try_from(claim_trans_ser).unwrap();
     }
 
     #[test]
@@ -2433,7 +2466,7 @@ mod tests {
                 .clone()
                 .sign(&master_key, &admin_key1)
                 .unwrap()
-                .verify(Some(&identity2_instance))
+                .authorize(Some(&identity2_instance))
                 .err(),
             Some(Error::PolicyNotFound)
         );
@@ -2444,7 +2477,7 @@ mod tests {
                 .unwrap()
                 .sign(&master_key, &admin_key2)
                 .unwrap()
-                .verify(Some(&identity2_instance))
+                .authorize(Some(&identity2_instance))
                 .err(),
             Some(Error::PolicyNotFound)
         );
@@ -2457,7 +2490,7 @@ mod tests {
                 .unwrap()
                 .sign(&master_key, &admin_key3)
                 .unwrap()
-                .verify(Some(&identity2_instance))
+                .authorize(Some(&identity2_instance))
                 .err(),
             Some(Error::PolicyNotFound)
         );
@@ -2468,7 +2501,7 @@ mod tests {
                 .unwrap()
                 .sign(&master_key, &admin_key3)
                 .unwrap()
-                .verify(Some(&identity2_instance))
+                .authorize(Some(&identity2_instance))
                 .err(),
             Some(Error::PolicyNotFound)
         );
@@ -2480,7 +2513,7 @@ mod tests {
             .unwrap()
             .sign(&master_key, &admin_key2)
             .unwrap()
-            .verify(Some(&identity2_instance))
+            .authorize(Some(&identity2_instance))
             .unwrap();
         trans4
             .clone()
@@ -2490,7 +2523,7 @@ mod tests {
             .unwrap()
             .sign(&master_key, &admin_key3)
             .unwrap()
-            .verify(Some(&identity2_instance))
+            .authorize(Some(&identity2_instance))
             .unwrap();
         trans4
             .clone()
@@ -2502,7 +2535,7 @@ mod tests {
             .unwrap()
             .sign(&master_key, &admin_key3)
             .unwrap()
-            .verify(Some(&identity2_instance))
+            .authorize(Some(&identity2_instance))
             .unwrap();
 
         let mut trans5 = trans4
@@ -2516,7 +2549,8 @@ mod tests {
             signature: admin_key4.sign(&master_key, b"GET A JOB").unwrap(),
         };
         trans5.signatures_mut().push(fakesig);
-        assert!(matches!(trans5.verify(Some(&identity2_instance)), Err(Error::TransactionSignatureInvalid(_))));
+        let trans5_ser = TransactionSerialized::try_from(trans5).unwrap();
+        assert!(matches!(trans5_ser.verify_hash_and_signatures(), Err(Error::TransactionSignatureInvalid(_, _))));
     }
 
     #[test]
@@ -2587,21 +2621,6 @@ mod tests {
         assert!(master_key_fake != master_key);
         let res = identity.test_master_key(&master_key_fake);
         assert_eq!(res.err(), Some(Error::CryptoOpenFailed));
-    }
-
-    #[test]
-    fn identity_serde_binary() {
-        let mut rng = crate::util::test::rng();
-        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let identity = sign_and_push! { &master_key, &admin_key, identity,
-            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("Andrew".into())), Some("given-name".to_string()) ]
-        };
-        let identity_instance = identity.build_identity_instance().unwrap();
-        let ser = identity.serialize_binary().unwrap();
-        let des = Identity::deserialize_binary(ser.as_slice()).unwrap();
-        let identity2_instance = des.build_identity_instance().unwrap();
-        // quick and dirty. oh well.
-        assert_eq!(identity_instance.id(), identity2_instance.id());
     }
 
     #[test]

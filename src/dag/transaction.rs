@@ -472,9 +472,6 @@ impl IntoPublic for TransactionEntry<Public> {
     }
 }
 
-impl SerdeBinary for TransactionEntry<Public> {}
-impl SerdeBinary for TransactionEntry<Full> {}
-
 /// A transaction represents a single change on an identity object. In order to
 /// build an identity, all transactions are played in order from start to finish.
 ///
@@ -497,6 +494,21 @@ impl<M: PrivacyMode> Transaction<M> {
     /// Create a new Transaction from a [TransactionEntry].
     pub(crate) fn new_raw_with_sigs(id: TransactionID, entry: TransactionEntry<M>, signatures: Vec<MultisigPolicySignature>) -> Self {
         Self { id, entry, signatures }
+    }
+
+    /// Test if an admin key has signed a set of signatures
+    pub(crate) fn is_signed_by_impl(signatures: &[MultisigPolicySignature], admin_key: &AdminKeypair<Public>) -> bool {
+        signatures
+            .iter()
+            .find(|sig| match sig {
+                MultisigPolicySignature::Key { key, .. } => key == admin_key,
+            })
+            .is_some()
+    }
+
+    /// Determines if this transaction has been signed by a given key.
+    pub fn is_signed_by(&self, admin_key: &AdminKeypair<Public>) -> bool {
+        Self::is_signed_by_impl(self.signatures(), admin_key)
     }
 
     /// Authorize that this transaction has the signatures needed to match a policy that grants the
@@ -557,32 +569,6 @@ impl<M: PrivacyMode> Transaction<M> {
             }
         }
     }
-
-    /// Sign this transaction in-place.
-    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
-        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
-        let sig_exists = self.signatures().iter().find(|sig| match sig {
-            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
-        });
-        if sig_exists.is_some() {
-            Err(Error::DuplicateSignature)?;
-        }
-        let serialized = ser::serialize(self.id().deref())?;
-        let sig = admin_key.sign(master_key, &serialized[..])?;
-        let policy_sig = MultisigPolicySignature::Key {
-            key: admin_key.clone().into(),
-            signature: sig,
-        };
-        self.signatures_mut().push(policy_sig);
-        Ok(())
-    }
-
-    /// Sign this transaction. This consumes the transaction, adds the signature
-    /// to the `signatures` list, then returns the new transaction.
-    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
-        self.sign_mut(master_key, admin_key)?;
-        Ok(self)
-    }
 }
 
 impl<M> Transaction<M>
@@ -595,6 +581,7 @@ where
     pub(crate) fn new(entry: TransactionEntry<M>, hash_with: &HashAlgo) -> Result<Self> {
         let public = entry.clone().into_public();
         let serialized = ser::serialize(&public)?;
+        // recalculate our tx id based on the actual bytes that will be represented.
         let hash = match hash_with {
             HashAlgo::Blake3 => Hash::new_blake3(&serialized)?,
         };
@@ -604,6 +591,17 @@ where
             entry,
             signatures: Vec::new(),
         })
+    }
+}
+
+impl<M> Transaction<M>
+where
+    M: PrivacyMode,
+    TransactionSerialized<M>: TryFrom<Transaction<M>, Error = Error>,
+{
+    /// Turn this `Transaction` into a `TransactionSerialized` (by way of `try_from`)
+    pub fn into_serialized(self) -> Result<TransactionSerialized<M>> {
+        TransactionSerialized::try_from(self)
     }
 }
 
@@ -986,7 +984,7 @@ impl<M: PrivacyMode> TransactionSerialized<M> {
     /// This is useful if you need to validate a transaction is "valid" up until the point where
     /// you need a copy of the full identity (so that the policies can be checked). In other words,
     /// if you need to verify a transaction but don't have all the information you need to run
-    /// `Transaction.verify()` then you can run this as a self-contained way of verification, as
+    /// `Transaction.authorize()` then you can run this as a self-contained way of verification, as
     /// long as you keep in mind that the transaction ultimately needs to be checked against a
     /// built identity (and its contained policies).
     ///
@@ -998,14 +996,34 @@ impl<M: PrivacyMode> TransactionSerialized<M> {
         Ok(())
     }
 
+    /// Sign this transaction in-place.
+    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
+        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
+        let sig_exists = self.signatures().iter().find(|sig| match sig {
+            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
+        });
+        if sig_exists.is_some() {
+            Err(Error::DuplicateSignature)?;
+        }
+        let serialized = ser::serialize(self.id().deref())?;
+        let sig = admin_key.sign(master_key, &serialized[..])?;
+        let policy_sig = MultisigPolicySignature::Key {
+            key: admin_key.clone().into(),
+            signature: sig,
+        };
+        self.signatures_mut().push(policy_sig);
+        Ok(())
+    }
+
+    /// Sign this transaction. This consumes the transaction, adds the signature
+    /// to the `signatures` list, then returns the new transaction.
+    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
+        self.sign_mut(master_key, admin_key)?;
+        Ok(self)
+    }
     /// Determines if this transaction has been signed by a given key.
     pub fn is_signed_by(&self, admin_key: &AdminKeypair<Public>) -> bool {
-        self.signatures()
-            .iter()
-            .find(|sig| match sig {
-                MultisigPolicySignature::Key { key, .. } => key == admin_key,
-            })
-            .is_some()
+        Transaction::<Public>::is_signed_by_impl(self.signatures(), admin_key)
     }
 }
 
@@ -1032,9 +1050,12 @@ impl TryFrom<Transaction<Full>> for TransactionSerialized<Full> {
     fn try_from(value: Transaction<Full>) -> Result<Self> {
         let Transaction::<Full> { id, entry, signatures } = value;
         let (entry_pub, private_data) = entry.strip();
-        let ser = entry_pub.serialize_binary()?;
+        let ser = ser::serialize(&entry_pub)?;
+        let hash = match id {
+            TransactionID(Hash::Blake3(_)) => Hash::new_blake3(&ser)?,
+        };
         Ok(Self {
-            id,
+            id: TransactionID(hash),
             entry: BinaryVec::from(ser),
             signatures,
             private_data,
@@ -1047,9 +1068,13 @@ impl TryFrom<Transaction<Public>> for TransactionSerialized<Public> {
 
     fn try_from(value: Transaction<Public>) -> Result<Self> {
         let Transaction::<Public> { id, entry, signatures } = value;
-        let ser = entry.serialize_binary()?;
+        let ser = ser::serialize(&entry)?;
+        // recalculate our tx id based on the actual bytes that will be represented.
+        let hash = match id {
+            TransactionID(Hash::Blake3(_)) => Hash::new_blake3(&ser)?,
+        };
         Ok(Self {
-            id,
+            id: TransactionID(hash),
             entry: BinaryVec::from(ser),
             signatures,
             private_data: (),
@@ -1068,7 +1093,7 @@ impl TryFrom<TransactionSerialized<Full>> for Transaction<Full> {
             signatures,
             mut private_data,
         } = value;
-        let entry = TransactionEntry::<Public>::deserialize_binary(entry.as_slice())?;
+        let entry: TransactionEntry<Public> = ser::deserialize(entry.as_slice())?;
         let trans_public = Transaction::<Public>::new_raw_with_sigs(id, entry, signatures);
         let trans = Transaction::<Full>::merge(trans_public, &mut private_data)?;
         Ok(trans)
@@ -1086,18 +1111,31 @@ impl TryFrom<TransactionSerialized<Public>> for Transaction<Public> {
             signatures,
             private_data: _private_data,
         } = value;
-        let entry = TransactionEntry::<Public>::deserialize_binary(entry.as_slice())?;
+        let entry: TransactionEntry<Public> = ser::deserialize(entry.as_slice())?;
         let trans = Transaction::<Public>::new_raw_with_sigs(id, entry, signatures);
         Ok(trans)
     }
 }
+
+impl<M> TransactionSerialized<M>
+where
+    M: PrivacyMode,
+    Transaction<M>: TryFrom<TransactionSerialized<M>, Error = Error>,
+{
+    /// Turn this `Transaction` into a `TransactionSerialized` (by way of `try_from`)
+    pub fn into_transaction(self) -> Result<Transaction<M>> {
+        Transaction::try_from(self)
+    }
+}
+
+impl<M: PrivacyMode + Encode + Decode> SerdeBinary for TransactionSerialized<M> {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         crypto::{base::SignKeypair, private::MaybePrivate},
-        identity::{keychain::RevocationReason, stamp::Confidence},
+        identity::keychain::RevocationReason,
         policy::{Capability, Context, ContextClaimType, MultisigPolicy, Policy, TransactionBodyType},
         util::{ser, test},
     };
@@ -1105,28 +1143,28 @@ mod tests {
 
     #[test]
     fn trans_create_raw() {
-        let body = TransactionBody::ExtV1 {
+        let body = TransactionBody::<Full>::ExtV1 {
             creator: IdentityID::from(TransactionID::from(Hash::new_blake3(b"owwww my head").unwrap())),
             ty: Some(Vec::from(b"/stamp/test/raw").into()),
             previous_transactions: vec![TransactionID::from(Hash::new_blake3(b"i like your hat").unwrap())],
             context: Some([("create", "raw")].into()),
             payload: Vec::from(b"who's this...Steve?").into(),
         };
-        let trans1 = Transaction::create_raw(
+        let trans1 = Transaction::<Full>::create_raw(
             &HashAlgo::Blake3,
             crate::util::Timestamp::from_str("2028-09-30T06:34:22Z").unwrap(),
             vec![TransactionID::from(Hash::new_blake3(b"toot").unwrap())],
             body.clone(),
         )
         .unwrap();
-        let trans2 = Transaction::create_raw(
+        let trans2 = Transaction::<Full>::create_raw(
             &HashAlgo::Blake3,
             crate::util::Timestamp::from_str("3028-09-30T06:34:22Z").unwrap(),
             vec![TransactionID::from(Hash::new_blake3(b"toot").unwrap())],
             body.clone(),
         )
         .unwrap();
-        let trans3 = Transaction::create_raw(
+        let trans3 = Transaction::<Full>::create_raw(
             &HashAlgo::Blake3,
             crate::util::Timestamp::from_str("3028-09-30T06:34:22Z").unwrap(),
             vec![TransactionID::from(Hash::new_blake3(b"zing").unwrap())],
@@ -1144,12 +1182,11 @@ mod tests {
         let now = Timestamp::now();
         let (_master_key1, identity1, _admin_key1) = test::create_fake_identity(&mut rng, now.clone());
         let (_master_key2, mut identity2, _admin_key2) = test::create_fake_identity(&mut rng, now.clone());
-        identity1.transactions()[0].verify_hash_and_signatures().unwrap();
+        let tx_ser: TransactionSerialized<_> = identity1.transactions()[0].clone().try_into().unwrap();
+        tx_ser.verify_hash_and_signatures().unwrap();
         *identity2.transactions_mut()[0].signatures_mut() = identity1.transactions()[0].signatures().clone();
-        assert!(matches!(
-            identity2.transactions()[0].verify_hash_and_signatures(),
-            Err(Error::TransactionSignatureInvalid(_))
-        ));
+        let tx_ser2: TransactionSerialized<_> = identity2.transactions()[0].clone().try_into().unwrap();
+        assert!(matches!(tx_ser2.verify_hash_and_signatures(), Err(Error::TransactionSignatureInvalid(_, _))));
     }
 
     #[test]
@@ -1157,7 +1194,7 @@ mod tests {
         let mut rng = crate::util::test::rng();
         let now = Timestamp::now();
         let (_master_key, identity, admin_key) = test::create_fake_identity(&mut rng, now.clone());
-        identity.transactions()[0].verify(None).unwrap();
+        identity.transactions()[0].authorize(None).unwrap();
 
         let (_, identity_new, _) = test::create_fake_identity(&mut rng, now.clone());
 
@@ -1168,23 +1205,23 @@ mod tests {
 
         let mut trans2 = identity.transactions()[0].clone();
         trans2.set_id(TransactionID::random());
-        assert!(matches!(trans2.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
+        assert!(matches!(trans2.authorize(None).err(), Some(Error::TransactionIDMismatch(..))));
 
         let mut trans3 = identity.transactions()[0].clone();
         let then = Timestamp::from(*now.deref() - chrono::Duration::seconds(2));
         trans3.entry_mut().set_created(then);
-        assert!(matches!(trans3.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
+        assert!(matches!(trans3.authorize(None).err(), Some(Error::TransactionIDMismatch(..))));
 
         let mut trans4 = identity.transactions()[0].clone();
         trans4.entry_mut().set_previous_transactions(vec![TransactionID::random()]);
-        assert!(matches!(trans4.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
+        assert!(matches!(trans4.authorize(None).err(), Some(Error::TransactionIDMismatch(..))));
 
         let mut trans5 = identity.transactions()[0].clone();
         trans5.entry_mut().set_body(TransactionBody::CreateIdentityV1 {
             admin_keys: vec![admin_key.clone()],
             policies: vec![],
         });
-        assert!(matches!(trans5.verify(None).err(), Some(Error::TransactionIDMismatch(..))));
+        assert!(matches!(trans5.authorize(None).err(), Some(Error::TransactionIDMismatch(..))));
     }
 
     #[test]
@@ -1216,10 +1253,12 @@ mod tests {
         let (_master_key, identity, _admin_key) = test::create_fake_identity(&mut rng, now.clone());
         let trans = identity.transactions()[0].clone();
 
-        let ser = trans.serialize_binary().unwrap();
-        let des = Transaction::deserialize_binary(ser.as_slice()).unwrap();
+        let tx_ser: TransactionSerialized<_> = trans.clone().try_into().unwrap();
+        let ser = tx_ser.serialize_binary().unwrap();
+        let des = TransactionSerialized::<Full>::deserialize_binary(ser.as_slice()).unwrap();
+        let trans2: Transaction<_> = des.try_into().unwrap();
 
-        assert_eq!(trans.id(), des.id());
+        assert_eq!(trans.id(), trans2.id());
     }
 
     #[test]
@@ -1236,13 +1275,13 @@ mod tests {
         ($master:expr, $key1:expr, $key2:expr) => {
             match ($key1, $key2) {
                 (
-                    SignKeypair::Ed25519 {
+                    SignKeypair::<Full>::Ed25519 {
                         public: public1,
-                        secret: Some(secret1),
+                        secret: secret1,
                     },
-                    SignKeypair::Ed25519 {
+                    SignKeypair::<Full>::Ed25519 {
                         public: public2,
-                        secret: Some(secret2),
+                        secret: secret2,
                     },
                 ) => {
                     assert_eq!(public1, public2);
@@ -1250,7 +1289,6 @@ mod tests {
                     let revealed2 = secret2.open($master).unwrap();
                     assert_eq!(revealed1.expose_secret(), revealed2.expose_secret());
                 }
-                _ => panic!("assert_keys_eq -- invalid pattern encountered"),
             }
         };
     }
@@ -1259,12 +1297,16 @@ mod tests {
     fn trans_serde_create_identity_v1() {
         let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let admin_key1 = AdminKey::new(
+        let admin_key1 = AdminKey::<Full>::new(
             AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
             "alpha",
             Some("hello there"),
         );
-        let admin_key2 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()), "name-claim", None);
+        let admin_key2 = AdminKey::<Full>::new(
+            AdminKeypair::from(SignKeypair::<Full>::new_ed25519(&mut rng, &master_key).unwrap()),
+            "name-claim",
+            None,
+        );
         let policy1 = Policy::new(
             vec![Capability::Permissive],
             MultisigPolicy::MOfN {
@@ -1282,7 +1324,7 @@ mod tests {
                 participants: vec![admin_key2.key().clone().into()],
             },
         );
-        let trans = TransactionBody::CreateIdentityV1 {
+        let trans = TransactionBody::<Full>::CreateIdentityV1 {
             admin_keys: vec![admin_key1.clone(), admin_key2.clone()],
             policies: vec![policy1, policy2],
         };
@@ -1308,7 +1350,7 @@ mod tests {
             177, 81, 88,
         ];
         assert_eq!(ser_check, ser);
-        let trans_deser: TransactionBody = ser::deserialize(&ser).unwrap();
+        let trans_deser: TransactionBody<Full> = ser::deserialize(&ser).unwrap();
 
         match (trans, trans_deser) {
             (
@@ -1336,12 +1378,16 @@ mod tests {
     fn trans_serde_reset_identity_v1() {
         let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
+        let admin_key1 = AdminKey::<Full>::new(
+            AdminKeypair::from(SignKeypair::<Full>::new_ed25519(&mut rng, &master_key).unwrap()),
             "alpha",
             Some("hello there"),
         );
-        let admin_key2 = AdminKey::new(AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()), "name-claim", None);
+        let admin_key2 = AdminKey::<Full>::new(
+            AdminKeypair::from(SignKeypair::<Full>::new_ed25519(&mut rng, &master_key).unwrap()),
+            "name-claim",
+            None,
+        );
         let policy1 = Policy::new(
             vec![Capability::Permissive],
             MultisigPolicy::MOfN {
@@ -1359,11 +1405,11 @@ mod tests {
                 participants: vec![admin_key2.key().clone().into()],
             },
         );
-        let trans1 = TransactionBody::ResetIdentityV1 {
+        let trans1 = TransactionBody::<Full>::ResetIdentityV1 {
             admin_keys: Some(vec![admin_key1.clone(), admin_key2.clone()]),
             policies: Some(vec![policy1, policy2]),
         };
-        let trans2 = TransactionBody::ResetIdentityV1 {
+        let trans2 = TransactionBody::<Full>::ResetIdentityV1 {
             admin_keys: None,
             policies: None,
         };
@@ -1392,16 +1438,16 @@ mod tests {
         let ser2 = [161, 2, 48, 0];
         assert_eq!(ser1_check, ser1);
         assert_eq!(ser2_check, ser2);
-        let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
-        let trans_deser2: TransactionBody = ser::deserialize(&ser2).unwrap();
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
+        let trans_deser2: TransactionBody<Full> = ser::deserialize(&ser2).unwrap();
 
         match (trans1, trans_deser1) {
             (
-                TransactionBody::ResetIdentityV1 {
+                TransactionBody::<Full>::ResetIdentityV1 {
                     admin_keys: Some(admin_keys1),
                     policies: policies1,
                 },
-                TransactionBody::ResetIdentityV1 {
+                TransactionBody::<Full>::ResetIdentityV1 {
                     admin_keys: Some(admin_keys2),
                     policies: policies2,
                 },
@@ -1416,11 +1462,11 @@ mod tests {
         }
         match (trans2, trans_deser2) {
             (
-                TransactionBody::ResetIdentityV1 {
+                TransactionBody::<Full>::ResetIdentityV1 {
                     admin_keys: admin_keys1,
                     policies: policies1,
                 },
-                TransactionBody::ResetIdentityV1 {
+                TransactionBody::<Full>::ResetIdentityV1 {
                     admin_keys: admin_keys2,
                     policies: policies2,
                 },
@@ -1438,12 +1484,12 @@ mod tests {
     fn trans_serde_add_admin_key_v1() {
         let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
+        let admin_key1 = AdminKey::<Full>::new(
+            AdminKeypair::from(SignKeypair::<Full>::new_ed25519(&mut rng, &master_key).unwrap()),
             "alpha",
             Some("been watching you for quite a while now"),
         );
-        let trans1 = TransactionBody::AddAdminKeyV1 { admin_key: admin_key1 };
+        let trans1 = TransactionBody::<Full>::AddAdminKeyV1 { admin_key: admin_key1 };
         let ser1_check = ser::serialize(&trans1).unwrap();
         let ser1 = [
             162, 129, 195, 48, 129, 192, 160, 129, 189, 48, 129, 186, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17,
@@ -1456,7 +1502,7 @@ mod tests {
             32, 110, 111, 119,
         ];
         assert_eq!(ser1_check, ser1);
-        let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
 
         match (trans1, trans_deser1) {
             (TransactionBody::AddAdminKeyV1 { admin_key: admin_key1 }, TransactionBody::AddAdminKeyV1 { admin_key: admin_key2 }) => {
@@ -1470,17 +1516,17 @@ mod tests {
     fn trans_serde_edit_admin_key_v1() {
         let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
+        let admin_key1 = AdminKey::<Full>::new(
+            AdminKeypair::from(SignKeypair::<Full>::new_ed25519(&mut rng, &master_key).unwrap()),
             "admin/edit",
             Some("i like your hat"),
         );
-        let trans1 = TransactionBody::EditAdminKeyV1 {
+        let trans1 = TransactionBody::<Full>::EditAdminKeyV1 {
             id: admin_key1.key_id(),
             name: Some("admin/all".to_string()),
             description: Some(None),
         };
-        let trans2 = TransactionBody::EditAdminKeyV1 {
+        let trans2 = TransactionBody::<Full>::EditAdminKeyV1 {
             id: admin_key1.key_id(),
             name: Some("admin/all".to_string()),
             description: Some(Some("fun times".to_string())),
@@ -1495,17 +1541,17 @@ mod tests {
             213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108,
             108, 162, 11, 12, 9, 102, 117, 110, 32, 116, 105, 109, 101, 115,
         ];
-        let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
-        let trans_deser2: TransactionBody = ser::deserialize(&ser2).unwrap();
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
+        let trans_deser2: TransactionBody<Full> = ser::deserialize(&ser2).unwrap();
 
         match (trans1, trans_deser1) {
             (
-                TransactionBody::EditAdminKeyV1 {
+                TransactionBody::<Full>::EditAdminKeyV1 {
                     id: id1,
                     name: name1,
                     description: desc1,
                 },
-                TransactionBody::EditAdminKeyV1 {
+                TransactionBody::<Full>::EditAdminKeyV1 {
                     id: id2,
                     name: name2,
                     description: desc2,
@@ -1519,12 +1565,12 @@ mod tests {
         }
         match (trans2, trans_deser2) {
             (
-                TransactionBody::EditAdminKeyV1 {
+                TransactionBody::<Full>::EditAdminKeyV1 {
                     id: id1,
                     name: name1,
                     description: desc1,
                 },
-                TransactionBody::EditAdminKeyV1 {
+                TransactionBody::<Full>::EditAdminKeyV1 {
                     id: id2,
                     name: name2,
                     description: desc2,
@@ -1542,12 +1588,12 @@ mod tests {
     fn trans_serde_revoke_admin_key_v1() {
         let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
+        let admin_key1 = AdminKey::<Full>::new(
+            AdminKeypair::from(SignKeypair::<Full>::new_ed25519(&mut rng, &master_key).unwrap()),
             "admin/edit",
             Some("i like your hat"),
         );
-        let trans1 = TransactionBody::RevokeAdminKeyV1 {
+        let trans1 = TransactionBody::<Full>::RevokeAdminKeyV1 {
             id: admin_key1.key_id(),
             reason: RevocationReason::Compromised,
             new_name: Some("admin/no-more".to_string()),
@@ -1557,16 +1603,16 @@ mod tests {
             213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 4, 162, 2, 5, 0, 162, 15, 12, 13, 97, 100, 109,
             105, 110, 47, 110, 111, 45, 109, 111, 114, 101,
         ];
-        let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
 
         match (trans1, trans_deser1) {
             (
-                TransactionBody::RevokeAdminKeyV1 {
+                TransactionBody::<Full>::RevokeAdminKeyV1 {
                     id: id1,
                     reason: reason1,
                     new_name: name1,
                 },
-                TransactionBody::RevokeAdminKeyV1 {
+                TransactionBody::<Full>::RevokeAdminKeyV1 {
                     id: id2,
                     reason: reason2,
                     new_name: name2,
@@ -1584,8 +1630,8 @@ mod tests {
     fn trans_serde_add_policy_v1() {
         let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let admin_key1 = AdminKey::new(
-            AdminKeypair::from(SignKeypair::new_ed25519(&mut rng, &master_key).unwrap()),
+        let admin_key1 = AdminKey::<Full>::new(
+            AdminKeypair::from(SignKeypair::<Full>::new_ed25519(&mut rng, &master_key).unwrap()),
             "admin/edit",
             Some("i like your hat"),
         );
@@ -1599,17 +1645,17 @@ mod tests {
                 participants: vec![admin_key1.key().clone().into()],
             },
         );
-        let trans1 = TransactionBody::AddPolicyV1 { policy: policy1 };
+        let trans1 = TransactionBody::<Full>::AddPolicyV1 { policy: policy1 };
         let ser1 = [
             165, 93, 48, 91, 160, 89, 48, 87, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169,
             4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32,
             226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172,
             28, 121, 47, 92, 109,
         ];
-        let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
 
         match (trans1, trans_deser1) {
-            (TransactionBody::AddPolicyV1 { policy: policy1 }, TransactionBody::AddPolicyV1 { policy: policy2 }) => {
+            (TransactionBody::<Full>::AddPolicyV1 { policy: policy1 }, TransactionBody::<Full>::AddPolicyV1 { policy: policy2 }) => {
                 assert_eq!(policy1, policy2);
             }
             _ => panic!("Unmatched serialization"),
@@ -1619,15 +1665,15 @@ mod tests {
     #[test]
     fn trans_serde_delete_policy_v1() {
         let policy_id1 = PolicyID::from(TransactionID::from(Hash::new_blake3(&[55, 66, 42, 17, 0, 9]).unwrap()));
-        let trans1 = TransactionBody::DeletePolicyV1 { id: policy_id1 };
+        let trans1 = TransactionBody::<Full>::DeletePolicyV1 { id: policy_id1 };
         let ser1 = [
             166, 42, 48, 40, 160, 38, 48, 36, 160, 34, 4, 32, 2, 52, 247, 192, 86, 41, 53, 236, 142, 72, 7, 209, 104, 10, 19, 55, 211, 110,
             35, 148, 193, 106, 201, 79, 182, 100, 227, 110, 29, 175, 128, 162,
         ];
-        let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
 
         match (trans1, trans_deser1) {
-            (TransactionBody::DeletePolicyV1 { id: id1 }, TransactionBody::DeletePolicyV1 { id: id2 }) => {
+            (TransactionBody::<Full>::DeletePolicyV1 { id: id1 }, TransactionBody::<Full>::DeletePolicyV1 { id: id2 }) => {
                 assert_eq!(id1, id2);
             }
             _ => panic!("Unmatched serialization"),
@@ -1638,18 +1684,18 @@ mod tests {
     fn trans_serde_make_claim_v1() {
         let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
         let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let claim1 = ClaimSpec::Identity(MaybePrivate::new_public(IdentityID::from(TransactionID::from(
+        let claim1 = ClaimSpec::<Full>::Identity(MaybePrivate::<Full, _>::new_public(IdentityID::from(TransactionID::from(
             Hash::new_blake3(&[1, 2, 3, 4, 5]).unwrap(),
         ))));
-        let claim2 = ClaimSpec::Extension {
+        let claim2 = ClaimSpec::<Full>::Extension {
             key: BinaryVec::from(vec![2, 4, 6, 8]),
-            value: MaybePrivate::new_private(&mut rng, &master_key, BinaryVec::from(vec![9, 9, 9])).unwrap(),
+            value: MaybePrivate::<Full, _>::new_private(&mut rng, &master_key, BinaryVec::from(vec![9, 9, 9])).unwrap(),
         };
-        let trans1 = TransactionBody::MakeClaimV1 {
+        let trans1 = TransactionBody::<Full>::MakeClaimV1 {
             spec: claim1,
             name: Some("my-old-id".to_string()),
         };
-        let trans2 = TransactionBody::MakeClaimV1 { spec: claim2, name: None };
+        let trans2 = TransactionBody::<Full>::MakeClaimV1 { spec: claim2, name: None };
         let ser1 = [
             167, 59, 48, 57, 160, 42, 160, 40, 160, 38, 48, 36, 160, 34, 4, 32, 2, 79, 103, 192, 66, 90, 61, 192, 47, 186, 245, 140, 185,
             61, 229, 19, 46, 61, 117, 197, 25, 250, 160, 186, 218, 33, 73, 29, 136, 201, 112, 87, 161, 11, 12, 9, 109, 121, 45, 111, 108,
@@ -1664,13 +1710,19 @@ mod tests {
             213, 110, 16, 84, 172, 181, 199, 215, 19, 103, 85, 216, 234, 141, 75, 132, 214, 7, 6, 83, 29, 38, 23, 15, 183, 78, 239, 100,
             217, 4, 176, 122, 149, 161, 0,
         ];
-        let trans_deser1: TransactionBody = ser::deserialize(&ser1).unwrap();
-        let trans_deser2: TransactionBody = ser::deserialize(&ser2).unwrap();
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
+        let trans_deser2: TransactionBody<Full> = ser::deserialize(&ser2).unwrap();
 
         match (trans1, trans_deser1) {
-            (TransactionBody::MakeClaimV1 { spec: spec1, name: name1 }, TransactionBody::MakeClaimV1 { spec: spec2, name: name2 }) => {
+            (
+                TransactionBody::<Full>::MakeClaimV1 { spec: spec1, name: name1 },
+                TransactionBody::<Full>::MakeClaimV1 { spec: spec2, name: name2 },
+            ) => {
                 match (spec1, spec2) {
-                    (ClaimSpec::Identity(MaybePrivate::Public(pub1)), ClaimSpec::Identity(MaybePrivate::Public(pub2))) => {
+                    (
+                        ClaimSpec::<Full>::Identity(MaybePrivate::<Full, _>::Public(pub1)),
+                        ClaimSpec::<Full>::Identity(MaybePrivate::<Full, _>::Public(pub2)),
+                    ) => {
                         assert_eq!(pub1, pub2);
                     }
                     _ => panic!("Unmatched spec"),
@@ -1680,9 +1732,15 @@ mod tests {
             _ => panic!("Unmatched serialization"),
         }
         match (trans2, trans_deser2) {
-            (TransactionBody::MakeClaimV1 { spec: spec1, name: name1 }, TransactionBody::MakeClaimV1 { spec: spec2, name: name2 }) => {
+            (
+                TransactionBody::<Full>::MakeClaimV1 { spec: spec1, name: name1 },
+                TransactionBody::<Full>::MakeClaimV1 { spec: spec2, name: name2 },
+            ) => {
                 match (spec1, spec2) {
-                    (ClaimSpec::Extension { key: key1, value: priv1 }, ClaimSpec::Extension { key: key2, value: priv2 }) => {
+                    (
+                        ClaimSpec::<Full>::Extension { key: key1, value: priv1 },
+                        ClaimSpec::<Full>::Extension { key: key2, value: priv2 },
+                    ) => {
                         assert_eq!(key1, key2);
                         let unsealed1 = priv1.open(&master_key).unwrap();
                         let unsealed2 = priv2.open(&master_key).unwrap();
@@ -1971,7 +2029,10 @@ signatures:
         "#;
         let transaction = Transaction::deserialize_text(published_identity).unwrap();
         match transaction.entry().body() {
-            TransactionBody::PublishV1 { identity } => {
+            TransactionBody::PublishV1 {
+                identity: identity_serialized,
+            } => {
+                let identity: Identity<Public> = identity_serialized.clone().try_into().unwrap();
                 let identity_instance = identity.build_identity_instance().unwrap();
                 assert_eq!(format!("{}", identity_instance.id()), "zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzwA");
                 let ids = identity.transactions().iter().map(|x| format!("{}", x.id())).collect::<Vec<_>>();
@@ -2007,7 +2068,7 @@ signatures:
             9bu65JmIK51-HfTi9p6Q38Wf1QTMI3Bx8GO1vWVuZGsk9QHormGe5cPkj
             50LNI8wm8yBCAdp6zkBvCw
         "#;
-        let trans = Transaction::deserialize_binary(&ser::base64_decode(stamp_base).unwrap()).unwrap();
+        let trans = TransactionSerialized::<Public>::deserialize_binary(&ser::base64_decode(stamp_base).unwrap()).unwrap();
         assert_eq!(format!("{}", trans.id()), "ilik2Qll91ayj_YAeMs8yXanIVWJ9OOdOjMuD1Lm2boA");
     }
 }

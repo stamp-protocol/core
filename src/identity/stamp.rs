@@ -247,9 +247,8 @@ mod tests {
             claim::{Claim, ClaimSpec, Relationship, RelationshipType},
             instance::IdentityID,
             keychain::{AdminKey, AdminKeypair, Key, Keychain},
-            stamp::Confidence,
         },
-        util::{ser::BinaryVec, Date, Timestamp, Url},
+        util::{ser::BinaryVec, Date, Url},
     };
     use std::str::FromStr;
 
@@ -302,7 +301,7 @@ mod tests {
                     &sender_master_key,
                     &sender_identity_id,
                     sender_subkey,
-                    recipient_subkey,
+                    &recipient_subkey.clone().into(),
                     &container_private,
                     sk_tmp1,
                 )
@@ -312,20 +311,22 @@ mod tests {
                     &sender_master_key,
                     &sender_identity_id,
                     sender_subkey,
-                    recipient_subkey,
+                    &recipient_subkey.clone().into(),
                     &container_public,
                     sk_tmp2,
                 )
                 .unwrap();
 
-                let res1 = StampRequest::open(&sender_master_key, recipient_subkey, sender_subkey, &req_msg_priv);
-                let res2 = StampRequest::open(&sender_master_key, recipient_subkey, sender_subkey, &req_msg_pub);
+                let res1 = StampRequest::open(&sender_master_key, recipient_subkey, &sender_subkey.clone().into(), &req_msg_priv);
+                let res2 = StampRequest::open(&sender_master_key, recipient_subkey, &sender_subkey.clone().into(), &req_msg_pub);
 
                 assert_eq!(res1.err(), Some(Error::CryptoOpenFailed));
                 assert_eq!(res2.err(), Some(Error::CryptoOpenFailed));
 
-                let opened_priv = StampRequest::open(&recipient_master_key, recipient_subkey, sender_subkey, &req_msg_priv).unwrap();
-                let opened_pub = StampRequest::open(&recipient_master_key, recipient_subkey, sender_subkey, &req_msg_pub).unwrap();
+                let opened_priv =
+                    StampRequest::open(&recipient_master_key, recipient_subkey, &sender_subkey.clone().into(), &req_msg_priv).unwrap();
+                let opened_pub =
+                    StampRequest::open(&recipient_master_key, recipient_subkey, &sender_subkey.clone().into(), &req_msg_pub).unwrap();
 
                 (opened_priv, opened_pub)
             }};
@@ -334,11 +335,11 @@ mod tests {
                 let val = $val;
                 let (opened_priv, opened_pub) = req_open! {
                     raw,
-                    |maybe, _| ClaimSpec::$claimty(maybe),
+                    |maybe, _| ClaimSpec::<Full>::$claimty(maybe),
                     val.clone()
                 };
-                let getmaybe = |spec: ClaimSpec| {
-                    if let ClaimSpec::$claimty(maybe) = spec {
+                let getmaybe = |spec: ClaimSpec<Full>| {
+                    if let ClaimSpec::<Full>::$claimty(maybe) = spec {
                         maybe
                     } else {
                         panic!("bad claim type: {}", stringify!($claimtype))
@@ -368,14 +369,14 @@ mod tests {
         req_open! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
 
         let val = BinaryVec::from(vec![89, 89, 89]);
-        let (opened_priv, opened_pub) = req_open! { raw, |maybe, _| ClaimSpec::Extension { key: Vec::from("a-new-kind-of-claimspec".as_bytes()).into(), value: maybe }, val.clone() };
+        let (opened_priv, opened_pub) = req_open! { raw, |maybe, _| ClaimSpec::<Full>::Extension { key: Vec::from("a-new-kind-of-claimspec".as_bytes()).into(), value: maybe }, val.clone() };
         match (opened_priv.spec().clone(), opened_pub.spec().clone()) {
             (
-                ClaimSpec::Extension {
+                ClaimSpec::<Full>::Extension {
                     key: key1,
                     value: MaybePrivate::Public(val1),
                 },
-                ClaimSpec::Extension {
+                ClaimSpec::<Full>::Extension {
                     key: key2,
                     value: MaybePrivate::Public(val2),
                 },

@@ -380,7 +380,7 @@ impl<M: PrivacyMode + Serialize> SerText for Claim<M> {}
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{crypto::private::PrivateWithHmac, error::Error, identity::IdentityID};
+    use crate::{error::Error, identity::IdentityID};
     use std::convert::TryFrom;
     use std::str::FromStr;
 
@@ -425,7 +425,7 @@ pub(crate) mod tests {
                     raw,
                     |maybe, _| ClaimSpec::$claimty(maybe),
                     $val,
-                    |spec: ClaimSpec| if let ClaimSpec::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+                    |spec: ClaimSpec<Full>| if let ClaimSpec::<Full>::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
                 }
             };
         }
@@ -444,9 +444,9 @@ pub(crate) mod tests {
         claim_reenc! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![1, 2, 3, 4, 5])) }
         claim_reenc! {
             raw,
-            |maybe, _| ClaimSpec::Extension { key: Vec::from("id:state:ca".as_bytes()).into(), value: maybe },
+            |maybe, _| ClaimSpec::<Full>::Extension { key: Vec::from("id:state:ca".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![7, 3, 2, 90]),
-            |spec: ClaimSpec| if let ClaimSpec::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+            |spec: ClaimSpec<Full>| if let ClaimSpec::<Full>::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }
     }
 
@@ -538,9 +538,9 @@ pub(crate) mod tests {
             ($claimty:ident, $val:expr) => {
                 as_pub! {
                     raw,
-                    |maybe, _| ClaimSpec::$claimty(maybe),
+                    |maybe, _| ClaimSpec::<Full>::$claimty(maybe),
                     $val,
-                    |spec: ClaimSpec| if let ClaimSpec::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+                    |spec: ClaimSpec<Full>| if let ClaimSpec::<Full>::$claimty(maybe) = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
                 }
             };
         }
@@ -559,9 +559,9 @@ pub(crate) mod tests {
         as_pub! { RelationExtension, Relationship::new(RelationshipType::OrganizationMember, BinaryVec::from(vec![69,69,69])) }
         as_pub! {
             raw,
-            |maybe, _| ClaimSpec::Extension { key: Vec::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THAT I AM NOT A CAT YOUR HONOR".as_bytes()).into(), value: maybe },
+            |maybe, _| ClaimSpec::<Full>::Extension { key: Vec::from("I HERETOFORE NOTWITHSTANDING FORTHWITH CLAIM THAT I AM NOT A CAT YOUR HONOR".as_bytes()).into(), value: maybe },
             BinaryVec::from(vec![42, 22]),
-            |spec: ClaimSpec| if let ClaimSpec::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
+            |spec: ClaimSpec<Full>| if let ClaimSpec::<Full>::Extension { value: maybe, .. } = spec { maybe } else { panic!("bad claim type: {}", stringify!($claimtype)) }
         }
     }
 }

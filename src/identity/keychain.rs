@@ -915,7 +915,7 @@ mod tests {
             keychain.subkey_by_name("MY crypto key"),
         ) {
             (Some(key1), Some(key2)) => {
-                assert_eq!(key1 as *const Subkey, key2 as *const Subkey);
+                assert_eq!(key1 as *const Subkey<Full>, key2 as *const Subkey<Full>);
             }
             _ => panic!("Bad key search"),
         }

@@ -44,7 +44,11 @@ pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Tim
     let trans = identity
         .create_identity(&HashAlgo::Blake3, now, vec![admin_key.clone()], vec![policy])
         .unwrap()
+        .into_serialized()
+        .unwrap()
         .sign(&master_key, &admin_key)
+        .unwrap()
+        .into_transaction()
         .unwrap();
     let identity2 = identity.push_transaction(trans).unwrap();
     (master_key, identity2, admin_key)
@@ -108,7 +112,7 @@ macro_rules! sign_and_push {
         let mut identity_tmp = $identity;
         $(
             let trans = identity_tmp.$fn(&crate::crypto::base::HashAlgo::Blake3, $($args),*).unwrap();
-            let trans_signed = trans.sign($master_key, $admin_key).unwrap();
+            let trans_signed = trans.into_serialized().unwrap().sign($master_key, $admin_key).unwrap().into_transaction().unwrap();
             identity_tmp = identity_tmp.push_transaction(trans_signed).unwrap();
         )*
         identity_tmp
@@ -118,19 +122,19 @@ pub(crate) use sign_and_push;
 
 macro_rules! make_dag_chain {
     (
-        $transactions:expr,
+        $identity:expr,
         [$($names:ident($ts:expr)),*],
         [$([$($from:ident),*] <- [$($to:ident),*],)*],
         [$($omit:ident),*]
     ) => {{
-        let trans = &$transactions;
+        let identity = &$identity;
         let mut name_to_tid = std::collections::HashMap::new();
         let mut tid_to_name = std::collections::HashMap::new();
         $(
             let dt: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_timestamp(2455191939 + $ts, 0).unwrap();
             let now = crate::util::Timestamp::from(dt);
             #[allow(non_snake_case)]
-            let mut $names = trans.ext(&crate::crypto::base::HashAlgo::Blake3, now, vec![], None, None::<HashMapAsn1<BinaryVec, BinaryVec>>, Vec::from(format!("{}", stringify!($names)).as_bytes()).into()).unwrap();
+            let mut $names = identity.ext(&crate::crypto::base::HashAlgo::Blake3, now, vec![], None, None::<HashMapAsn1<BinaryVec, BinaryVec>>, Vec::from(format!("{}", stringify!($names)).as_bytes()).into()).unwrap();
             $names.entry_mut().set_previous_transactions(vec![]);
             name_to_tid.insert(stringify!($names), $names.id().clone());
             tid_to_name.insert($names.id().clone(), stringify!($names));

@@ -803,6 +803,7 @@ mod tests {
             Timestamp,
         },
     };
+    use private_parts::Full;
     use std::str::FromStr;
 
     #[test]
@@ -1203,7 +1204,7 @@ mod tests {
         };
         let nodes1 = transaction_list1.iter().map(|x| x.into()).collect::<Vec<_>>();
         let nodes2 = transaction_list2.iter().map(|x| x.into()).collect::<Vec<_>>();
-        let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&[&nodes1[..], &nodes2[..]]);
+        let dag: Dag<TransactionID, Transaction<Full>> = Dag::from_nodes(&[&nodes1[..], &nodes2[..]]);
         assert_eq!(
             dag.visited()
                 .iter()
@@ -1233,7 +1234,7 @@ mod tests {
            []
         };
         let nodes = transaction_list.iter().map(|x| x.into()).collect::<Vec<_>>();
-        let dag: Dag<TransactionID, Transaction> = Dag::from_nodes(&[&nodes]);
+        let dag: Dag<TransactionID, Transaction<Full>> = Dag::from_nodes(&[&nodes]);
 
         macro_rules! get_chain {
             ($node_name:expr) => {{

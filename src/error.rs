@@ -163,10 +163,6 @@ pub enum Error {
     #[error("no matching policy/capability found for the given transaction")]
     PolicyNotFound,
 
-    /// Tried to open a private container that has no data
-    #[error("attempt to open private object which has no data")]
-    PrivateDataMissing,
-
     /// An error while handling private parts
     #[error("an error occurred merging private data with a public object: {0}")]
     PrivatePartsError(#[from] private_parts::MergeError),

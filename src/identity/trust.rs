@@ -610,10 +610,10 @@ mod tests {
             struct IdentityKeys {
                 master: SecretKey,
                 admin: AdminKey<Full>,
-                identity: Identity<Public>,
+                identity: Identity<Full>,
             }
             impl IdentityKeys {
-                fn new(master: SecretKey, admin: AdminKey<Full>, identity: Identity<Public>) -> Self {
+                fn new(master: SecretKey, admin: AdminKey<Full>, identity: Identity<Full>) -> Self {
                     Self {
                         master,
                         admin,
@@ -660,7 +660,7 @@ mod tests {
                 let mut rng = crate::util::test::rng_seeded(seed.as_bytes());
                 let (master, identity, admin) = crate::util::test::create_fake_identity(&mut rng, now.clone());
                 let mut ik = IdentityKeys::new(master, admin, identity);
-                ik.add_claim("id"); // always the same.
+                ik.add_claim("id"); // not at all, to some extent (always the same...)
                 $(
                 ik.add_claim(stringify!($claimtype));
                 )*
@@ -711,7 +711,7 @@ mod tests {
                 .collect::<HashMap<_, _>>();
             let id_map = identities
                 .into_iter()
-                .map(|(k, IdentityKeys { identity, .. })| (k, identity))
+                .map(|(k, IdentityKeys { identity, .. })| (k, Identity::<Public>::from(identity)))
                 .collect::<HashMap<_, _>>();
             (id_map, trust_mapping, lookup)
         }};
