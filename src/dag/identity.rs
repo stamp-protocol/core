@@ -1043,17 +1043,7 @@ mod tests {
         };
         let names_to_ids =
             |names: &[&str]| -> Vec<TransactionID> { names.iter().map(|n| name_to_tx.get(n).unwrap().id().clone()).collect::<Vec<_>>() };
-        let tx = tx
-            .into_iter()
-            .map(|t| {
-                t.into_serialized()
-                    .unwrap()
-                    .sign(&master_key, &admin_key)
-                    .unwrap()
-                    .into_transaction()
-                    .unwrap()
-            })
-            .collect::<Vec<_>>();
+        let tx = tx.into_iter().map(|t| t.sign(&master_key, &admin_key).unwrap()).collect::<Vec<_>>();
         let mut identity = Identity::new();
         for t in tx {
             identity.push_transaction_mut(t).unwrap();
@@ -1150,11 +1140,7 @@ mod tests {
                 None::<String>,
             )
             .unwrap()
-            .into_serialized()
-            .unwrap()
             .sign(&master_key_1, &admin_key_1)
-            .unwrap()
-            .into_transaction()
             .unwrap();
         identity1.push_transaction(trans_claim_signed.clone()).unwrap();
         identity2.build_identity_instance().unwrap();
@@ -1246,11 +1232,7 @@ mod tests {
             identity
                 .create_identity(&HashAlgo::Blake3, Timestamp::now(), identity_instance.keychain().admin_keys().clone(), policies)
                 .unwrap()
-                .into_serialized()
-                .unwrap()
                 .sign(&master_key, &admin_key)
-                .unwrap()
-                .into_transaction()
                 .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::DagCreateIdentityOnExistingChain));
@@ -1265,11 +1247,7 @@ mod tests {
                     None::<String>,
                 )
                 .unwrap()
-                .into_serialized()
-                .unwrap()
                 .sign(&master_key, &admin_key)
-                .unwrap()
-                .into_transaction()
                 .unwrap(),
         );
         assert_eq!(res.err(), Some(Error::DagMissingIdentity));
@@ -2250,7 +2228,7 @@ mod tests {
             signature: sig,
         };
         claim_trans.signatures_mut().push(policy_sig);
-        let res = identity.clone().push_transaction(claim_trans);
+        let res = identity.clone().push_transaction(claim_trans.clone());
         assert!(matches!(res.err(), None));
 
         let claim_trans_ser = TransactionSerialized::try_from(claim_trans).unwrap();

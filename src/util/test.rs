@@ -44,11 +44,7 @@ pub(crate) fn create_fake_identity<R: RngCore + CryptoRng>(rng: &mut R, now: Tim
     let trans = identity
         .create_identity(&HashAlgo::Blake3, now, vec![admin_key.clone()], vec![policy])
         .unwrap()
-        .into_serialized()
-        .unwrap()
         .sign(&master_key, &admin_key)
-        .unwrap()
-        .into_transaction()
         .unwrap();
     let identity2 = identity.push_transaction(trans).unwrap();
     (master_key, identity2, admin_key)
@@ -112,7 +108,7 @@ macro_rules! sign_and_push {
         let mut identity_tmp = $identity;
         $(
             let trans = identity_tmp.$fn(&crate::crypto::base::HashAlgo::Blake3, $($args),*).unwrap();
-            let trans_signed = trans.into_serialized().unwrap().sign($master_key, $admin_key).unwrap().into_transaction().unwrap();
+            let trans_signed = trans.sign($master_key, $admin_key).unwrap();
             identity_tmp = identity_tmp.push_transaction(trans_signed).unwrap();
         )*
         identity_tmp
