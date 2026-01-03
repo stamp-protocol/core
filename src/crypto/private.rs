@@ -28,16 +28,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 
-/// A trait that aids in simplifying operations where a [`Full`] or [`Public`] [`PrivacyMode`]
-/// object can both satisfy a requirement.
-pub trait IntoPublic {
-    /// The public "view" of this type.
-    type Public;
-
-    /// Convert this type into its public self.
-    fn into_public(self) -> Self::Public;
-}
-
 /// Defines an interface for re-encrypting an object with a new key.
 pub trait ReEncrypt: Sized {
     /// Re-encrypts the object with a new key. Everyone's doing it.

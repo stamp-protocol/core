@@ -13,7 +13,7 @@
 
 use crate::{
     crypto::base::{Hash, KeyID},
-    dag::{StampTransaction, Transaction, TransactionBody, TransactionID},
+    dag::{Transaction, TransactionBody, TransactionID},
     error::{Error, Result},
     identity::{
         claim::ClaimSpec,
@@ -359,7 +359,7 @@ impl Context {
             TransactionBody::AcceptStampV1 { stamp_transaction } => {
                 let res = stamp_transaction
                     .verify_hash_and_signatures()
-                    .and_then(|_| StampTransaction::try_from(stamp_transaction.deref().clone()))
+                    .map(|_| stamp_transaction.clone())
                     .and_then(|stamp_tx| Ok((stamp_tx.get_stamper().cloned()?, stamp_tx.get_claim_id().map(|x| x.deref().clone())?)));
                 match res {
                     Ok((stamper, claim_id)) => {

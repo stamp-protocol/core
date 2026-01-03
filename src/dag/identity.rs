@@ -5,7 +5,7 @@ use crate::{
         base::{Hash, HashAlgo, KeyID, SecretKey},
         private::ReEncrypt,
     },
-    dag::{Dag, StampTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID, TransactionSerialized},
+    dag::{Dag, StampTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID},
     error::{Error, Result},
     identity::{
         claim::{ClaimID, ClaimSpec},
@@ -22,20 +22,23 @@ use crate::{
 use getset;
 use private_parts::{Full, PrivacyMode, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
+use rasn::{AsnType, Decode, Decoder, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
 
 /// A container that holds a set of transactions.
-#[derive(Debug, Default, Clone, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(Debug, Default, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Identity<M: PrivacyMode> {
     /// The actual transactions.
     transactions: Vec<Transaction<M>>,
 }
 
-impl<M: PrivacyMode> Identity<M> {
+impl<M> Identity<M>
+where
+    M: PrivacyMode,
+    TransactionEntry<M>: Into<TransactionEntry<Public>>,
+{
     /// Create a new, empty transaction set.
     pub fn new() -> Self {
         Self { transactions: Vec::new() }
@@ -151,11 +154,8 @@ impl<M: PrivacyMode> Identity<M> {
                 let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.revoke_stamp(&stamp_id, reason)?;
                 Ok(identity_mod)
             }
-            TransactionBody::AcceptStampV1 {
-                stamp_transaction: tx_serialized,
-            } => {
-                tx_serialized.verify_signatures()?;
-                let stamp_transaction = StampTransaction::try_from(tx_serialized.deref().clone())?;
+            TransactionBody::AcceptStampV1 { stamp_transaction } => {
+                stamp_transaction.verify_hash_and_signatures()?;
                 let identity_mod = match stamp_transaction.entry().body() {
                     TransactionBody::MakeStampV1 { stamp: entry } => {
                         let created = stamp_transaction.entry().created().clone();
@@ -581,9 +581,8 @@ impl Identity<Full> {
         now: T,
         stamp_transaction: StampTransaction,
     ) -> Result<Transaction<Full>> {
-        let stamp_tx_ser = TransactionSerialized::<Public>::try_from(stamp_transaction)?;
         let body = TransactionBody::AcceptStampV1 {
-            stamp_transaction: Box::new(stamp_tx_ser),
+            stamp_transaction: Box::new(stamp_transaction),
         };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -658,11 +657,8 @@ impl Identity<Full> {
 
     /// Publish this identity
     pub fn publish<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T) -> Result<Transaction<Full>> {
-        let transactions_full = IdentitySerialized::<Full>::try_from(self.clone())?;
-        let transactions_pub = IdentitySerialized::<Public>::from(transactions_full);
-        let body = TransactionBody::PublishV1 {
-            identity: transactions_pub,
-        };
+        let identity_pub: Identity<Public> = self.clone().into();
+        let body = TransactionBody::PublishV1 { identity: identity_pub };
         self.prepare_transaction(hash_with, now, body)
     }
 
@@ -739,88 +735,14 @@ impl<M: PrivacyMode> IntoIterator for Identity<M> {
     }
 }
 
-/// A container that holds a set of transactions.
-#[derive(Debug, Default, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct IdentitySerialized<M: PrivacyMode> {
-    /// The actual SERIALIZED transactions.
-    #[rasn(tag(explicit(0)))]
-    transactions: Vec<TransactionSerialized<M>>,
-}
-
-impl<M: PrivacyMode> IdentitySerialized<M> {
-    pub fn iter(&self) -> core::slice::Iter<'_, TransactionSerialized<M>> {
-        self.transactions().iter()
-    }
-}
-
-impl<M: PrivacyMode> IntoIterator for IdentitySerialized<M> {
-    type Item = TransactionSerialized<M>;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        let Self { transactions } = self;
-        transactions.into_iter()
-    }
-}
-
-impl<M> TryFrom<Identity<M>> for IdentitySerialized<M>
+impl<M> SerdeBinary for Identity<M>
 where
     M: PrivacyMode,
-    TransactionSerialized<M>: TryFrom<Transaction<M>, Error = Error>,
-{
-    type Error = Error;
-
-    fn try_from(value: Identity<M>) -> Result<Self> {
-        let transactions = value
-            .into_iter()
-            .map(|t| t.try_into())
-            .collect::<Result<Vec<TransactionSerialized<M>>>>()?;
-        Ok(Self { transactions })
-    }
-}
-
-impl<M> TryFrom<IdentitySerialized<M>> for Identity<M>
-where
-    M: PrivacyMode,
-    Transaction<M>: TryFrom<TransactionSerialized<M>, Error = Error>,
-{
-    type Error = Error;
-
-    fn try_from(value: IdentitySerialized<M>) -> Result<Self> {
-        let IdentitySerialized::<M> { transactions } = value;
-        let des = transactions
-            .into_iter()
-            .map(|t| t.try_into())
-            .collect::<Result<Vec<Transaction<M>>>>()?;
-        Ok(Self { transactions: des })
-    }
-}
-
-impl From<IdentitySerialized<Full>> for IdentitySerialized<Public> {
-    fn from(value: IdentitySerialized<Full>) -> Self {
-        let IdentitySerialized::<Full> { transactions } = value;
-        let stripped = transactions
-            .into_iter()
-            .map(|t| TransactionSerialized::<Public>::from(t))
-            .collect::<Vec<_>>();
-        Self { transactions: stripped }
-    }
-}
-
-impl<M> SerdeBinary for IdentitySerialized<M>
-where
-    M: PrivacyMode,
-    IdentitySerialized<M>: Encode + Decode,
+    Identity<M>: Encode + Decode,
 {
 }
 
-impl<M> SerText for IdentitySerialized<M>
-where
-    M: PrivacyMode,
-    IdentitySerialized<M>: Serialize,
-{
-}
+impl SerText for Identity<Public> {}
 
 /// Allows creating DAG chains of transactions using a friendly and inviting syntax that will change
 /// the way you think and live *forever*.
@@ -991,7 +913,7 @@ mod tests {
             base::{CryptoKeypair, SignKeypair},
             private::{MaybePrivate, PrivateWithHmac},
         },
-        dag::DagUtil,
+        dag::DagTamperUtil,
         identity::{
             claim::{Relationship, RelationshipType},
             keychain::AdminKeypair,
@@ -2142,8 +2064,10 @@ mod tests {
             _ => panic!("Unexpected transaction: {published2:?}"),
         }
 
-        let published2_ser = TransactionSerialized::try_from(published2).unwrap();
-        assert!(matches!(published2_ser.verify_hash_and_signatures(), Err(Error::TransactionIDMismatch(..))));
+        assert!(matches!(
+            published2.authorize(Some(&identity_instance)).unwrap_err(),
+            Error::TransactionIDMismatch(..)
+        ));
     }
 
     #[test]
@@ -2206,8 +2130,7 @@ mod tests {
             }
             _ => panic!("Unexpected transaction: {ext_mod:?}"),
         }
-        let ext_mod_ser: TransactionSerialized<_> = ext_mod.try_into().unwrap();
-        assert!(matches!(ext_mod_ser.verify_hash().unwrap_err(), Error::TransactionIDMismatch(..)));
+        assert!(matches!(ext_mod.authorize(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
     }
 
     #[test]
@@ -2228,11 +2151,8 @@ mod tests {
             signature: sig,
         };
         claim_trans.signatures_mut().push(policy_sig);
-        let res = identity.clone().push_transaction(claim_trans.clone());
-        assert!(matches!(res.err(), None));
-
-        let claim_trans_ser = TransactionSerialized::try_from(claim_trans).unwrap();
-        let claim_trans2 = Transaction::try_from(claim_trans_ser).unwrap();
+        let res = identity.clone().push_transaction(claim_trans);
+        assert!(matches!(res.err(), Some(Error::TransactionSignatureInvalid(_, _))));
     }
 
     #[test]
@@ -2527,8 +2447,7 @@ mod tests {
             signature: admin_key4.sign(&master_key, b"GET A JOB").unwrap(),
         };
         trans5.signatures_mut().push(fakesig);
-        let trans5_ser = TransactionSerialized::try_from(trans5).unwrap();
-        assert!(matches!(trans5_ser.verify_hash_and_signatures(), Err(Error::TransactionSignatureInvalid(_, _))));
+        assert!(matches!(trans5.authorize(Some(&identity2_instance)), Err(Error::TransactionSignatureInvalid(_, _))));
     }
 
     #[test]

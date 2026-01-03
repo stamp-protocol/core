@@ -14,10 +14,10 @@ mod transaction;
 pub use crate::{
     crypto::base::HashAlgo,
     dag::{
-        identity::{tx_chain, Identity, IdentitySerialized},
+        identity::{tx_chain, Identity},
         transaction::{
             ExtTransaction, PublishTransaction, SignTransaction, StampTransaction, Transaction, TransactionBody, TransactionEntry,
-            TransactionID, TransactionSerialized,
+            TransactionID,
         },
     },
     error::Result,
@@ -755,7 +755,7 @@ where
 
 /// Utilities for modifying DAG nodes in efficient ways. This *will* break signatures and hashes,
 /// so just be mindful to only use this for throwaway DAG stuff.
-pub trait DagUtil: Sized {
+pub trait DagTamperUtil: Sized {
     /// The type used for transaction IDs
     type ID;
 

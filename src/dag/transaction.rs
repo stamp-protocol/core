@@ -9,9 +9,9 @@
 use crate::{
     crypto::{
         base::{Hash, HashAlgo, KeyID, SecretKey},
-        private::{IntoPublic, PrivateContainer, ReEncrypt},
+        private::{PrivateContainer, ReEncrypt},
     },
-    dag::{DagNode, DagUtil, Identity, IdentitySerialized},
+    dag::{DagNode, DagTamperUtil, Identity},
     error::{Error, Result},
     identity::{
         claim::{ClaimID, ClaimSpec},
@@ -149,7 +149,7 @@ pub enum TransactionBody<M: PrivacyMode> {
     #[rasn(tag(explicit(13)))]
     AcceptStampV1 {
         #[rasn(tag(explicit(0)))]
-        stamp_transaction: Box<TransactionSerialized<Public>>,
+        stamp_transaction: Box<StampTransaction>,
     },
     /// Delete a stamp on one of our claims.
     #[rasn(tag(explicit(14)))]
@@ -199,7 +199,7 @@ pub enum TransactionBody<M: PrivacyMode> {
     #[rasn(tag(explicit(19)))]
     PublishV1 {
         #[rasn(tag(explicit(0)))]
-        identity: IdentitySerialized<Public>,
+        identity: Identity<Public>,
     },
     /// Sign a message. The usual Stamp policy process applies here, so an official
     /// identity signing transaction must match an existing policy to be valid. This
@@ -455,30 +455,15 @@ impl<M: PrivacyMode> TransactionEntry<M> {
     }
 }
 
-impl IntoPublic for TransactionEntry<Full> {
-    type Public = TransactionEntry<Public>;
-
-    fn into_public(self) -> Self::Public {
-        let (public, _) = self.strip();
-        public
-    }
-}
-
-impl IntoPublic for TransactionEntry<Public> {
-    type Public = TransactionEntry<Public>;
-
-    fn into_public(self) -> Self::Public {
-        self
-    }
-}
-
 /// A transaction represents a single change on an identity object. In order to
 /// build an identity, all transactions are played in order from start to finish.
 ///
 /// Note that `Transaction` itself *cannot be binary (de)serialized*. Instead, it has to be
 /// converted to a [`TransactionContainer`] which can then be saved/sent. We *can* serialize it in
 /// plaintext format for display/debug purposes.
-#[derive(Debug, Clone, PrivateParts, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters,
+)]
 #[parts(private_data = "PrivateContainer")]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transaction<M: PrivacyMode> {
@@ -491,11 +476,6 @@ pub struct Transaction<M: PrivacyMode> {
 }
 
 impl<M: PrivacyMode> Transaction<M> {
-    /// Create a new Transaction from a [TransactionEntry].
-    pub(crate) fn new_raw_with_sigs(id: TransactionID, entry: TransactionEntry<M>, signatures: Vec<MultisigPolicySignature>) -> Self {
-        Self { id, entry, signatures }
-    }
-
     /// Test if an admin key has signed a set of signatures
     pub(crate) fn is_signed_by_impl(signatures: &[MultisigPolicySignature], admin_key: &AdminKeypair<Public>) -> bool {
         signatures
@@ -506,9 +486,108 @@ impl<M: PrivacyMode> Transaction<M> {
             .is_some()
     }
 
+    /// Verify that the signatures on this transaction match the transaction.
+    pub(crate) fn verify_signatures(&self) -> Result<()> {
+        if self.signatures().is_empty() {
+            Err(Error::TransactionNoSignatures)?;
+        }
+        let ver_sig = ser::serialize(self.id().deref())?;
+        for sig in self.signatures() {
+            match sig {
+                MultisigPolicySignature::Key { key, signature } => {
+                    if key.verify(signature, &ver_sig[..]).is_err() {
+                        Err(Error::TransactionSignatureInvalid(key.clone(), signature.clone().into()))?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Sign this transaction in-place.
+    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
+        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
+        let sig_exists = self.signatures().iter().find(|sig| match sig {
+            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
+        });
+        if sig_exists.is_some() {
+            Err(Error::DuplicateSignature)?;
+        }
+        let serialized = ser::serialize(self.id().deref())?;
+        let sig = admin_key.sign(master_key, &serialized[..])?;
+        let policy_sig = MultisigPolicySignature::Key {
+            key: admin_key.clone().into(),
+            signature: sig,
+        };
+        self.signatures_mut().push(policy_sig);
+        Ok(())
+    }
+
+    /// Sign this transaction. This consumes the transaction, adds the signature
+    /// to the `signatures` list, then returns the new transaction.
+    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
+        self.sign_mut(master_key, admin_key)?;
+        Ok(self)
+    }
+
     /// Determines if this transaction has been signed by a given key.
     pub fn is_signed_by(&self, admin_key: &AdminKeypair<Public>) -> bool {
         Self::is_signed_by_impl(self.signatures(), admin_key)
+    }
+}
+
+impl<M> Transaction<M>
+where
+    M: PrivacyMode,
+    TransactionEntry<M>: Into<TransactionEntry<Public>>,
+{
+    // NOTE: my hope was to only implement this for Transaction<Full>, but some of the DAG util
+    // stuff needs to be able to create raw entries for public tx as well. oh well.
+    /// Create a new Transaction from a [TransactionEntry].
+    pub(crate) fn new(entry: TransactionEntry<M>, hash_with: &HashAlgo) -> Result<Self> {
+        let serialized = {
+            let public: TransactionEntry<Public> = entry.clone().into();
+            ser::serialize(&public)?
+        };
+        // recalculate our tx id based on the actual bytes that will be represented.
+        let hash = match hash_with {
+            HashAlgo::Blake3 => Hash::new_blake3(&serialized)?,
+        };
+        let id = TransactionID::from(hash);
+        Ok(Self {
+            id,
+            entry,
+            signatures: Vec::new(),
+        })
+    }
+
+    /// Verify that the hash on this transaction matches its serialized body.
+    pub(crate) fn verify_hash(&self) -> Result<()> {
+        let public: TransactionEntry<Public> = self.entry().clone().into();
+        let serialized = ser::serialize(&public)?;
+        // first verify the transaction's hash.
+        let transaction_hash = match self.id().deref() {
+            Hash::Blake3(..) => Hash::new_blake3(&serialized[..])?,
+        };
+        if &transaction_hash != self.id().deref() {
+            Err(Error::TransactionIDMismatch(self.id().clone()))?;
+        }
+        Ok(())
+    }
+
+    /// Verify the hash on this transaction matches the transaction entry's hash, and also verify
+    /// the signatures of that hash.
+    ///
+    /// This is useful if you need to validate a transaction is "valid" up until the point where
+    /// you need a copy of the full identity (so that the policies can be checked). In other words,
+    /// if you need to verify a transaction but don't have all the information you need to run
+    /// `Transaction.authorize()` then you can run this as a self-contained way of verification, as
+    /// long as you keep in mind that the transaction ultimately needs to be checked against a
+    /// built identity (and its contained policies).
+    pub fn verify_hash_and_signatures(&self) -> Result<()> {
+        self.verify_hash()?;
+        self.verify_signatures()?;
+        Ok(())
     }
 
     /// Authorize that this transaction has the signatures needed to match a policy that grants the
@@ -517,6 +596,8 @@ impl<M: PrivacyMode> Transaction<M> {
     /// By the time we get here, the transaction hash/signatures must have been validated, so we
     /// focus on the policy-based validation.
     pub fn authorize(&self, identity_maybe: Option<&IdentityInstance<M>>) -> Result<()> {
+        self.verify_hash_and_signatures()?;
+
         macro_rules! search_capabilities {
             ($identity:expr) => {
                 let mut found_match = false;
@@ -569,67 +650,9 @@ impl<M: PrivacyMode> Transaction<M> {
             }
         }
     }
-
-    /// Sign this transaction in-place.
-    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
-        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
-        let sig_exists = self.signatures().iter().find(|sig| match sig {
-            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
-        });
-        if sig_exists.is_some() {
-            Err(Error::DuplicateSignature)?;
-        }
-        let serialized = ser::serialize(self.id().deref())?;
-        let sig = admin_key.sign(master_key, &serialized[..])?;
-        let policy_sig = MultisigPolicySignature::Key {
-            key: admin_key.clone().into(),
-            signature: sig,
-        };
-        self.signatures_mut().push(policy_sig);
-        Ok(())
-    }
-
-    /// Sign this transaction. This consumes the transaction, adds the signature
-    /// to the `signatures` list, then returns the new transaction.
-    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
-        self.sign_mut(master_key, admin_key)?;
-        Ok(self)
-    }
 }
 
-impl<M> Transaction<M>
-where
-    M: PrivacyMode,
-    TransactionEntry<M>: IntoPublic,
-    <TransactionEntry<M> as IntoPublic>::Public: Encode,
-{
-    /// Create a new Transaction from a [TransactionEntry].
-    pub(crate) fn new(entry: TransactionEntry<M>, hash_with: &HashAlgo) -> Result<Self> {
-        let public = entry.clone().into_public();
-        let serialized = ser::serialize(&public)?;
-        // recalculate our tx id based on the actual bytes that will be represented.
-        let hash = match hash_with {
-            HashAlgo::Blake3 => Hash::new_blake3(&serialized)?,
-        };
-        let id = TransactionID::from(hash);
-        Ok(Self {
-            id,
-            entry,
-            signatures: Vec::new(),
-        })
-    }
-}
-
-impl<M> Transaction<M>
-where
-    M: PrivacyMode,
-    TransactionSerialized<M>: TryFrom<Transaction<M>, Error = Error>,
-{
-    /// Turn this `Transaction` into a `TransactionSerialized` (by way of `try_from`)
-    pub fn into_serialized(self) -> Result<TransactionSerialized<M>> {
-        TransactionSerialized::try_from(self)
-    }
-}
+impl<M: PrivacyMode + Encode + Decode> SerdeBinary for Transaction<M> {}
 
 impl ReEncrypt for Transaction<Full> {
     /// Reencrypt this transaction.
@@ -640,11 +663,10 @@ impl ReEncrypt for Transaction<Full> {
     }
 }
 
-impl<M> DagUtil for Transaction<M>
+impl<M> DagTamperUtil for Transaction<M>
 where
     M: PrivacyMode,
-    TransactionEntry<M>: IntoPublic,
-    <TransactionEntry<M> as IntoPublic>::Public: Encode,
+    TransactionEntry<M>: Into<TransactionEntry<Public>>,
 {
     type ID = TransactionID;
     type Body = TransactionBody<M>;
@@ -750,39 +772,6 @@ macro_rules! define_wrapper_tx {
             }
         }
 
-        impl TryFrom<TransactionSerialized<Full>> for $name {
-            type Error = Error;
-            fn try_from(val: TransactionSerialized<Full>) -> std::result::Result<Self, Self::Error> {
-                let transaction = Transaction::<Full>::try_from(val)?;
-                if matches!(transaction.entry().body(), $body_type { .. }) {
-                    Ok(Self(transaction.strip().0))
-                } else {
-                    Err(Error::TransactionMismatch)
-                }
-            }
-        }
-
-        impl TryFrom<TransactionSerialized<Public>> for $name {
-            type Error = Error;
-            fn try_from(val: TransactionSerialized<Public>) -> std::result::Result<Self, Self::Error> {
-                let transaction = Transaction::<Public>::try_from(val)?;
-                if matches!(transaction.entry().body(), $body_type { .. }) {
-                    Ok(Self(transaction))
-                } else {
-                    Err(Error::TransactionMismatch)
-                }
-            }
-        }
-
-        impl TryFrom<$name> for TransactionSerialized<Public> {
-            type Error = Error;
-            fn try_from(val: $name) -> std::result::Result<Self, Self::Error> {
-                let $name(inner) = val;
-                let transaction = TransactionSerialized::<Public>::try_from(inner)?;
-                Ok(transaction)
-            }
-        }
-
         impl Deref for $name {
             type Target = Transaction<Public>;
             fn deref(&self) -> &Self::Target {
@@ -795,11 +784,35 @@ macro_rules! define_wrapper_tx {
                 &mut self.0
             }
         }
+
+        impl Encode for $name {
+            fn encode_with_tag_and_constraints<'encoder, E: Encoder<'encoder>>(
+                &self,
+                encoder: &mut E,
+                tag: rasn::types::Tag,
+                constraints: rasn::types::constraints::Constraints,
+                identifier: rasn::types::Identifier,
+            ) -> std::result::Result<(), E::Error> {
+                self.0.encode_with_tag_and_constraints(encoder, tag, constraints, identifier)
+            }
+        }
+
+        impl Decode for $name {
+            fn decode_with_tag_and_constraints<D: Decoder>(
+                decoder: &mut D,
+                tag: rasn::types::Tag,
+                constraints: rasn::types::constraints::Constraints,
+            ) -> std::result::Result<Self, D::Error> {
+                let tx = Transaction::<Public>::decode_with_tag_and_constraints(decoder, tag, constraints)?;
+                Self::try_from(tx).map_err(|_| rasn::de::Error::no_valid_choice("unexpected TransactionBody variant", rasn::Codec::Der))
+            }
+        }
     };
 }
 
 /// A wrapper around `MakeStampV1` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Serialize, Deserialize)]
+#[rasn(delegate)]
 pub struct StampTransaction(Transaction<Public>);
 
 define_wrapper_tx!(StampTransaction, TransactionBody::MakeStampV1);
@@ -849,7 +862,8 @@ impl StampTransaction {
 }
 
 /// A wrapper around `Publish` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Serialize, Deserialize)]
+#[rasn(delegate)]
 pub struct PublishTransaction(Transaction<Public>);
 
 define_wrapper_tx!(PublishTransaction, TransactionBody::PublishV1);
@@ -862,7 +876,7 @@ impl PublishTransaction {
         // do a verification of the full published identity.
         match self.entry().body() {
             TransactionBody::PublishV1 { identity } => {
-                let identity_pub: Identity<Public> = identity.clone().try_into()?;
+                let identity_pub = Identity::<Public>::from(identity.clone());
                 let identity = identity_pub.build_identity_instance()?;
                 self.authorize(Some(&identity))?;
                 Ok((identity_pub, identity))
@@ -873,7 +887,8 @@ impl PublishTransaction {
 }
 
 /// A wrapper around `Sign` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Serialize, Deserialize)]
+#[rasn(delegate)]
 pub struct SignTransaction(Transaction<Public>);
 
 define_wrapper_tx!(SignTransaction, TransactionBody::SignV1);
@@ -897,7 +912,8 @@ impl SignTransaction {
 }
 
 /// A wrapper around `Ext` transactions
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Serialize, Deserialize)]
+#[rasn(delegate)]
 pub struct ExtTransaction(Transaction<Public>);
 
 define_wrapper_tx!(ExtTransaction, TransactionBody::ExtV1);
@@ -945,216 +961,6 @@ impl ExtTransaction {
         }
     }
 }
-
-/// A [`Transaction`] where the [`TransactionEntry`] has been serialized. This enforces that our
-/// hash/signatures happen *on our serialized data* and prevents even getting a full
-/// [`Transaction`] object unless our hash and signatures verify. This object is safe to store
-/// and/or transmit (unlike [`Transaction`]).
-///
-/// This bundles private data that can be used to reconstruct a [`Full`] [`Transaction`] object if:
-///
-/// - The transaction ID matches the hash of the serialized entry bytes
-/// - The deserialization succeeds
-/// - The bundled private data is sufficient to reconstruct the full data
-#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct TransactionSerialized<M: PrivacyMode> {
-    /// This is a hash of the transaction's `entry`
-    #[rasn(tag(explicit(0)))]
-    id: TransactionID,
-    /// This holds our serialized [`TransactionEntry`]
-    #[rasn(tag(explicit(1)))]
-    entry: BinaryVec,
-    /// The signatures on this transaction's ID.
-    #[rasn(tag(explicit(2)))]
-    signatures: Vec<MultisigPolicySignature>,
-    /// Private data bundled with the transaction. If present (ie, PrivacyMode == Full`) then it
-    /// can construct a `Transaction<Full>`, otherwise it will construct `Transaction<Public>`.
-    #[rasn(tag(explicit(3)))]
-    private_data: M::Private<PrivateContainer>,
-}
-
-impl<M: PrivacyMode> TransactionSerialized<M> {
-    /// Verify that the signatures on this transaction match the transaction.
-    pub(crate) fn verify_signatures(&self) -> Result<()> {
-        if self.signatures().is_empty() {
-            Err(Error::TransactionNoSignatures)?;
-        }
-        let ver_sig = ser::serialize(self.id().deref())?;
-        for sig in self.signatures() {
-            match sig {
-                MultisigPolicySignature::Key { key, signature } => {
-                    if key.verify(signature, &ver_sig[..]).is_err() {
-                        Err(Error::TransactionSignatureInvalid(key.clone(), signature.clone().into()))?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Verify that the hash on this transaction matches its serialized body.
-    pub(crate) fn verify_hash(&self) -> Result<()> {
-        let transaction_hash = match self.id().deref() {
-            Hash::Blake3(..) => Hash::new_blake3(self.entry().as_slice())?,
-        };
-        if &transaction_hash != self.id().deref() {
-            Err(Error::TransactionIDMismatch(self.id().clone()))?;
-        }
-        Ok(())
-    }
-
-    /// Verify the hash on this transaction matches the transaction entry's hash, and also verify
-    /// the signatures of that hash.
-    ///
-    /// This is useful if you need to validate a transaction is "valid" up until the point where
-    /// you need a copy of the full identity (so that the policies can be checked). In other words,
-    /// if you need to verify a transaction but don't have all the information you need to run
-    /// `Transaction.authorize()` then you can run this as a self-contained way of verification, as
-    /// long as you keep in mind that the transaction ultimately needs to be checked against a
-    /// built identity (and its contained policies).
-    ///
-    /// This should *always* be called before transforming a `TransactionSerialized` into a
-    /// [`Transaction`]!!
-    pub fn verify_hash_and_signatures(&self) -> Result<()> {
-        self.verify_hash()?;
-        self.verify_signatures()?;
-        Ok(())
-    }
-
-    /// Sign this transaction in-place.
-    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
-        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
-        let sig_exists = self.signatures().iter().find(|sig| match sig {
-            MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
-        });
-        if sig_exists.is_some() {
-            Err(Error::DuplicateSignature)?;
-        }
-        let serialized = ser::serialize(self.id().deref())?;
-        let sig = admin_key.sign(master_key, &serialized[..])?;
-        let policy_sig = MultisigPolicySignature::Key {
-            key: admin_key.clone().into(),
-            signature: sig,
-        };
-        self.signatures_mut().push(policy_sig);
-        Ok(())
-    }
-
-    /// Sign this transaction. This consumes the transaction, adds the signature
-    /// to the `signatures` list, then returns the new transaction.
-    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
-        self.sign_mut(master_key, admin_key)?;
-        Ok(self)
-    }
-    /// Determines if this transaction has been signed by a given key.
-    pub fn is_signed_by(&self, admin_key: &AdminKeypair<Public>) -> bool {
-        Transaction::<Public>::is_signed_by_impl(self.signatures(), admin_key)
-    }
-}
-
-impl From<TransactionSerialized<Full>> for TransactionSerialized<Public> {
-    fn from(value: TransactionSerialized<Full>) -> Self {
-        let TransactionSerialized::<Full> {
-            id,
-            entry,
-            signatures,
-            private_data: _private_data,
-        } = value;
-        Self {
-            id,
-            entry,
-            signatures,
-            private_data: (),
-        }
-    }
-}
-
-impl TryFrom<Transaction<Full>> for TransactionSerialized<Full> {
-    type Error = Error;
-
-    fn try_from(value: Transaction<Full>) -> Result<Self> {
-        let Transaction::<Full> { id, entry, signatures } = value;
-        let (entry_pub, private_data) = entry.strip();
-        let ser = ser::serialize(&entry_pub)?;
-        let hash = match id {
-            TransactionID(Hash::Blake3(_)) => Hash::new_blake3(&ser)?,
-        };
-        Ok(Self {
-            id: TransactionID(hash),
-            entry: BinaryVec::from(ser),
-            signatures,
-            private_data,
-        })
-    }
-}
-
-impl TryFrom<Transaction<Public>> for TransactionSerialized<Public> {
-    type Error = Error;
-
-    fn try_from(value: Transaction<Public>) -> Result<Self> {
-        let Transaction::<Public> { id, entry, signatures } = value;
-        let ser = ser::serialize(&entry)?;
-        // recalculate our tx id based on the actual bytes that will be represented.
-        let hash = match id {
-            TransactionID(Hash::Blake3(_)) => Hash::new_blake3(&ser)?,
-        };
-        Ok(Self {
-            id: TransactionID(hash),
-            entry: BinaryVec::from(ser),
-            signatures,
-            private_data: (),
-        })
-    }
-}
-
-impl TryFrom<TransactionSerialized<Full>> for Transaction<Full> {
-    type Error = Error;
-
-    fn try_from(value: TransactionSerialized<Full>) -> Result<Self> {
-        value.verify_hash_and_signatures()?;
-        let TransactionSerialized::<Full> {
-            id,
-            entry,
-            signatures,
-            mut private_data,
-        } = value;
-        let entry: TransactionEntry<Public> = ser::deserialize(entry.as_slice())?;
-        let trans_public = Transaction::<Public>::new_raw_with_sigs(id, entry, signatures);
-        let trans = Transaction::<Full>::merge(trans_public, &mut private_data)?;
-        Ok(trans)
-    }
-}
-
-impl TryFrom<TransactionSerialized<Public>> for Transaction<Public> {
-    type Error = Error;
-
-    fn try_from(value: TransactionSerialized<Public>) -> Result<Self> {
-        value.verify_hash_and_signatures()?;
-        let TransactionSerialized::<Public> {
-            id,
-            entry,
-            signatures,
-            private_data: _private_data,
-        } = value;
-        let entry: TransactionEntry<Public> = ser::deserialize(entry.as_slice())?;
-        let trans = Transaction::<Public>::new_raw_with_sigs(id, entry, signatures);
-        Ok(trans)
-    }
-}
-
-impl<M> TransactionSerialized<M>
-where
-    M: PrivacyMode,
-    Transaction<M>: TryFrom<TransactionSerialized<M>, Error = Error>,
-{
-    /// Turn this `Transaction` into a `TransactionSerialized` (by way of `try_from`)
-    pub fn into_transaction(self) -> Result<Transaction<M>> {
-        Transaction::try_from(self)
-    }
-}
-
-impl<M: PrivacyMode + Encode + Decode> SerdeBinary for TransactionSerialized<M> {}
 
 #[cfg(test)]
 mod tests {
@@ -1208,11 +1014,12 @@ mod tests {
         let now = Timestamp::now();
         let (_master_key1, identity1, _admin_key1) = test::create_fake_identity(&mut rng, now.clone());
         let (_master_key2, mut identity2, _admin_key2) = test::create_fake_identity(&mut rng, now.clone());
-        let tx_ser: TransactionSerialized<_> = identity1.transactions()[0].clone().try_into().unwrap();
-        tx_ser.verify_hash_and_signatures().unwrap();
+        identity1.transactions()[0].verify_hash_and_signatures().unwrap();
         *identity2.transactions_mut()[0].signatures_mut() = identity1.transactions()[0].signatures().clone();
-        let tx_ser2: TransactionSerialized<_> = identity2.transactions()[0].clone().try_into().unwrap();
-        assert!(matches!(tx_ser2.verify_hash_and_signatures(), Err(Error::TransactionSignatureInvalid(_, _))));
+        assert!(matches!(
+            identity2.transactions()[0].verify_hash_and_signatures(),
+            Err(Error::TransactionSignatureInvalid(_, _))
+        ));
     }
 
     #[test]
@@ -1279,12 +1086,10 @@ mod tests {
         let (_master_key, identity, _admin_key) = test::create_fake_identity(&mut rng, now.clone());
         let trans = identity.transactions()[0].clone();
 
-        let tx_ser: TransactionSerialized<_> = trans.clone().try_into().unwrap();
-        let ser = tx_ser.serialize_binary().unwrap();
-        let des = TransactionSerialized::<Full>::deserialize_binary(ser.as_slice()).unwrap();
-        let trans2: Transaction<_> = des.try_into().unwrap();
+        let ser = trans.serialize_binary().unwrap();
+        let des = Transaction::<Full>::deserialize_binary(ser.as_slice()).unwrap();
 
-        assert_eq!(trans.id(), trans2.id());
+        assert_eq!(trans.id(), des.id());
     }
 
     #[test]
@@ -2094,7 +1899,7 @@ signatures:
             9bu65JmIK51-HfTi9p6Q38Wf1QTMI3Bx8GO1vWVuZGsk9QHormGe5cPkj
             50LNI8wm8yBCAdp6zkBvCw
         "#;
-        let trans = TransactionSerialized::<Public>::deserialize_binary(&ser::base64_decode(stamp_base).unwrap()).unwrap();
+        let trans = Transaction::<Full>::deserialize_binary(&ser::base64_decode(stamp_base).unwrap()).unwrap();
         assert_eq!(format!("{}", trans.id()), "ilik2Qll91ayj_YAeMs8yXanIVWJ9OOdOjMuD1Lm2boA");
     }
 }
