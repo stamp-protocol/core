@@ -736,8 +736,22 @@ impl<'a, M: PrivacyMode> From<&'a Transaction<M>> for DagNode<'a, TransactionID,
     }
 }
 
-impl SerText for Transaction<Public> {}
-impl DeText for Transaction<Public> {}
+impl SerText for Transaction<Public> {
+    fn serialize_text(&self) -> Result<String> {
+        // make sure at least the tx id matches before we serialize.
+        self.verify_hash()?;
+        ser::serialize_text(self)
+    }
+}
+
+impl DeText for Transaction<Public> {
+    fn deserialize_text(ser: &str) -> Result<Self> {
+        let des: Self = ser::deserialize_text(ser)?;
+        // make sure at least the tx id matches before we deserialize.
+        des.verify_hash()?;
+        Ok(des)
+    }
+}
 
 /// Makes it easy to define wrapper transactions
 macro_rules! define_wrapper_tx {
@@ -807,6 +821,8 @@ macro_rules! define_wrapper_tx {
                 Self::try_from(tx).map_err(|_| rasn::de::Error::no_valid_choice("unexpected TransactionBody variant", rasn::Codec::Der))
             }
         }
+
+        impl SerdeBinary for $name {}
     };
 }
 
@@ -969,7 +985,10 @@ mod tests {
         crypto::{base::SignKeypair, private::MaybePrivate},
         identity::keychain::RevocationReason,
         policy::{Capability, Context, ContextClaimType, MultisigPolicy, Policy, TransactionBodyType},
-        util::{ser, test},
+        util::{
+            ser,
+            test::{self, sign_and_push},
+        },
     };
     use std::str::FromStr;
 
@@ -1003,9 +1022,9 @@ mod tests {
             body.clone(),
         )
         .unwrap();
-        assert_eq!(format!("{}", trans1.id()), "VvM-YerBlAZZBSHQQDTVMRDh87dZw5sbr-3GlzySeiMA");
-        assert_eq!(format!("{}", trans2.id()), "nibq1lpMmDE57hdvL3__K-IjHTmURCelR3YVXGVNSkQA");
-        assert_eq!(format!("{}", trans3.id()), "pXmIbpDkH9c_jnKtbsGTMmyfq4p5PldYRYAhP8kl60EA");
+        assert_eq!(format!("{}", trans1.id()), "QV8clS17HVt_Wo4NzHFLWJfbHg86sKHydSZySK2WrCkA");
+        assert_eq!(format!("{}", trans2.id()), "2Kxq6FKEO2o1OVM7FYx8JFoGuJwm5UOqOz4mIZzOlRsA");
+        assert_eq!(format!("{}", trans3.id()), "mxxmsc1m2hvyQlukGCNliF1MDqME-FGOBr4DYV1fz-MA");
     }
 
     #[test]
@@ -1323,7 +1342,7 @@ mod tests {
         let trans1 = TransactionBody::<Full>::AddAdminKeyV1 { admin_key: admin_key1 };
         let ser1_check = ser::serialize(&trans1).unwrap();
         let ser1 = [
-            162, 129, 195, 48, 129, 192, 160, 129, 189, 48, 129, 186, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17,
+            163, 129, 195, 48, 129, 192, 160, 129, 189, 48, 129, 186, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17,
             113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47,
             92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198,
             21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203, 142, 148, 84, 206, 16,
@@ -1653,32 +1672,43 @@ mod tests {
 
     #[test]
     fn trans_deser_publish_yaml() {
-        let published_identity = r#"
----
+        let mut rng = test::rng_seeded(b"hi there!");
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::from_str("2024-01-01T00:00:06Z").unwrap());
+        let now = Timestamp::from_str("2068-12-31T23:59:59.999Z").unwrap();
+        let identity = sign_and_push! { &master_key, &admin_key, identity.clone(),
+            [ make_claim, now.clone(), ClaimSpec::Name(MaybePrivate::new_public("Butch".into())), None::<String> ]
+            [ make_claim, now.clone(), ClaimSpec::Address(MaybePrivate::new_private(&mut rng, &master_key, "1234 Cat Pooop Enjoyer Blvd, Giardiaville, CA".to_string()).unwrap()), None::<String> ]
+        };
+
+        let publish_tx = identity.publish(&HashAlgo::Blake3, now.clone()).unwrap();
+        let publish_tx_pub: Transaction<Public> = publish_tx.into();
+        let publish_tx_sertxt = publish_tx_pub.serialize_text().unwrap();
+        let publish_tx_expected = r#"---
 id:
-  Blake3: pJbf3PvEF2swcX-QRMcHF2YPn7_ome5o30IhFaYuKM0
+  Blake3: C2AJ34Ta8ml8A85BOFnEt1KNTUyH_q5HKKsXnQPeYUM
 entry:
-  created: "2024-07-26T00:24:15.361Z"
+  created: "2068-12-31T23:59:59.999Z"
   previous_transactions:
-    - Blake3: o9eaGWb0Xgkrg5Oqf-tehNdur7pUUC4UmSV00r_hR6s
+    - Blake3: NXXG_o3nJVT0fkuaFstXGwmxSLduciXAVUmWVH2QfDY
   body:
     PublishV1:
-      transactions:
+      identity:
         transactions:
           - id:
-              Blake3: zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzw
+              Blake3: r7QVieNXDaIkMHfgzAk8CClzc-xpJ68rPbUdvs1zkq4
             entry:
-              created: "2024-07-26T00:19:03.796Z"
+              created: "2024-01-01T00:00:06Z"
               previous_transactions: []
               body:
                 CreateIdentityV1:
                   admin_keys:
                     - key:
                         Ed25519:
-                          public: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
-                          secret: ~
-                      name: alpha
-                      description: Your main admin key
+                          public: BdMMToyKyC_o3mTwqMCjabfw3DgzAiiggD51bKLZBBU
+                          secret:
+                            sealed: ~
+                      name: Alpha
+                      description: ~
                       revocation: ~
                   policies:
                     - capabilities:
@@ -1690,216 +1720,207 @@ entry:
                             - Key:
                                 name: ~
                                 key:
-                                  Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
+                                  Ed25519:
+                                    public: BdMMToyKyC_o3mTwqMCjabfw3DgzAiiggD51bKLZBBU
+                                    secret:
+                                      sealed: ~
             signatures:
               - Key:
                   key:
-                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
+                    Ed25519:
+                      public: BdMMToyKyC_o3mTwqMCjabfw3DgzAiiggD51bKLZBBU
+                      secret:
+                        sealed: ~
                   signature:
-                    Ed25519: H1Vbg47FW01JJhdk2_ASIFNB4xUbOIxpcUJJlm6PyT-kJcrS3uTPUGyl7yWq4mZ8OlENNGihuJgfFIqdS14RAA
+                    Ed25519: KUQjGLnQxZJlZPcsYRBSvfv3RuE-PcLderXST4n_l5ok_nnwjd0lmVcN51kXf3o1aql6Z3_Cgi3S19G5p-25Cg
           - id:
-              Blake3: 9CpMShDnJCkm7xfYnzhlXLTVz_4ooR9lOggYG2E2Qxo
+              Blake3: eQ2TeZmqU0QrlAjMJKnxlrmngVabplyH-Fw1sCVAwrM
             entry:
-              created: "2024-07-26T00:19:36.383Z"
+              created: "2068-12-31T23:59:59.999Z"
               previous_transactions:
-                - Blake3: zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzw
-              body:
-                MakeClaimV1:
-                  spec:
-                    Identity:
-                      Public:
-                        Blake3: zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzw
-                  name: ~
-            signatures:
-              - Key:
-                  key:
-                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
-                  signature:
-                    Ed25519: eUsfBpWGePyR98OUV4WQkJuSeW_7KrzpPKI-9lN9OG_YqpRHeadYXUp_ZXO1NHGYU4HwoBNEhfBDnbk--v27AQ
-          - id:
-              Blake3: FJLh0dArIgR10WyPyDCuYHEBxTeGvLhUetN5vmtB7aU
-            entry:
-              created: "2024-07-26T00:19:36.384Z"
-              previous_transactions:
-                - Blake3: 9CpMShDnJCkm7xfYnzhlXLTVz_4ooR9lOggYG2E2Qxo
+                - Blake3: r7QVieNXDaIkMHfgzAk8CClzc-xpJ68rPbUdvs1zkq4
               body:
                 MakeClaimV1:
                   spec:
                     Name:
-                      Public: Zefram Cochrane
+                      Public: Butch
                   name: ~
             signatures:
               - Key:
                   key:
-                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
+                    Ed25519:
+                      public: BdMMToyKyC_o3mTwqMCjabfw3DgzAiiggD51bKLZBBU
+                      secret:
+                        sealed: ~
                   signature:
-                    Ed25519: n0c1QeglXFA4Ih96pqdVTb7orjofHgKVCaaGFOYTOHsxHXf5l9eG5F4a3foxH8-7GOcwV2JFFvAtfDPs1HQ6Aw
+                    Ed25519: bioLfiiXM6heinZ_mdp7FYksdxYKY7RERoqnMFAEx7EZGNJ5bwvMyWj3lrXHWwcy_go-lTHs0BHE4AgzeXCIDg
           - id:
-              Blake3: gOpIJMGGUsRdLSI8EqnkHDfroXUzmA3zEK_alKlqPs4
+              Blake3: NXXG_o3nJVT0fkuaFstXGwmxSLduciXAVUmWVH2QfDY
             entry:
-              created: "2024-07-26T00:19:36.384Z"
+              created: "2068-12-31T23:59:59.999Z"
               previous_transactions:
-                - Blake3: FJLh0dArIgR10WyPyDCuYHEBxTeGvLhUetN5vmtB7aU
+                - Blake3: eQ2TeZmqU0QrlAjMJKnxlrmngVabplyH-Fw1sCVAwrM
               body:
                 MakeClaimV1:
                   spec:
-                    Email:
-                      Public: zef@starfleet.org
+                    Address:
+                      Private:
+                        hmac:
+                          Blake3: 3e_KLNBgoDpsne6q1SH9dgwRhXDv9PMG4oLBy2KVlus
+                        data:
+                          sealed: ~
                   name: ~
             signatures:
               - Key:
                   key:
-                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
+                    Ed25519:
+                      public: BdMMToyKyC_o3mTwqMCjabfw3DgzAiiggD51bKLZBBU
+                      secret:
+                        sealed: ~
                   signature:
-                    Ed25519: "-hUkX6qOsU3YRfA-Rhx-TLjnBcTMzWBT3wsVyAJF6VauYWcc9LdxPyllannYs7vaVjzhL2mOjLnqMhJ7h4kuDw"
-          - id:
-              Blake3: CME1vP1HrTOf44TLvQ08zZJ2vgNJ2Ao1IIgwW1LWDuw
-            entry:
-              created: "2024-07-26T00:19:36.385Z"
-              previous_transactions:
-                - Blake3: gOpIJMGGUsRdLSI8EqnkHDfroXUzmA3zEK_alKlqPs4
-              body:
-                AddSubkeyV1:
-                  key:
-                    Sign:
-                      Ed25519:
-                        public: hmGYRn5eH6lAhTEoYTkJWi27eNwLU0G2XgILwyiO0Lo
-                        secret: ~
-                  name: default/sign
-                  desc: A default key for signing documents or messages.
-            signatures:
-              - Key:
-                  key:
-                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
-                  signature:
-                    Ed25519: taLWH361m-uYkrpvWFKyYQCHm8eMbBeBFvJgvU03DSVe5XNh45SoA5ayureIAJjSSfay5lj3oLIfnY0uJv3FCw
-          - id:
-              Blake3: YxCab7-VEgAhqKF9HuD6wRDz2sn6w_SEAi0Jl_C5-EI
-            entry:
-              created: "2024-07-26T00:19:36.386Z"
-              previous_transactions:
-                - Blake3: CME1vP1HrTOf44TLvQ08zZJ2vgNJ2Ao1IIgwW1LWDuw
-              body:
-                AddSubkeyV1:
-                  key:
-                    Crypto:
-                      Curve25519XChaCha20Poly1305:
-                        public: gwxr0F2ylNd98u6_2G3FZ38dfeY-bnMTQrADEJMVIlE
-                        secret: ~
-                  name: default/crypto
-                  desc: A default key for receiving private messages.
-            signatures:
-              - Key:
-                  key:
-                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
-                  signature:
-                    Ed25519: "-7QYIod0Gf25U8dZorfqMzfBGmlITgEMsMQP0CZPHqfT6wWVHwE2_eydlBsAmQhV-rBkBg7IXwohPcuhaeKqDg"
-          - id:
-              Blake3: 2FokIj1zj4EQg24Z1MCWZ-1cnc_EodzgpTVMAiBFVIE
-            entry:
-              created: "2024-07-26T00:19:36.387Z"
-              previous_transactions:
-                - Blake3: YxCab7-VEgAhqKF9HuD6wRDz2sn6w_SEAi0Jl_C5-EI
-              body:
-                AddSubkeyV1:
-                  key:
-                    Secret:
-                      hmac:
-                        Blake3: tv-7T7GEqR36xuwzcdhxr66t6iDacLdZ2raoAppgyRw
-                      data: ~
-                  name: default/secret
-                  desc: A default key allowing encryption/decryption of personal data.
-            signatures:
-              - Key:
-                  key:
-                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
-                  signature:
-                    Ed25519: TIBcinDKy3Mh7fGZ6Hhr7StUlyLrZXHq44wHpKUg8EBw_KzWrFUYUcbVEm_GYs8uTIlLgMpH5AzZY9U2dDyoAA
-          - id:
-              Blake3: Z-qg1FexHYIrLsqm9HrYC_E7vJ1Pl-XQNKwh5AtVADo
-            entry:
-              created: "2024-07-26T00:20:39.788Z"
-              previous_transactions:
-                - Blake3: 2FokIj1zj4EQg24Z1MCWZ-1cnc_EodzgpTVMAiBFVIE
-              body:
-                MakeClaimV1:
-                  spec:
-                    Photo:
-                      Public: _9j_4AAQSkZJRgABAQEASABIAAD_2wBDABQODxIPDRQSEBIXFRQYHjIhHhwcHj0sLiQySUBMS0dARkVQWnNiUFVtVkVGZIhlbXd7gYKBTmCNl4x9lnN-gXz_2wBDARUXFx4aHjshITt8U0ZTfHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHz_wgARCACZAJkDAREAAhEBAxEB_8QAGQAAAgMBAAAAAAAAAAAAAAAAAgMAAQQF_8QAFwEBAQEBAAAAAAAAAAAAAAAAAAECA__aAAwDAQACEAMQAAABz8qy6kCKsFKQiFAlllC9BqqhRB_Kto1Wg1aFLdXJKkoooql6BVkIQ0c7ZCqlhlhSyIXYVXGSkaQhCEHYtw2w6qqBi4gwOjoIztZdZohCENmUiWssIXTIRDShupsOdNKms1zVkIQhsxYQZqDYNIlqNMtDlfWRAlz0u5shCG3mtZZWlEWSsmnqQ0ZQGdOcym5lQhDbzsSUJbWlqgJSDCM9aIZbzdYzMVUIQ140UhkoGnqIgFdMq0uzeoHLuUXEqEIbMaKSy7q2mSIFVQ-XfQDlSnJ1hVzCEIa8bJkoixsrCQCpSXbaBcVXNvNGoCRLWG3G7mZVwy6FSFxQ-0yKmNIjWMaIspKqzbnbEKRqsM6iqoolMa2IAwBLQKFMlzmOhnQoCvIARVqci7WroWg7nnw-R1pIVlJnjGhrqIudGW3NAUFK-1qKucDMl3roFkTKykYrhRms0rc1agMlfRIihuMSas72DgTnM2LHiDNqOV0tKUWNURlxlFJsmiXQEc2ZlsSCLFgmuqmhlOV1p3I3GaKHS75oBVZ5m1uxYqwQKGtEuuAVo-zKmaCFHSmnLDCzUUq7EWWVQVS7syx1azAZoaIOlNaFSf_EACYQAAIBBAEEAgMBAQAAAAAAAAABAgMQERIhIDAxMhNBIzNCBEP_2gAIAQEAAQUCVsmw-b4NTXpz1oyZM9evaybWwY62sk447Goo9KMGuoqcmlTkPKJ9fCMn2yMHIjzKcVinhikTqZdGpKBFtE6jk5D7O-pKo5OKYpSGJpGNnFSRiriSw5D7P9SaclsaYEkKKFeSFTiift2MZEkhDtsbHyRN2RbyVPbsJWRJjkblLEiUNZ_HmSisS8y9u19MaMEPZx3SWojzL77UbOyRH1nJCdpL8j7OrFwO2RelN4KkN1TbtOnlyg10owYFgb48t9H2Y5tJ20jIqUtbKPDmIVpGdkOyyao9TIqgnlReSQuT44EvWZC3lzZT_WOyEnaZOOpF8wawNYMsfmSI8L6fmb5pv8ZgwIR9VfEuacfK4IPk0RIflH8ytSlrKS1FIyhCJsr_AK8kuCKUjDg88Wxylxnh-LQqZWjsjOFTjsT5_wA78y9KUhPhxNrP2fgm8ivGZsS0z8URRXyT5g_L9Fw4O2R3dkO8fEPaA_Nb1P8AmQv_AP_EABoRAAIDAQEAAAAAAAAAAAAAAAERADBAIGD_2gAIAQMBAT8B9corlFFF0ahUchpGQVGH3QsHBxOPb__EABQRAQAAAAAAAAAAAAAAAAAAAID_2gAIAQIBAT8BSH__xAApEAABAwIFBAICAwAAAAAAAAABABEhAhAgMDFRYRIiQHEyQQOBUtHx_9oACAEBAAY_AvPjxZ8GQycCFomOYdhqmVRoEBFyy4W6MIN8ul-lfFesrlkenRa9xTOW2t2kokvK7QU0ts6-6Su4TvlUnqH9ItuiHg65DmRsjnBAqVCmxz-kri0Wq9-AMB8AKb1eBK5TGxqBU5XOTomtonGmJ04waLZTOAv_AIuVxbTEcht1xYb4Xw-sf46sX3b2E1jtadCuMIp3Q4KKBtuLzYxh6al2rm0pzqi_8rftNaFrlTSCodTU6cFgqjb95wsVSqvdxg__xAAmEAEAAgIBBAEEAwEAAAAAAAABABEhMUEQUWFxgSAwobGRwfDx_9oACAEBAAE_IasWnEHzFX0joJntFcTUvotRi5cuX01qJ3FVGMIM4geelvM3xG-f4TI5ixfquFY2mWecIYOJh6kA4Szhx9gTANyokuLFcbaGKpYqvMQ3Bnca12wr0Lv6gh4QyL6L9XcQGfRy-J7yP-5dI0LLjmS3wLgXZw5gA1DNs0g8Rs8MsWOeOY7Kze1zb6q6VG0ouy7lEURSLuKwV_FAD5y24bVCULed4rMbzSrwTbH3AGD0kexOBeo32b-w10OOI6YUgu2e8tDpEDa5eqAdRcEGoMBEQRitiOoFAGvquX0fmjHSalzLL1EUPpiB-kHa_aKoJZVd8T5_MfqOirslUzSYOnZaIMjuMlnjAA8dpSUqCqEz-0KOITvLdwrMYK17IipqK-ZajMtu7jv7N04i4iHRUrivxQECmIblQQ0_Z1WMNt9FxpFQ7svdk0-moTFAxBzh2mSH8RM_SLShuMupiPnUU0kYEqJLzDAzBlG3QS21jmpU4ONxM5B-IirGLyeirLcIoPxFcTP0io70KLM3BRL7KFuaEFBTFWxqJC3REXbXaVzLkeYr0bQVmKCkK6HKFn9QsCpeHiYLf9hoPe44juXWpZhoZMxlWhWJmMZ7Stf9QzbW-IvwnqgteZfYlQm1_cVIHcRpxLn3cuvXQ5TGPMULMK8RmcTGvxFb3ARfEoAPE8EWqzZPJ_VMw0Bi3bgiLy8I5th-kMZ-f4lHki0TFLDkdfE3uzU2EGHCqeYnL7YHocjwjodmYBdlBrvdw1IYjA2kbOZ2l7HEbyrMElkWCWXuVmHwJqgrt2jekoVz8T_VQwl_mYYajsdpdTD8TIidON-GZHzLKcIHszNak4uUzNId4eyqMxk4wqWYJ81Pc6HicvSzn0cw1Pwpun7Cf4-5-InPxGOfof_aAAwDAQACAAMAAAAQ9-Q77rbigk_TnwZTrEAA20gMSA_AAAGJgTr0IAAAPgSSbvkgAAACZ0SQtFAA6IYE0Yk_AAXe6SfUMrAAnT_FC9FWAALzCQiJBNAAgZ1pEgpZtAivFG8sfvXggadhxhptmKJp_cYIhjDGbxyMkwZfDzvxvXgQ4NSyrFdANef3Vi4IOZTQd6yQ6sL0yGqQvKPUNYrQWgvI_8QAHBEAAwEBAQEBAQAAAAAAAAAAAAERECAwQCEx_9oACAEDAQE_EEJlL8VKX7p8aJ8LELH7Qm8EPylEEFlNaJh-KEIJlJlF50hfh_dRdXgmoNU_m0XDGPl6xeILILRopdeITxatsKMY0QmvYIXK4eNEGiDZcuXlYxsuseUuvE-FrKJ9TXiFtG8Y16ITLlJl_fc2IQ49Qu2LYXSj1C7fouP_xAAaEQACAwEBAAAAAAAAAAAAAAABEQAQIDBA_9oACAECAQE_EMriIPCIKG3ByG1FFBFFRtRdALIiioUeQMFmGOgY8DYgMcceHTggh7OOnBBD1WR3eR5BQ8Qp8HhcHYjp-U2MvChFDAhsaWhsWaMejT0KGhBZ4CO1agEVCjzOxRv_xAAmEAEAAgMAAgICAgMBAQAAAAABABEhMUFRYXGBIKEQkbHB8NHx_9oACAEBAAE_EEQILEo1qWaGJcXn3Cpf1AlxLLqDWB9y7sj6IfKH4wy1UiPuFsQrstRm5g2xxlpaW-YKrTcpiW_EMWq8xG7uFVb9QXRuUYeZ5MPEQ40zwCpYabnueQPlj-o2AInE_mn8UepYvxNUIHKh6Q8trGHJVc5EHz4hFkvEuzjCq8wZUyzZ332PuFryRfyMuDc4VETFZgKwQAuYzJNSvjxFVqHwSmMKDo5AaBt0FXqDghbF9PP7leS_XIsUj9zd-WQrMW0CpiF2JGwsuqi40C0ao39_UZqs4S06YhPVRswsB0MLR1EhrRitAAbUKq_u5fgWVZVZGjLA2xbAL_7Nf3KMaaZ3Z1EJ6QBSPSCvyPllgJyWsTLcFx0FF2uMHkLlIHCAUxnzUUwymEAe2ISy4KmXfMtWBetss5kJ1DP3GUMvHlmOGraIbW7Xydg7D1AYq8bJrJqXGy9ltnz2Ds3-NT9JQIy4ZlQMU0rFKFvct4OSvAICthz1MLY_EGEYcRcZJjObjFhWaQmou_PYCAlX5hNmqmVp5lyj8-IaUCqnNR_EwjYjdzGpAddSsH9wAYKNQMrihs2Zg2NjKu-JrE3i77l0ys6yTL0LwNKlmQ11wxuLcNDhBHUJt-Jlhzcor3EQBRbbFAlAtQIYJRxAKAx5gIOncAcbLHHzHyyxZYkmzmhuABP9IY3VZE23ImP4jCpdmYVkfqKDolfcYldhUKvrPLXyolaMESC4rSQoxxY8YAtV0hLg9RRs1-5aFsin3-UFMDTCrqOyCBDdVVRW1p-5Qt36gOEya3EC17l-HKplbgP-IRVZ6gpp5uAXgu58ozc1_IWymBWY5-4Dgh1WyCghXVRYs5EuoQvsRmEs51Bc2lMOxhbbyeGIKhGgeSixllLZhb1EVdVvIiDA-nEqV8_xYUaxEyDEFNxfEqQS82-ooBFyyjpARzkye55FXd0TIXzMHoomK5CpajsDUpyaCCbN-JSAcYsr5wsG9ZhctKY733M5LGitiVoFVGKr4l5Zsb4TEsLAjbyFZNFV_kxnd3XfENZeUorkulWUdcsAMCLtK-oYjvfqVh38QLPUzRY-oEXyXljEVfMKFc-XqIbkLa5Eos7oNMJVle5Rqn_UK0oNvfUtZtOmmOlDKtZ_1IEgyqFnP_ImIUGEdhhXughUUx7iFKIpb57jUXoaG9vMHpJPyMBkVXmWQ0RqrAhcAUM7jltU6pupgAtqVBIBuvEfJRw9GPYLEPqpyFNZ0NjfGBAs1o6-oCbbfxLANNBBwkrhREAfENHlT6ioCrTB0xS9K2hqtkcJwbBhjDLUOjApFFt4iaxj3G-BG4mouBqL3oC4kCgR-WEvywxfmHO64RFLwe9iK7RRfTVTGFp1P_oxWYnG7zNqsMFm3iDI-Q4S4tezGE8fMG9hNd01LpGxXPYL4M_PcxvKqVD0F-zUIvT7ljDdQ80ZqAQ8A51BWCUh4Kg711RyGOhpIJG3RORUr8BNfMZZboMkx5IrQKtIdjVwUANRBsGr_wA_MuIA401j-4hKBZgXO5tZzyCllFcChfEG9rI5SxpNUlRJYHGKloq81M5CnQDo9PuJ2xUPaxXzE4dOKZl3AlBh0tiBba_cV2ivmfH8AFdYtRRhWh3yV5btzEyN8hJhnCuSmHkqfUtHGH1GKeq9NRBVSacv3BVDM6fqNpiCPB9NQ4KVaxTKVGXoGmqV1Xmo6KyAEtTxaOVqwqI1eRByJBKz5-Zv8iP7Zo_M6-X-DSMbPmftp-hNf-WZ-7_BLr8Ju-SH7p_rHT8fx__Z
-                  name: ~
-            signatures:
-              - Key:
-                  key:
-                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
-                  signature:
-                    Ed25519: D8Xy0Qo6JqRrb7sUJC_B2NkCl7D9e8uFk8Jf8DYVL0L2CnDNw0NJLrTGjUkP-VhSVkwrizkHhS4yL0m3HcXfCQ
-          - id:
-              Blake3: o9eaGWb0Xgkrg5Oqf-tehNdur7pUUC4UmSV00r_hR6s
-            entry:
-              created: "2024-07-26T00:21:11.657Z"
-              previous_transactions:
-                - Blake3: Z-qg1FexHYIrLsqm9HrYC_E7vJ1Pl-XQNKwh5AtVADo
-              body:
-                MakeClaimV1:
-                  spec:
-                    Url:
-                      Public: "https://news.ycombinator.com/user?id=xX_zefram420_Xx"
-                  name: ~
-            signatures:
-              - Key:
-                  key:
-                    Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
-                  signature:
-                    Ed25519: JlDAP8rs64KmR0VxWeLPGUYAbhLWInvuy-XuSYhX5N7oGBT6f2ZraGGGuRErQs6DHWRBL5wH6J2NmVAKlmRUAA
-signatures:
-  - Key:
-      key:
-        Ed25519: qgye4VRJgGnvxVcfqlB7hIyy6f5SZxJnqmOIJYfGmdA
-      signature:
-        Ed25519: JjVFZPID7ITsX13xJLk_ht-a-JDVpQ7mun_yG7WE6V2SdZsHFeQoWjXQHxoD6HNAi4qEHtqlwVoW3u_CpwGdAg
-        "#;
-        let transaction = Transaction::deserialize_text(published_identity).unwrap();
+                    Ed25519: mXqXJ_CHiiQCgeypqaR2rQJn0TwduFYvmSTq47Wq-D2WCvqQXauEjH72WhRlXkRG0DGIqhqB6RxQjnGYYmNnDQ
+signatures: []
+"#;
+        assert_eq!(publish_tx_sertxt, publish_tx_expected);
+
+        let transaction = Transaction::deserialize_text(&publish_tx_sertxt).unwrap();
         match transaction.entry().body() {
             TransactionBody::PublishV1 {
                 identity: identity_serialized,
             } => {
-                let identity: Identity<Public> = identity_serialized.clone().try_into().unwrap();
-                let identity_instance = identity.build_identity_instance().unwrap();
-                assert_eq!(format!("{}", identity_instance.id()), "zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzwA");
-                let ids = identity.transactions().iter().map(|x| format!("{}", x.id())).collect::<Vec<_>>();
-                assert_eq!(
-                    ids,
-                    vec![
-                        "zef-iKEplM5PtaQTP3l0_Yb2vYK_cVuTZg8rwejfjzwA",
-                        "9CpMShDnJCkm7xfYnzhlXLTVz_4ooR9lOggYG2E2QxoA",
-                        "FJLh0dArIgR10WyPyDCuYHEBxTeGvLhUetN5vmtB7aUA",
-                        "gOpIJMGGUsRdLSI8EqnkHDfroXUzmA3zEK_alKlqPs4A",
-                        "CME1vP1HrTOf44TLvQ08zZJ2vgNJ2Ao1IIgwW1LWDuwA",
-                        "YxCab7-VEgAhqKF9HuD6wRDz2sn6w_SEAi0Jl_C5-EIA",
-                        "2FokIj1zj4EQg24Z1MCWZ-1cnc_EodzgpTVMAiBFVIEA",
-                        "Z-qg1FexHYIrLsqm9HrYC_E7vJ1Pl-XQNKwh5AtVADoA",
-                        "o9eaGWb0Xgkrg5Oqf-tehNdur7pUUC4UmSV00r_hR6sA",
-                    ]
-                );
+                let identity_des: Identity<Public> = identity_serialized.clone().try_into().unwrap();
+                let identity_instance_des = identity_des.build_identity_instance().unwrap();
+                let expected_identity_id = identity.identity_id().unwrap();
+                assert_eq!(format!("{}", identity_instance_des.id()), format!("{}", expected_identity_id));
+                let ids = identity_des
+                    .transactions()
+                    .iter()
+                    .map(|x| format!("{}", x.id()))
+                    .collect::<Vec<_>>();
+                let ids_expected = identity.transactions().iter().map(|x| format!("{}", x.id())).collect::<Vec<_>>();
+                assert_eq!(ids, ids_expected);
             }
             _ => panic!("bad dates"),
         }
+
+        let publish_tx_tampered = r#"---
+id:
+  Blake3: C2AJ34Ta8ml8A85BOFnEt1KNTUyH_q5HKKsXnQPeYUM
+entry:
+  created: "2068-12-31T23:59:59.999Z"
+  previous_transactions:
+    - Blake3: NXXG_o3nJVT0fkuaFstXGwmxSLduciXAVUmWVH2QfDY
+  body:
+    PublishV1:
+      identity:
+        transactions:
+          - id:
+              Blake3: r7QVieNXDaIkMHfgzAk8CClzc-xpJ68rPbUdvs1zkq4
+            entry:
+              created: "2024-01-01T00:00:06Z"
+              previous_transactions: []
+              body:
+                CreateIdentityV1:
+                  admin_keys:
+                    - key:
+                        Ed25519:
+                          public: BdMMToyKyC_o3mTwqMCjabfw3DgzAiiggD51bKLZBBU
+                          secret:
+                            sealed: ~
+                      name: Alpha
+                      description: ~
+                      revocation: ~
+                  policies:
+                    - capabilities:
+                        - Permissive
+                      multisig_policy:
+                        MOfN:
+                          must_have: 1
+                          participants:
+                            - Key:
+                                name: ~
+                                key:
+                                  Ed25519:
+                                    public: BdMMToyKyC_o3mTwqMCjabfw3DgzAiiggD51bKLZBBU
+                                    secret:
+                                      sealed: ~
+            signatures:
+              - Key:
+                  key:
+                    Ed25519:
+                      public: BdMMToyKyC_o3mTwqMCjabfw3DgzAiiggD51bKLZBBU
+                      secret:
+                        sealed: ~
+                  signature:
+                    Ed25519: KUQjGLnQxZJlZPcsYRBSvfv3RuE-PcLderXST4n_l5ok_nnwjd0lmVcN51kXf3o1aql6Z3_Cgi3S19G5p-25Cg
+          - id:
+              Blake3: NXXG_o3nJVT0fkuaFstXGwmxSLduciXAVUmWVH2QfDY
+            entry:
+              created: "2068-12-31T23:59:59.999Z"
+              previous_transactions:
+                - Blake3: eQ2TeZmqU0QrlAjMJKnxlrmngVabplyH-Fw1sCVAwrM
+              body:
+                MakeClaimV1:
+                  spec:
+                    Address:
+                      Private:
+                        hmac:
+                          Blake3: 3e_KLNBgoDpsne6q1SH9dgwRhXDv9PMG4oLBy2KVlus
+                        data:
+                          sealed: ~
+                  name: ~
+            signatures:
+              - Key:
+                  key:
+                    Ed25519:
+                      public: BdMMToyKyC_o3mTwqMCjabfw3DgzAiiggD51bKLZBBU
+                      secret:
+                        sealed: ~
+                  signature:
+                    Ed25519: mXqXJ_CHiiQCgeypqaR2rQJn0TwduFYvmSTq47Wq-D2WCvqQXauEjH72WhRlXkRG0DGIqhqB6RxQjnGYYmNnDQ
+signatures: []
+"#;
+        assert!(matches!(Transaction::deserialize_text(publish_tx_tampered), Err(Error::TransactionIDMismatch(_))));
     }
 
     #[test]
     fn trans_deser_stamp_base64() {
-        let stamp_base = r#"
-            MIIBYqAmMCSgIgQgilik2Qll91ayj_YAeMs8yXanIVWJ9OOdOjMuD1Lm2
-            bqhgcMwgcCgCAIGAYzTp4-joSgwJjAkoCIEILSu2LuV0C-YEOhrYA5Be_
-            e7ZEccnNwMOv_6MC56MDytooGJqoGGMIGDoIGAMH6gJjAkoCIEILNH__0
-            7TcYlKzSfMoteL1ULXnnD-8UGEM3KIYT6jnbfoSYwJKAiBCBl5_5mmZ1b
-            UKwD7PGpTMdM_awpnBSqd9XehDsOLaAvcKImMCSgIgQgDr4qJ88VNLMra
-            CqXBGoNO8ILbtizognoTwOvR3o7OtajBKECBQCicjBwoG4wbKAkoCIEIK
-            DmNHCSnibCj7sBu0xHMW2r39lMo20o-SFpHsFUJgK5oUSgQgRAXeuErZt
-            9bu65JmIK51-HfTi9p6Q38Wf1QTMI3Bx8GO1vWVuZGsk9QHormGe5cPkj
-            50LNI8wm8yBCAdp6zkBvCw
-        "#;
-        let trans = Transaction::<Full>::deserialize_binary(&ser::base64_decode(stamp_base).unwrap()).unwrap();
-        assert_eq!(format!("{}", trans.id()), "ilik2Qll91ayj_YAeMs8yXanIVWJ9OOdOjMuD1Lm2boA");
+        let mut rng = test::rng_seeded(b"no thank you");
+        let (master_key_claimer, identity_claimer, admin_key_claimer) =
+            test::create_fake_identity(&mut rng, Timestamp::from_str("2026-01-01T00:00:06Z").unwrap());
+        let (_master_key_stamper, identity_stamper, _admin_key_stamper) =
+            test::create_fake_identity(&mut rng, Timestamp::from_str("2025-01-01T00:00:06Z").unwrap());
+        let now = Timestamp::from_str("2068-12-31T23:59:59.999Z").unwrap();
+        let identity_claimer = sign_and_push! { &master_key_claimer, &admin_key_claimer, identity_claimer.clone(),
+            [ make_claim, now.clone(), ClaimSpec::Name(MaybePrivate::new_public("Butch".into())), None::<String> ]
+            [ make_claim, now.clone(), ClaimSpec::Address(MaybePrivate::new_private(&mut rng, &master_key_claimer, "1234 Cat Pooop Enjoyer Blvd, Giardiaville, CA".to_string()).unwrap()), None::<String> ]
+        };
+        let identity_claimer_instance = identity_claimer.build_identity_instance().unwrap();
+
+        let stamp_entry = StampEntry::new(
+            identity_stamper.identity_id().unwrap(),
+            identity_claimer.identity_id().unwrap(),
+            identity_claimer_instance.claims().last().unwrap().id().clone(),
+            Confidence::High,
+            None::<Timestamp>,
+        );
+
+        let stamp_tx: StampTransaction = identity_stamper
+            .make_stamp(&HashAlgo::Blake3, now.clone(), stamp_entry.clone())
+            .unwrap()
+            .try_into()
+            .unwrap();
+
+        let stamp_tx_ser = ser::base64_encode(&stamp_tx.serialize_binary().unwrap());
+        let stamp_tx_ser_expected = r#"MIHeoCIEIKXlsyZKJ1XUqKMVqPV-Hv_QKmcBEKrcHg0zIhA6rufnMIG1oAgCBgLXakL__6EmMCSgIgQgI9hg5mY_krKF8GaH2RYiCESH-ZMbiWhEY5fpVoG6upmigYCrfjB8oHoweKAkoCIEICPYYOZmP5KyhfBmh9kWIghEh_mTG4loRGOX6VaBurqZoSSgIgQguo6yL4V6bNKLVnJhZ6mI7S3D66MOjKUds2U2JQNam5yiJKAiBCBOA3QXoH_Vt1Zv3zEYogr_tqs8DlQ6i6usabU0UjbtYKMEowIFADAA"#;
+        assert_eq!(stamp_tx_ser, stamp_tx_ser_expected);
+
+        let stamp_tx_des = StampTransaction::deserialize_binary(&ser::base64_decode(stamp_tx_ser).unwrap()).unwrap();
+        match stamp_tx_des.entry().body() {
+            TransactionBody::MakeStampV1 { stamp: stamp_entry_des } => {
+                assert_eq!(&stamp_entry, stamp_entry_des);
+            }
+            _ => panic!("bad dates"),
+        }
     }
 }

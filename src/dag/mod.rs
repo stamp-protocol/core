@@ -1017,7 +1017,7 @@ mod tests {
     #[test]
     fn dag_from_nodes_walk_node_order() {
         let now = Timestamp::from_str("2047-02-17T04:12:00Z").unwrap();
-        let mut rng = crate::util::test::rng_seeded(b"HI i'm Butch");
+        let mut rng = crate::util::test::rng_seeded(b"HI i'm butch.");
         let (_master_key, identity, _admin_key) = crate::util::test::create_fake_identity(&mut rng, now);
         #[allow(non_snake_case, unused_mut)]
         let (mut transaction_list, tid_to_name, _name_to_tid) = make_dag_chain! {
