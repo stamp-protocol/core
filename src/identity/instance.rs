@@ -20,7 +20,7 @@ use crate::{
     util::{SerText, Timestamp, Url},
 };
 use getset;
-use private_parts::{Full, PrivacyMode, PrivateDataContainer, PrivateParts};
+use private_parts::{Full, PrivacyMode, PrivateDataContainer, PrivateParts, Public};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
@@ -340,7 +340,7 @@ impl IdentityInstance<Full> {
     }
 }
 
-impl<M: PrivacyMode + Serialize> SerText for IdentityInstance<M> {}
+impl SerText for IdentityInstance<Public> {}
 
 #[cfg(test)]
 mod tests {
@@ -729,7 +729,7 @@ mod tests {
         );
         let container = PolicyContainer::from_policy_transaction(id.deref(), 0, capability).unwrap();
         let identity = IdentityInstance::create(id.clone(), vec![admin_key], vec![container], now);
-        let ser = identity.serialize_text().unwrap();
+        let ser = IdentityInstance::<Public>::from(identity).serialize_text().unwrap();
         assert_eq!(
             ser.trim(),
             r#"---
@@ -738,7 +738,7 @@ id:
 created: "1977-06-07T04:32:06Z"
 policies:
   - id:
-      Blake3: 8Zse00lvEkvvNQZT6RavqGPIuf5axUgFjOTxx-okjKQ
+      Blake3: 4flo4rOpT85jmW26JGQgZzq6HNNifm4cYCVNwMPYRO8
     policy:
       capabilities:
         - Permissive
@@ -749,13 +749,17 @@ policies:
             - Key:
                 name: ~
                 key:
-                  Ed25519: rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
+                  Ed25519:
+                    public: rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
+                    secret:
+                      sealed: ~
 keychain:
   admin_keys:
     - key:
         Ed25519:
           public: rcxBT4vC93i4PZzwflbKUzTbvgf96wr4kArteWqwzxA
-          secret: ~
+          secret:
+            sealed: ~
       name: alpha
       description: ~
       revocation: ~

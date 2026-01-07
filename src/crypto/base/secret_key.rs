@@ -3,6 +3,7 @@ use crate::{
     util::ser::{Binary, BinarySecret, BinaryVec, SerdeBinary},
 };
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use private_parts::PrivateData;
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde::{Deserialize, Serialize};
@@ -74,6 +75,7 @@ impl Sealed {
     }
 }
 
+impl PrivateData for Sealed {}
 impl SerdeBinary for Sealed {}
 
 /// A symmetric encryption key nonce

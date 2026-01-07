@@ -656,7 +656,7 @@ mod tests {
             $({
                 let name = stringify!($names);
                 // can you hear me??
-                let seed = format!("{} boofed gently", name);
+                let seed = format!("...I can hear you, {}", name);
                 let mut rng = crate::util::test::rng_seeded(seed.as_bytes());
                 let (master, identity, admin) = crate::util::test::create_fake_identity(&mut rng, now.clone());
                 let mut ik = IdentityKeys::new(master, admin, identity);
@@ -928,8 +928,8 @@ mod tests {
             assert_eq!(
                 named,
                 vec![
-                    vec!["B", "C", "E", "F", "G"],
                     vec!["B", "C", "E", "D", "G"],
+                    vec!["B", "C", "E", "F", "G"],
                     vec!["D", "E", "F", "G"],
                     vec!["D", "B", "C", "E", "F", "G"],
                     vec!["D", "G"],
@@ -1451,8 +1451,8 @@ mod tests {
             assert_eq!(
                 report_vals,
                 vec![
-                    vec![[127, 1, 127, 127, 127], [127, 2, 50, 50, 0]],
                     vec![[127, 1, 75, 75, 75], [75, 2, 100, 59, 9]],
+                    vec![[127, 1, 127, 127, 127], [127, 2, 50, 50, 0]],
                     vec![[127, 1, 50, 50, 50], [50, 2, 75, 29, 0]],
                     vec![[20, 1, 75, 11, 11]],
                 ]

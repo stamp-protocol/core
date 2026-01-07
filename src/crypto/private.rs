@@ -15,13 +15,10 @@ use crate::{
     error::{Error, Result},
     util::ser,
 };
-use private_parts::{Full, MergeError, PrivacyMode, PrivateDataContainer, PrivateParts, Public};
+use private_parts::{AsOption, Full, MergeError, PrivacyMode, PrivateDataContainer, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{
-    types::{
-        fields::{Field, Fields},
-        Class, Constructed, Identifier, Tag,
-    },
+    types::{Identifier, Tag},
     AsnType, Decode, Decoder, Encode, Encoder,
 };
 use serde::{Deserialize, Serialize};
@@ -167,11 +164,7 @@ impl<T> ReEncrypt for Private<Full, T> {
 }
 
 impl<M: PrivacyMode, T> AsnType for Private<M, T> {
-    const TAG: Tag = Tag::SEQUENCE;
-}
-
-impl<M: PrivacyMode, T> Constructed<1, 0> for Private<M, T> {
-    const FIELDS: Fields<1> = Fields::from_static([Field::new_required(0, Sealed::TAG, Sealed::TAG_TREE, "sealed")]);
+    const TAG: Tag = <Option<Sealed> as AsnType>::TAG;
 }
 
 impl<M: PrivacyMode, T> Encode for Private<M, T> {
@@ -182,16 +175,8 @@ impl<M: PrivacyMode, T> Encode for Private<M, T> {
         constraints: rasn::types::constraints::Constraints,
         identifier: rasn::types::Identifier,
     ) -> std::result::Result<(), E::Error> {
-        encoder.encode_sequence::<1, 0, Self, _>(
-            tag,
-            |encoder| {
-                self.sealed
-                    .encode_with_tag_and_constraints(encoder, Tag::new(Class::Context, 0), constraints, identifier)?;
-                Ok(())
-            },
-            identifier,
-        )?;
-        Ok(())
+        let opt: Option<_> = self.sealed.clone().into_option();
+        opt.encode_with_tag_and_constraints(encoder, tag, constraints, identifier)
     }
 }
 
@@ -201,12 +186,12 @@ impl<M: PrivacyMode, T> Decode for Private<M, T> {
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
     ) -> std::result::Result<Self, D::Error> {
-        decoder.decode_sequence(tag, None::<fn() -> Self>, |decoder| {
-            let sealed = M::Private::<Sealed>::decode_with_tag_and_constraints(decoder, Tag::new(Class::Context, 0), constraints)?;
-            Ok(Self {
-                _phantom: PhantomData,
-                sealed,
-            })
+        let opt = Option::<M::Private<_>>::decode_with_tag_and_constraints(decoder, tag, constraints)?;
+        let sealed =
+            M::Private::try_from_option(opt).map_err(|_| rasn::de::Error::no_valid_choice("incorrect option variant", rasn::Codec::Der))?;
+        Ok(Self {
+            _phantom: PhantomData,
+            sealed,
         })
     }
 }
@@ -222,7 +207,7 @@ impl<M: PrivacyMode, T> Clone for Private<M, T> {
 
 /// Stores an HMAC key next to a set of data.
 ///
-/// This is a somewhat ephemeral container user by [`PrivateWithHmac`], mainly used for encryption
+/// This is a somewhat ephemeral container used by [`PrivateWithHmac`], mainly used for encryption
 /// and decryption and then thrown away.
 #[derive(Debug, AsnType, Encode, Decode, Serialize, Deserialize)]
 pub struct DataWithHmacKey<T> {
@@ -349,9 +334,6 @@ pub enum MaybePrivate<M: PrivacyMode, T> {
     /// Secret data, which can only be opened with the corresponding decryption
     /// key, stored alongside an HMAC of the secret data which allows verification
     /// without data leakage.
-    ///
-    /// Make sure to check if this object has data via <MaybePrivate::has_data()>
-    /// before trying to use it.
     #[rasn(tag(explicit(1)))]
     Private(PrivateWithHmac<M, T>),
 }

@@ -1342,14 +1342,14 @@ mod tests {
         let trans1 = TransactionBody::<Full>::AddAdminKeyV1 { admin_key: admin_key1 };
         let ser1_check = ser::serialize(&trans1).unwrap();
         let ser1 = [
-            163, 129, 195, 48, 129, 192, 160, 129, 189, 48, 129, 186, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 226, 90, 17,
-            113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47,
-            92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198,
-            21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203, 142, 148, 84, 206, 16,
-            28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191, 181, 136, 133, 189, 166,
-            11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 41, 12, 39, 98, 101, 101, 110, 32, 119, 97, 116,
-            99, 104, 105, 110, 103, 32, 121, 111, 117, 32, 102, 111, 114, 32, 113, 117, 105, 116, 101, 32, 97, 32, 119, 104, 105, 108, 101,
-            32, 110, 111, 119,
+            163, 129, 192, 48, 129, 189, 160, 129, 186, 48, 129, 183, 160, 129, 128, 160, 126, 48, 124, 160, 34, 4, 32, 226, 90, 17, 113,
+            54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92,
+            109, 161, 86, 48, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198, 21, 38, 252,
+            51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203, 142, 148, 84, 206, 16, 28, 167, 165,
+            178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191, 181, 136, 133, 189, 166, 11, 77, 114,
+            160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 41, 12, 39, 98, 101, 101, 110, 32, 119, 97, 116, 99, 104, 105,
+            110, 103, 32, 121, 111, 117, 32, 102, 111, 114, 32, 113, 117, 105, 116, 101, 32, 97, 32, 119, 104, 105, 108, 101, 32, 110, 111,
+            119,
         ];
         assert_eq!(ser1_check, ser1);
         let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
@@ -1497,10 +1497,10 @@ mod tests {
         );
         let trans1 = TransactionBody::<Full>::AddPolicyV1 { policy: policy1 };
         let ser1 = [
-            165, 93, 48, 91, 160, 89, 48, 87, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169,
-            4, 161, 2, 5, 0, 161, 57, 162, 55, 48, 53, 160, 3, 2, 1, 1, 161, 46, 48, 44, 160, 42, 48, 40, 160, 0, 161, 36, 160, 34, 4, 32,
-            226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172,
-            28, 121, 47, 92, 109,
+            166, 97, 48, 95, 160, 93, 48, 91, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 168, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169,
+            4, 161, 2, 5, 0, 161, 61, 162, 59, 48, 57, 160, 3, 2, 1, 1, 161, 50, 48, 48, 160, 46, 48, 44, 161, 42, 160, 40, 48, 38, 160,
+            34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46,
+            150, 172, 28, 121, 47, 92, 109, 161, 0,
         ];
         let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
 
@@ -1685,17 +1685,17 @@ mod tests {
         let publish_tx_sertxt = publish_tx_pub.serialize_text().unwrap();
         let publish_tx_expected = r#"---
 id:
-  Blake3: C2AJ34Ta8ml8A85BOFnEt1KNTUyH_q5HKKsXnQPeYUM
+  Blake3: nmbluJFKdMX6m4FLbgQracK9ymU2X6aDGXgEueJci7k
 entry:
   created: "2068-12-31T23:59:59.999Z"
   previous_transactions:
-    - Blake3: NXXG_o3nJVT0fkuaFstXGwmxSLduciXAVUmWVH2QfDY
+    - Blake3: SnH9F9D03XhwlsxyPvTibOFVc86aNGepSieUh7D7lh8
   body:
     PublishV1:
       identity:
         transactions:
           - id:
-              Blake3: r7QVieNXDaIkMHfgzAk8CClzc-xpJ68rPbUdvs1zkq4
+              Blake3: NFTxOYhpoN0_ZVD6E54hZXsZJ5yZAZEy3N2HB1aXeMI
             entry:
               created: "2024-01-01T00:00:06Z"
               previous_transactions: []
@@ -1732,13 +1732,13 @@ entry:
                       secret:
                         sealed: ~
                   signature:
-                    Ed25519: KUQjGLnQxZJlZPcsYRBSvfv3RuE-PcLderXST4n_l5ok_nnwjd0lmVcN51kXf3o1aql6Z3_Cgi3S19G5p-25Cg
+                    Ed25519: VEpfVwC-NmmGr9HpTyjOW4SYxbBpJmXPAq8_t47YmmIa5RsamIlCQ9qbFlIAT1YcD1IIEf-OKL7tLCHf3qWFCA
           - id:
-              Blake3: eQ2TeZmqU0QrlAjMJKnxlrmngVabplyH-Fw1sCVAwrM
+              Blake3: dHGUIK_qUwnqA0g_jr7GXdNM8xchCEnF3icR7yrWKMA
             entry:
               created: "2068-12-31T23:59:59.999Z"
               previous_transactions:
-                - Blake3: r7QVieNXDaIkMHfgzAk8CClzc-xpJ68rPbUdvs1zkq4
+                - Blake3: NFTxOYhpoN0_ZVD6E54hZXsZJ5yZAZEy3N2HB1aXeMI
               body:
                 MakeClaimV1:
                   spec:
@@ -1753,13 +1753,13 @@ entry:
                       secret:
                         sealed: ~
                   signature:
-                    Ed25519: bioLfiiXM6heinZ_mdp7FYksdxYKY7RERoqnMFAEx7EZGNJ5bwvMyWj3lrXHWwcy_go-lTHs0BHE4AgzeXCIDg
+                    Ed25519: fF9mKpMRqQgwclPdsf9I0r8Uu2k6oBGSxL5ppAKjehQM0gilhtjPa9Fc-7ebZfWVt2RA-yGMKiZWmbSzXqA8Dg
           - id:
-              Blake3: NXXG_o3nJVT0fkuaFstXGwmxSLduciXAVUmWVH2QfDY
+              Blake3: SnH9F9D03XhwlsxyPvTibOFVc86aNGepSieUh7D7lh8
             entry:
               created: "2068-12-31T23:59:59.999Z"
               previous_transactions:
-                - Blake3: eQ2TeZmqU0QrlAjMJKnxlrmngVabplyH-Fw1sCVAwrM
+                - Blake3: dHGUIK_qUwnqA0g_jr7GXdNM8xchCEnF3icR7yrWKMA
               body:
                 MakeClaimV1:
                   spec:
@@ -1778,7 +1778,7 @@ entry:
                       secret:
                         sealed: ~
                   signature:
-                    Ed25519: mXqXJ_CHiiQCgeypqaR2rQJn0TwduFYvmSTq47Wq-D2WCvqQXauEjH72WhRlXkRG0DGIqhqB6RxQjnGYYmNnDQ
+                    Ed25519: aPyx0OUdOSKRauuVToC-46JO9FWvvzXtxnur0kYtMZiaqM1-UHjUFnc4v9kVWfM0NgxjhDfcJnvKTnOQBqhyAg
 signatures: []
 "#;
         assert_eq!(publish_tx_sertxt, publish_tx_expected);
@@ -1805,17 +1805,17 @@ signatures: []
 
         let publish_tx_tampered = r#"---
 id:
-  Blake3: C2AJ34Ta8ml8A85BOFnEt1KNTUyH_q5HKKsXnQPeYUM
+  Blake3: nmbluJFKdMX6m4FLbgQracK9ymU2X6aDGXgEueJci7k
 entry:
   created: "2068-12-31T23:59:59.999Z"
   previous_transactions:
-    - Blake3: NXXG_o3nJVT0fkuaFstXGwmxSLduciXAVUmWVH2QfDY
+    - Blake3: SnH9F9D03XhwlsxyPvTibOFVc86aNGepSieUh7D7lh8
   body:
     PublishV1:
       identity:
         transactions:
           - id:
-              Blake3: r7QVieNXDaIkMHfgzAk8CClzc-xpJ68rPbUdvs1zkq4
+              Blake3: NFTxOYhpoN0_ZVD6E54hZXsZJ5yZAZEy3N2HB1aXeMI
             entry:
               created: "2024-01-01T00:00:06Z"
               previous_transactions: []
@@ -1852,13 +1852,34 @@ entry:
                       secret:
                         sealed: ~
                   signature:
-                    Ed25519: KUQjGLnQxZJlZPcsYRBSvfv3RuE-PcLderXST4n_l5ok_nnwjd0lmVcN51kXf3o1aql6Z3_Cgi3S19G5p-25Cg
+                    Ed25519: VEpfVwC-NmmGr9HpTyjOW4SYxbBpJmXPAq8_t47YmmIa5RsamIlCQ9qbFlIAT1YcD1IIEf-OKL7tLCHf3qWFCA
           - id:
-              Blake3: NXXG_o3nJVT0fkuaFstXGwmxSLduciXAVUmWVH2QfDY
+              Blake3: dHGUIK_qUwnqA0g_jr7GXdNM8xchCEnF3icR7yrWKMA
             entry:
               created: "2068-12-31T23:59:59.999Z"
               previous_transactions:
-                - Blake3: eQ2TeZmqU0QrlAjMJKnxlrmngVabplyH-Fw1sCVAwrM
+                - Blake3: NFTxOYhpoN0_ZVD6E54hZXsZJ5yZAZEy3N2HB1aXeMI
+              body:
+                MakeClaimV1:
+                  spec:
+                    Name:
+                      Public: Dotty
+                  name: ~
+            signatures:
+              - Key:
+                  key:
+                    Ed25519:
+                      public: BdMMToyKyC_o3mTwqMCjabfw3DgzAiiggD51bKLZBBU
+                      secret:
+                        sealed: ~
+                  signature:
+                    Ed25519: fF9mKpMRqQgwclPdsf9I0r8Uu2k6oBGSxL5ppAKjehQM0gilhtjPa9Fc-7ebZfWVt2RA-yGMKiZWmbSzXqA8Dg
+          - id:
+              Blake3: SnH9F9D03XhwlsxyPvTibOFVc86aNGepSieUh7D7lh8
+            entry:
+              created: "2068-12-31T23:59:59.999Z"
+              previous_transactions:
+                - Blake3: dHGUIK_qUwnqA0g_jr7GXdNM8xchCEnF3icR7yrWKMA
               body:
                 MakeClaimV1:
                   spec:
@@ -1877,7 +1898,7 @@ entry:
                       secret:
                         sealed: ~
                   signature:
-                    Ed25519: mXqXJ_CHiiQCgeypqaR2rQJn0TwduFYvmSTq47Wq-D2WCvqQXauEjH72WhRlXkRG0DGIqhqB6RxQjnGYYmNnDQ
+                    Ed25519: aPyx0OUdOSKRauuVToC-46JO9FWvvzXtxnur0kYtMZiaqM1-UHjUFnc4v9kVWfM0NgxjhDfcJnvKTnOQBqhyAg
 signatures: []
 "#;
         assert!(matches!(Transaction::deserialize_text(publish_tx_tampered), Err(Error::TransactionIDMismatch(_))));
@@ -1912,7 +1933,7 @@ signatures: []
             .unwrap();
 
         let stamp_tx_ser = ser::base64_encode(&stamp_tx.serialize_binary().unwrap());
-        let stamp_tx_ser_expected = r#"MIHeoCIEIKXlsyZKJ1XUqKMVqPV-Hv_QKmcBEKrcHg0zIhA6rufnMIG1oAgCBgLXakL__6EmMCSgIgQgI9hg5mY_krKF8GaH2RYiCESH-ZMbiWhEY5fpVoG6upmigYCrfjB8oHoweKAkoCIEICPYYOZmP5KyhfBmh9kWIghEh_mTG4loRGOX6VaBurqZoSSgIgQguo6yL4V6bNKLVnJhZ6mI7S3D66MOjKUds2U2JQNam5yiJKAiBCBOA3QXoH_Vt1Zv3zEYogr_tqs8DlQ6i6usabU0UjbtYKMEowIFADAA"#;
+        let stamp_tx_ser_expected = r#"MIHeoCIEIEBDHr0yqZGAK1zQS1u1a8hLW9bCDUnUhkFSpBBxu4t0MIG1oAgCBgLXakL__6EmMCSgIgQgt0HAWVY92E0nWJ9gF4UFZpF2F9jCOJucQ4T_zNve4NOigYCrfjB8oHoweKAkoCIEILdBwFlWPdhNJ1ifYBeFBWaRdhfYwjibnEOE_8zb3uDToSSgIgQg_Fg3XH0pkltWhWXaIB0DKH42jeXjNq18stIrUdSeLxCiJKAiBCBp1Plmj9pPZ7AF17hqKw90Mos2b4ig4BUXHAge9CqfZqMEowIFADAA"#;
         assert_eq!(stamp_tx_ser, stamp_tx_ser_expected);
 
         let stamp_tx_des = StampTransaction::deserialize_binary(&ser::base64_decode(stamp_tx_ser).unwrap()).unwrap();
