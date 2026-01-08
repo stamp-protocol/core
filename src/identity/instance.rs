@@ -660,7 +660,7 @@ mod tests {
             .unwrap()
             .make_claim(
                 ClaimID::random(),
-                ClaimSpec::Email(MaybePrivate::new_private(&mut rng, &master_key, "ace@fairweather.com".into()).unwrap()),
+                ClaimSpec::Email(MaybePrivate::new_private_verifiable(&mut rng, &master_key, "ace@fairweather.com".into()).unwrap()),
                 Some("email2".into()),
             )
             .unwrap()

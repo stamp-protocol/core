@@ -1539,7 +1539,7 @@ mod tests {
         ))));
         let claim2 = ClaimSpec::<Full>::Extension {
             key: BinaryVec::from(vec![2, 4, 6, 8]),
-            value: MaybePrivate::<Full, _>::new_private(&mut rng, &master_key, BinaryVec::from(vec![9, 9, 9])).unwrap(),
+            value: MaybePrivate::<Full, _>::new_private_verifiable(&mut rng, &master_key, BinaryVec::from(vec![9, 9, 9])).unwrap(),
         };
         let trans1 = TransactionBody::<Full>::MakeClaimV1 {
             spec: claim1,
@@ -1677,7 +1677,7 @@ mod tests {
         let now = Timestamp::from_str("2068-12-31T23:59:59.999Z").unwrap();
         let identity = sign_and_push! { &master_key, &admin_key, identity.clone(),
             [ make_claim, now.clone(), ClaimSpec::Name(MaybePrivate::new_public("Butch".into())), None::<String> ]
-            [ make_claim, now.clone(), ClaimSpec::Address(MaybePrivate::new_private(&mut rng, &master_key, "1234 Cat Pooop Enjoyer Blvd, Giardiaville, CA".to_string()).unwrap()), None::<String> ]
+            [ make_claim, now.clone(), ClaimSpec::Address(MaybePrivate::new_private_verifiable(&mut rng, &master_key, "1234 Cat Pooop Enjoyer Blvd, Giardiaville, CA".to_string()).unwrap()), None::<String> ]
         };
 
         let publish_tx = identity.publish(&HashAlgo::Blake3, now.clone()).unwrap();
@@ -1914,7 +1914,7 @@ signatures: []
         let now = Timestamp::from_str("2068-12-31T23:59:59.999Z").unwrap();
         let identity_claimer = sign_and_push! { &master_key_claimer, &admin_key_claimer, identity_claimer.clone(),
             [ make_claim, now.clone(), ClaimSpec::Name(MaybePrivate::new_public("Butch".into())), None::<String> ]
-            [ make_claim, now.clone(), ClaimSpec::Address(MaybePrivate::new_private(&mut rng, &master_key_claimer, "1234 Cat Pooop Enjoyer Blvd, Giardiaville, CA".to_string()).unwrap()), None::<String> ]
+            [ make_claim, now.clone(), ClaimSpec::Address(MaybePrivate::new_private_verifiable(&mut rng, &master_key_claimer, "1234 Cat Pooop Enjoyer Blvd, Giardiaville, CA".to_string()).unwrap()), None::<String> ]
         };
         let identity_claimer_instance = identity_claimer.build_identity_instance().unwrap();
 

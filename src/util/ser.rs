@@ -389,8 +389,7 @@ impl<K: Encode, V: Encode> Encode for HashMapAsn1<K, V> {
         identifier: rasn::types::Identifier,
     ) -> std::result::Result<(), E::Error> {
         let entries = self.iter().map(|(k, v)| KeyValEntry::new(k, v)).collect::<Vec<_>>();
-        encoder.encode_sequence_of(tag, &entries[..], constraints, identifier)?;
-        Ok(())
+        entries.encode_with_tag_and_constraints(encoder, tag, constraints, identifier)
     }
 }
 
@@ -400,11 +399,11 @@ impl<K: Decode + Ord, V: Decode> Decode for HashMapAsn1<K, V> {
         tag: Tag,
         constraints: rasn::types::constraints::Constraints,
     ) -> std::result::Result<Self, D::Error> {
-        let vec: Vec<KeyValEntry<K, V>> = decoder.decode_sequence_of(tag, constraints)?;
-        let mut map = BTreeMap::new();
-        for KeyValEntry { key, val } in vec {
-            map.insert(key, val);
-        }
+        let vec = Vec::<KeyValEntry<K, V>>::decode_with_tag_and_constraints(decoder, tag, constraints)?;
+        let map = vec
+            .into_iter()
+            .map(|KeyValEntry { key, val }| (key, val))
+            .collect::<BTreeMap<_, _>>();
         Ok(Self(map))
     }
 }

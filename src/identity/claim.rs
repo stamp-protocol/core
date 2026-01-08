@@ -388,7 +388,7 @@ pub(crate) mod tests {
         ($rng:expr, $claimmaker:expr, $val:expr) => {{
             let master_key = SecretKey::new_xchacha20poly1305($rng).unwrap();
             let val = $val;
-            let maybe_private = MaybePrivate::new_private($rng, &master_key, val.clone()).unwrap();
+            let maybe_private = MaybePrivate::new_private_verifiable($rng, &master_key, val.clone()).unwrap();
             let maybe_public = MaybePrivate::new_public(val.clone());
             let spec_private = $claimmaker(maybe_private, val.clone());
             let spec_public = $claimmaker(maybe_public, val.clone());

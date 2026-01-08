@@ -205,6 +205,13 @@ impl<M: PrivacyMode, T> Clone for Private<M, T> {
     }
 }
 
+impl<M: PrivacyMode, T> PartialEq for Private<M, T> {
+    fn eq(&self, _other: &Self) -> bool {
+        // NEVER
+        false
+    }
+}
+
 /// Stores an HMAC key next to a set of data.
 ///
 /// This is a somewhat ephemeral container used by [`PrivateWithHmac`], mainly used for encryption
@@ -335,7 +342,11 @@ pub enum MaybePrivate<M: PrivacyMode, T> {
     /// key, stored alongside an HMAC of the secret data which allows verification
     /// without data leakage.
     #[rasn(tag(explicit(1)))]
-    Private(PrivateWithHmac<M, T>),
+    PrivateVerifiable(PrivateWithHmac<M, T>),
+    /// Secret data which is wrapped in a [`Sealed`] container. Not verifiable without decrypting.
+    /// but doesn't require storing an HMAC next to it in cases where verification isn't needed.
+    #[rasn(tag(explicit(2)))]
+    Private(Private<M, T>),
 }
 
 impl<T: Clone, M: PrivacyMode> MaybePrivate<M, T> {
@@ -355,15 +366,21 @@ impl<T: Encode + Decode + Clone> MaybePrivate<Full, T> {
     }
 
     /// Create a new private MaybePrivate value.
-    pub fn new_private<R: RngCore + CryptoRng>(rng: &mut R, seal_key: &SecretKey, val: T) -> Result<Self> {
+    pub fn new_private_verifiable<R: RngCore + CryptoRng>(rng: &mut R, seal_key: &SecretKey, val: T) -> Result<Self> {
         let container = PrivateWithHmac::seal(rng, seal_key, val)?;
-        Ok(Self::Private(container))
+        Ok(Self::PrivateVerifiable(container))
+    }
+
+    /// Create a new private MaybePrivate value.
+    pub fn new_private<R: RngCore + CryptoRng>(rng: &mut R, seal_key: &SecretKey, val: T) -> Result<Self> {
+        let private = Private::<Full, T>::seal(rng, seal_key, &val)?;
+        Ok(Self::Private(private))
     }
 
     /// Get the HMAC for this MaybePrivate, if it has one.
     pub fn hmac(&self) -> Option<&Hmac> {
         match self {
-            Self::Private(container) => Some(container.hmac()),
+            Self::PrivateVerifiable(container) => Some(container.hmac()),
             _ => None,
         }
     }
@@ -373,7 +390,11 @@ impl<T: Encode + Decode + Clone> MaybePrivate<Full, T> {
     pub fn open(&self, seal_key: &SecretKey) -> Result<T> {
         match self {
             Self::Public(x) => Ok(x.clone()),
-            Self::Private(container) => container.open_and_verify(seal_key),
+            Self::PrivateVerifiable(container) => container.open_and_verify(seal_key),
+            Self::Private(private) => {
+                let unsealed = seal_key.open(&private.sealed)?;
+                ser::deserialize(&unsealed)
+            }
         }
     }
 
@@ -381,9 +402,13 @@ impl<T: Encode + Decode + Clone> MaybePrivate<Full, T> {
     pub fn into_public(self, seal_key: &SecretKey) -> Result<Self> {
         match self {
             Self::Public(x) => Ok(Self::Public(x)),
-            Self::Private(container) => {
+            Self::PrivateVerifiable(container) => {
                 let unsealed = container.open_and_verify(seal_key)?;
                 Ok(Self::Public(unsealed))
+            }
+            Self::Private(private) => {
+                let unsealed = seal_key.open(&private.sealed)?;
+                Ok(Self::Public(ser::deserialize(&unsealed)?))
             }
         }
     }
@@ -393,9 +418,16 @@ impl<T> ReEncrypt for MaybePrivate<Full, T> {
     fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, previous_seal_key: &SecretKey, new_seal_key: &SecretKey) -> Result<Self> {
         let maybe = match self {
             Self::Public(x) => Self::Public(x),
-            Self::Private(container) => Self::Private(container.reencrypt(rng, previous_seal_key, new_seal_key)?),
+            Self::PrivateVerifiable(container) => Self::PrivateVerifiable(container.reencrypt(rng, previous_seal_key, new_seal_key)?),
+            Self::Private(private) => Self::Private(private.reencrypt(rng, previous_seal_key, new_seal_key)?),
         };
         Ok(maybe)
+    }
+}
+
+impl<T: Clone + AsnType + Encode + Decode> From<T> for MaybePrivate<Full, T> {
+    fn from(value: T) -> Self {
+        MaybePrivate::new_public(value)
     }
 }
 
@@ -441,13 +473,15 @@ mod tests {
         let fake_mac_key = HmacKey::new_blake3(&mut rng).unwrap();
 
         let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
+        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private_verifiable(&mut rng, &seal_key, String::from("omg")).unwrap();
         let maybe2_tampered = match maybe2.clone() {
-            MaybePrivate::Private(PrivateWithHmac { data, .. }) => {
-                MaybePrivate::Private(PrivateWithHmac::new(Hmac::new(&fake_mac_key, String::from("loool").as_bytes()).unwrap(), data))
-            }
+            MaybePrivate::PrivateVerifiable(PrivateWithHmac { data, .. }) => MaybePrivate::PrivateVerifiable(PrivateWithHmac::new(
+                Hmac::new(&fake_mac_key, String::from("loool").as_bytes()).unwrap(),
+                data,
+            )),
             _ => panic!("bad maybeprivate given"),
         };
+        let maybe3: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("zing")).unwrap();
 
         assert_eq!(maybe1.open(&seal_key).unwrap(), String::from("hello"));
         // fake key can open public data, nobody cares
@@ -457,6 +491,9 @@ mod tests {
         assert_eq!(maybe2_tampered.open(&seal_key), Err(Error::CryptoHmacVerificationFailed));
         // fake key cannot open
         assert_eq!(maybe2.open(&fake_key), Err(Error::CryptoOpenFailed));
+
+        assert_eq!(maybe3.open(&seal_key), Ok(String::from("zing")));
+        assert_eq!(maybe3.open(&fake_key), Err(Error::CryptoOpenFailed));
     }
 
     #[test]
@@ -471,8 +508,9 @@ mod tests {
         let fake_mac_key = HmacKey::new_blake3(&mut rng).unwrap();
 
         let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<Public, String> = MaybePrivate::Private(PrivateWithHmac::new(
+        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private_verifiable(&mut rng, &seal_key, String::from("omg")).unwrap();
+        let maybe3: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("wtfwtf")).unwrap();
+        let maybe4: MaybePrivate<Public, String> = MaybePrivate::PrivateVerifiable(PrivateWithHmac::new(
             Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             Private::<Public, DataWithHmacKey<String>>::blank(),
         ));
@@ -480,6 +518,7 @@ mod tests {
         assert_eq!(maybe1.open_public().unwrap(), "hello");
         assert_eq!(maybe2.open_public(), None);
         assert_eq!(maybe3.open_public(), None);
+        assert_eq!(maybe4.open_public(), None);
     }
 
     #[test]
@@ -490,14 +529,17 @@ mod tests {
         assert!(seal_key != fake_key);
 
         let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
+        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private_verifiable(&mut rng, &seal_key, String::from("omg")).unwrap();
+        let maybe3: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("HELP")).unwrap();
 
         assert_eq!(maybe1.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("hello")));
-        // fake key works too because who gives a crap if it's public. grind me
-        // up into little bits and throw me in the river.
+        // fake key works too because who gives a crap if it's public. grind me up
+        // into little pieces and throw me in the river.
         assert_eq!(maybe1.clone().into_public(&fake_key).unwrap(), MaybePrivate::Public(String::from("hello")));
         assert_eq!(maybe2.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("omg")));
         assert_eq!(maybe2.clone().into_public(&fake_key), Err(Error::CryptoOpenFailed));
+        assert_eq!(maybe3.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("HELP")));
+        assert_eq!(maybe3.clone().into_public(&fake_key), Err(Error::CryptoOpenFailed));
     }
 
     #[test]
@@ -507,21 +549,76 @@ mod tests {
         let seal_key2 = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
 
         let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
-        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("omg")).unwrap();
+        let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private_verifiable(&mut rng, &seal_key, String::from("omg")).unwrap();
+        let maybe3: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("LOOOOL")).unwrap();
 
         let maybe1_2 = maybe1.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
         let maybe2_2 = maybe2.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
+        let maybe3_2 = maybe3.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
 
         // should fail, kinda
         assert_eq!(maybe1_2.open(&seal_key), Ok(String::from("hello")));
         assert_eq!(maybe2_2.open(&seal_key), Err(Error::CryptoOpenFailed));
+        assert_eq!(maybe3_2.open(&seal_key), Err(Error::CryptoOpenFailed));
 
         // should work, mostly
         assert_eq!(maybe1_2.open(&seal_key2), Ok(String::from("hello")));
         assert_eq!(maybe2_2.open(&seal_key2), Ok(String::from("omg")));
+        assert_eq!(maybe3_2.open(&seal_key2), Ok(String::from("LOOOOL")));
 
         // make sure the HMAC stays the same, if present
         assert_eq!(maybe1.hmac(), None);
         assert_eq!(maybe1_2.hmac(), None);
+        assert_eq!(maybe3_2.hmac(), None);
+    }
+
+    #[test]
+    fn private_ser() {
+        let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
+        let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+        let myval = String::from("test");
+        let private = Private::seal(&mut rng, &seal_key, &myval).unwrap();
+        let private_pub = private.clone().strip().0;
+        assert_eq!(
+            ser::base64_encode(&ser::serialize(&private).unwrap()),
+            "MDigHKAaBBhY2IluUNgNFIoGEzjuXmX76BZ7VZ_MsDShGAQW6y9hYXAf297OX6oclrwtOGJOFOuuqg",
+        );
+        assert_eq!(ser::base64_encode(&ser::serialize(&private_pub).unwrap()), "");
+    }
+
+    #[test]
+    fn maybe_private_ser() {
+        #[derive(Clone, Debug, AsnType, Encode, Decode)]
+        struct Packet {
+            #[rasn(tag(explicit(0)))]
+            ty: String,
+            #[rasn(tag(explicit(1)))]
+            data: u32,
+        }
+
+        let mut rng = crate::util::test::rng_seeded(b"jimmy don't");
+        let seal_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
+
+        let packet = Packet {
+            ty: "/stamp/net/v1/packet".into(),
+            data: 69,
+        };
+        let ser1 = ser::serialize(&packet).unwrap();
+        let ser2 = ser::serialize(&seal_key.seal(&mut rng, &ser1).unwrap()).unwrap();
+        let ser3 = ser::serialize(&MaybePrivate::<Full, _>::Public(packet.clone())).unwrap();
+        let ser4 = ser::serialize(&MaybePrivate::new_private(&mut rng, &seal_key, packet.clone()).unwrap()).unwrap();
+        let ser5 = ser::serialize(&MaybePrivate::new_private_verifiable(&mut rng, &seal_key, packet.clone()).unwrap()).unwrap();
+
+        assert_eq!(ser::base64_encode(&ser1), "MB2gFgwUL3N0YW1wL25ldC92MS9wYWNrZXShAwIBRQ");
+        assert_eq!(
+            ser::base64_encode(&ser2),
+            "MFGgHKAaBBhY2IluUNgNFIoGEzjuXmX76BZ7VZ_MsDShMQQv1za1Eg9_vjPPTG8VnKn6CO8rweNjF_VAXQOtKnIITr8McBxmC9NtbFhHeUbI9P4",
+        );
+        assert_eq!(ser::base64_encode(&ser3), "oB8wHaAWDBQvc3RhbXAvbmV0L3YxL3BhY2tldKEDAgFF");
+        assert_eq!(
+            ser::base64_encode(&ser4),
+            "olMwUaAcoBoEGIdb1XYvWYqehYT1DQfbmT03ESR0qrnGFaExBC8UPoA1rhFm_zRT34Ma_9qbDAU_wldnTcguiO7P3rqzVZvMqx7xoRbdosU7NxxySw",
+        );
+        assert_eq!(ser::base64_encode(&ser5), "oYGoMIGloCSgIgQgFJlpF1hKHxgk1K4WnVjUFtItn7QXl6JBMwKB_jKDNkahfTB7oBygGgQYLHlQYq5zM4d-0_h990YsagfFsXkZdgVkoVsEWdtFv6e9kq89bwF0_3mRolmy6ym8eBmi_AfxNCJy7G5OCjYfyziRCZaI3GRmdPbEXxMVem0IUryTQsaWrakY6-AgQZ_fZ2WDzUsK0f76wjL7Kim28faJZpqC",);
     }
 }

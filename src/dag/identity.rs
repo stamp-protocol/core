@@ -1515,7 +1515,7 @@ mod tests {
         macro_rules! make_specs {
             ($rng:expr, $master:expr, $claimmaker:expr, $val:expr) => {{
                 let val = $val.clone();
-                let maybe_private = MaybePrivate::new_private($rng, &$master, val.clone()).unwrap();
+                let maybe_private = MaybePrivate::new_private_verifiable($rng, &$master, val.clone()).unwrap();
                 let maybe_public = MaybePrivate::new_public(val.clone());
                 let spec_private = $claimmaker(maybe_private, val.clone());
                 let spec_public = $claimmaker(maybe_public, val.clone());
@@ -2469,7 +2469,7 @@ mod tests {
         let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
         let admin_key2 = AdminKey::new(AdminKeypair::new_ed25519(&mut rng, &master_key).unwrap(), "Second", None);
         let identity = sign_and_push! { &master_key, &admin_key, identity,
-            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private(&mut rng, &master_key, "Hooty McOwl".to_string()).unwrap()), None::<String> ]
+            [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_private_verifiable(&mut rng, &master_key, "Hooty McOwl".to_string()).unwrap()), None::<String> ]
             [ add_admin_key, Timestamp::now(), admin_key2 ]
             [ make_claim, Timestamp::now(), ClaimSpec::Name(MaybePrivate::new_public("dirk-delta".to_string())), Some(String::from("name")) ]
         };
