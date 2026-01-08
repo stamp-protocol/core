@@ -550,4 +550,19 @@ mod tests {
         let transactions1_2: Vec<MultisigPolicySignature> = rasn::der::decode(&ser1[..]).unwrap();
         assert_eq!(transactions1_2.len(), 1);
     }
+
+    #[test]
+    fn ser_hashmapasn1() {
+        {
+            let hashmap = HashMapAsn1::from([("", ""); 0]);
+            assert_eq!(base64_encode(&serialize(&hashmap).unwrap()), "MAA");
+        }
+        {
+            let hashmap = HashMapAsn1::from([("name", "sandra"), ("friends", "0")]);
+            assert_eq!(
+                base64_encode(&serialize(&hashmap).unwrap()),
+                "MCYwEKAJBAdmcmllbmRzoQMEATAwEqAGBARuYW1loQgEBnNhbmRyYQ",
+            );
+        }
+    }
 }
