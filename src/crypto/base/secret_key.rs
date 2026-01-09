@@ -127,31 +127,13 @@ impl SecretKey {
         }
     }
 
-    /// Encrypt a value with a secret key/nonce
+    /// Encrypt a value with a secret key and a random nonce.
     pub fn seal<'a, 'msg, D: Into<DataWithAAD<'msg>>, R: RngCore + CryptoRng>(&'a self, rng: &mut R, data: D) -> Result<Sealed> {
-        match self {
-            SecretKey::XChaCha20Poly1305(ref key) => {
-                let nonce = self.gen_nonce(rng)?;
-                let nonce_bin = match nonce {
-                    SecretKeyNonce::XChaCha20Poly1305(ref bin) => bin.deref(),
-                };
-                let secret: &'a [u8; 32] = key.expose_secret();
-                let cipher = chacha20poly1305::XChaCha20Poly1305::new(secret.into());
-                let data_w_aad = data.into();
-                let DataWithAAD { data, aad } = data_w_aad;
-                let payload = match aad.as_ref() {
-                    Some(aad) => Payload { msg: data, aad },
-                    None => data.into(),
-                };
-                let enc = cipher
-                    .encrypt(chacha20poly1305::XNonce::from_slice(nonce_bin.as_slice()), payload)
-                    .map_err(|_| Error::CryptoSealFailed)?;
-                Ok(Sealed::new(nonce, enc, aad))
-            }
-        }
+        let nonce = self.gen_nonce(rng)?;
+        self.seal_with_nonce(nonce, data)
     }
 
-    /// Encrypt a value with a secret key/nonce
+    /// Encrypt a value with a secret key and pre-determined nonce.
     pub fn seal_with_nonce<'a, 'msg, D: Into<DataWithAAD<'msg>>>(&'a self, nonce: SecretKeyNonce, data: D) -> Result<Sealed> {
         match self {
             SecretKey::XChaCha20Poly1305(ref key) => {
@@ -232,11 +214,29 @@ pub(crate) mod tests {
     fn secretkey_xchacha20poly1305_enc_dec() {
         let mut rng = crate::util::test::rng();
         let key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let val = String::from("get a job");
-        let enc = key.seal(&mut rng, val.as_bytes()).unwrap();
-        let dec_bytes = key.open(&enc).unwrap();
-        let dec = String::from_utf8(dec_bytes).unwrap();
-        assert_eq!(dec, String::from("get a job"));
+
+        {
+            let val = String::from("get a job");
+            let enc = key.seal(&mut rng, val.as_bytes()).unwrap();
+            let dec_bytes = key.open(&enc).unwrap();
+            let dec = String::from_utf8(dec_bytes).unwrap();
+            assert_eq!(dec, String::from("get a job"));
+        }
+
+        // test AAD
+        {
+            let val = String::from("i like football. it is fun.");
+            let aad = Vec::from(b"i like football. i like to run.");
+            let data_aad = DataWithAAD::new(val.as_bytes(), aad);
+            let enc = key.seal(&mut rng, data_aad).unwrap();
+            let dec = String::from_utf8(key.open(&enc).unwrap()).unwrap();
+            assert_eq!(enc.aad, Some(Vec::from(b"i like football. i like to run.").into()));
+            assert_eq!(dec, "i like football. it is fun.");
+
+            let mut enc_tampered = enc.clone();
+            enc_tampered.aad = Some(Vec::from(b"i hate football. i hate to run.").into());
+            assert_eq!(key.open(&enc_tampered), Err(Error::CryptoOpenFailed));
+        }
     }
 
     #[test]
