@@ -1664,10 +1664,32 @@ mod tests {
     fn trans_serde_sign_v1() {
         todo!();
     }
-    #[ignore]
+
     #[test]
     fn trans_serde_ext_v1() {
-        todo!();
+        {
+            let ext = TransactionBody::<Full>::ExtV1 {
+                creator: IdentityID::from(TransactionID::from(Hash::new_blake3(b"yo").unwrap())),
+                ty: None,
+                previous_transactions: vec![TransactionID::from(Hash::new_blake3(b"hi").unwrap())],
+                context: Some([("name", "barry")].into()),
+                payload: BinaryVec::from(Vec::from(b"test")),
+            };
+            assert_eq!(ser::base64_encode(&ser::serialize(&ext).unwrap()), "tW8wbaAkoCIEIMFm-HUKgqGTf2NTJY1zQiAUVEZKdBKIAYYpw8ysvK1boiYwJKAiBCCFBS6aqxtntmItlKCEQbCf1besph7jYEFtcN5dpn2GyqMVMBMwEaAGBARuYW1loQcEBWJhcnJ5pAYEBHRlc3Q");
+        }
+        {
+            let ext = TransactionBody::<Full>::ExtV1 {
+                creator: IdentityID::from(TransactionID::from(Hash::new_blake3(b"yo").unwrap())),
+                ty: None,
+                previous_transactions: vec![],
+                context: Some([("name", "barry"); 0].into()),
+                payload: BinaryVec::from(Vec::new()),
+            };
+            assert_eq!(
+                ser::base64_encode(&ser::serialize(&ext).unwrap()),
+                "tTQwMqAkoCIEIMFm-HUKgqGTf2NTJY1zQiAUVEZKdBKIAYYpw8ysvK1bogIwAKMCMACkAgQA"
+            );
+        }
     }
 
     #[test]
