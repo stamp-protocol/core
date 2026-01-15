@@ -165,7 +165,7 @@ pub enum TransactionBody<M: PrivacyMode> {
         #[rasn(tag(explicit(1)))]
         name: String,
         #[rasn(tag(explicit(2)))]
-        desc: Option<String>,
+        description: Option<String>,
     },
     /// Edit the name/description of a subkey by its unique name.
     #[rasn(tag(explicit(16)))]
@@ -173,9 +173,9 @@ pub enum TransactionBody<M: PrivacyMode> {
         #[rasn(tag(explicit(0)))]
         id: KeyID,
         #[rasn(tag(explicit(1)))]
-        new_name: Option<String>,
+        name: Option<String>,
         #[rasn(tag(explicit(2)))]
-        new_desc: Option<Option<String>>,
+        description: Option<Option<String>>,
     },
     /// Mark a subkey as revoked, allowing old signatures to be validated but
     /// without permitting new signatures to be created.
@@ -305,15 +305,15 @@ impl ReEncrypt for TransactionBody<Full> {
             Self::RevokeStampV1 { stamp_id, reason } => Self::RevokeStampV1 { stamp_id, reason },
             Self::AcceptStampV1 { stamp_transaction } => Self::AcceptStampV1 { stamp_transaction },
             Self::DeleteStampV1 { stamp_id } => Self::DeleteStampV1 { stamp_id },
-            Self::AddSubkeyV1 { key, name, desc } => {
+            Self::AddSubkeyV1 { key, name, description } => {
                 let new_subkey = key.reencrypt(rng, old_master_key, new_master_key)?;
                 Self::AddSubkeyV1 {
                     key: new_subkey,
                     name,
-                    desc,
+                    description,
                 }
             }
-            Self::EditSubkeyV1 { id, new_name, new_desc } => Self::EditSubkeyV1 { id, new_name, new_desc },
+            Self::EditSubkeyV1 { id, name, description } => Self::EditSubkeyV1 { id, name, description },
             Self::RevokeSubkeyV1 { id, reason, new_name } => Self::RevokeSubkeyV1 { id, reason, new_name },
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
             Self::PublishV1 { identity } => Self::PublishV1 { identity },
@@ -468,10 +468,13 @@ impl<M: PrivacyMode> TransactionEntry<M> {
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transaction<M: PrivacyMode> {
     /// This is a hash of the transaction's `entry`
+    #[rasn(tag(explicit(0)))]
     id: TransactionID,
     /// This holds our serialized [`TransactionEntry`]
+    #[rasn(tag(explicit(1)))]
     entry: TransactionEntry<M>,
     /// The signatures on this transaction's ID.
+    #[rasn(tag(explicit(2)))]
     signatures: Vec<MultisigPolicySignature>,
 }
 

@@ -3,7 +3,7 @@
 use crate::{
     crypto::{
         base::{Hash, HashAlgo, KeyID, SecretKey},
-        private::ReEncrypt,
+        private::{PrivateContainer, ReEncrypt},
     },
     dag::{Dag, StampTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID},
     error::{Error, Result},
@@ -27,10 +27,25 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 /// A container that holds a set of transactions.
-#[derive(Debug, Default, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    PrivateParts,
+    AsnType,
+    Encode,
+    Decode,
+    Serialize,
+    Deserialize,
+    getset::Getters,
+    getset::MutGetters,
+    getset::Setters,
+)]
+#[parts(private_data = "PrivateContainer")]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Identity<M: PrivacyMode> {
     /// The actual transactions.
+    #[rasn(tag(explicit(0)))]
     transactions: Vec<Transaction<M>>,
 }
 
@@ -170,12 +185,12 @@ where
                 let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.delete_stamp(&stamp_id)?;
                 Ok(identity_mod)
             }
-            TransactionBody::AddSubkeyV1 { key, name, desc } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.add_subkey(key, name, desc)?;
+            TransactionBody::AddSubkeyV1 { key, name, description } => {
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.add_subkey(key, name, description)?;
                 Ok(identity_mod)
             }
-            TransactionBody::EditSubkeyV1 { id, new_name, new_desc } => {
-                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.edit_subkey(&id, new_name, new_desc)?;
+            TransactionBody::EditSubkeyV1 { id, name, description } => {
+                let identity_mod = identity.ok_or(Error::DagMissingIdentity)?.edit_subkey(&id, name, description)?;
                 Ok(identity_mod)
             }
             TransactionBody::RevokeSubkeyV1 { id, reason, new_name } => {
@@ -594,7 +609,14 @@ impl Identity<Full> {
     }
 
     /// Add a new subkey to our keychain.
-    pub fn add_subkey<T, S>(&self, hash_with: &HashAlgo, now: T, key: Key<Full>, name: S, desc: Option<S>) -> Result<Transaction<Full>>
+    pub fn add_subkey<T, S>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        key: Key<Full>,
+        name: S,
+        description: Option<S>,
+    ) -> Result<Transaction<Full>>
     where
         T: Into<Timestamp> + Clone,
         S: Into<String>,
@@ -602,7 +624,7 @@ impl Identity<Full> {
         let body = TransactionBody::AddSubkeyV1 {
             key,
             name: name.into(),
-            desc: desc.map(|x| x.into()),
+            description: description.map(|x| x.into()),
         };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -613,8 +635,8 @@ impl Identity<Full> {
         hash_with: &HashAlgo,
         now: T,
         id: KeyID,
-        new_name: Option<S>,
-        new_desc: Option<Option<S>>,
+        name: Option<S>,
+        description: Option<Option<S>>,
     ) -> Result<Transaction<Full>>
     where
         T: Into<Timestamp> + Clone,
@@ -622,8 +644,8 @@ impl Identity<Full> {
     {
         let body = TransactionBody::EditSubkeyV1 {
             id,
-            new_name: new_name.map(|x| x.into()),
-            new_desc: new_desc.map(|x| x.map(|y| y.into())),
+            name: name.map(|x| x.into()),
+            description: description.map(|x| x.map(|y| y.into())),
         };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -705,14 +727,6 @@ impl Identity<Full> {
             payload,
         };
         self.prepare_transaction(hash_with, now, body)
-    }
-}
-
-impl From<Identity<Full>> for Identity<Public> {
-    fn from(value: Identity<Full>) -> Self {
-        let Identity::<Full> { transactions } = value;
-        let tx_pub = transactions.into_iter().map(|t| t.strip().0).collect::<Vec<_>>();
-        Self { transactions: tx_pub }
     }
 }
 
