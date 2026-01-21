@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 
 /// A wrapper around some encrypted message data, allowing us to provide easy
 /// serialization/deserialization methods.
+///
+/// TODO: rebuild this type. it should NOT use `SignedObject`
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Message {

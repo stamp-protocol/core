@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 /// A signature or object containing a signature that lists the identity and key
 /// that created the signature.
+// TODO: remove this useless type.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct SignedObject<T> {
