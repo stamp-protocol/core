@@ -343,10 +343,6 @@ pub enum MaybePrivate<M: PrivacyMode, T> {
     /// without data leakage.
     #[rasn(tag(explicit(1)))]
     PrivateVerifiable(PrivateWithHmac<M, T>),
-    /// Secret data which is wrapped in a [`Sealed`] container. Not verifiable without decrypting.
-    /// but doesn't require storing an HMAC next to it in cases where verification isn't needed.
-    #[rasn(tag(explicit(2)))]
-    Private(Private<M, T>),
 }
 
 impl<T: Clone, M: PrivacyMode> MaybePrivate<M, T> {
@@ -371,12 +367,6 @@ impl<T: Encode + Decode + Clone> MaybePrivate<Full, T> {
         Ok(Self::PrivateVerifiable(container))
     }
 
-    /// Create a new private MaybePrivate value.
-    pub fn new_private<R: RngCore + CryptoRng>(rng: &mut R, seal_key: &SecretKey, val: T) -> Result<Self> {
-        let private = Private::<Full, T>::seal(rng, seal_key, &val)?;
-        Ok(Self::Private(private))
-    }
-
     /// Get the HMAC for this MaybePrivate, if it has one.
     pub fn hmac(&self) -> Option<&Hmac> {
         match self {
@@ -391,10 +381,6 @@ impl<T: Encode + Decode + Clone> MaybePrivate<Full, T> {
         match self {
             Self::Public(x) => Ok(x.clone()),
             Self::PrivateVerifiable(container) => container.open_and_verify(seal_key),
-            Self::Private(private) => {
-                let unsealed = seal_key.open(&private.sealed)?;
-                ser::deserialize(&unsealed)
-            }
         }
     }
 
@@ -406,10 +392,6 @@ impl<T: Encode + Decode + Clone> MaybePrivate<Full, T> {
                 let unsealed = container.open_and_verify(seal_key)?;
                 Ok(Self::Public(unsealed))
             }
-            Self::Private(private) => {
-                let unsealed = seal_key.open(&private.sealed)?;
-                Ok(Self::Public(ser::deserialize(&unsealed)?))
-            }
         }
     }
 }
@@ -419,7 +401,6 @@ impl<T> ReEncrypt for MaybePrivate<Full, T> {
         let maybe = match self {
             Self::Public(x) => Self::Public(x),
             Self::PrivateVerifiable(container) => Self::PrivateVerifiable(container.reencrypt(rng, previous_seal_key, new_seal_key)?),
-            Self::Private(private) => Self::Private(private.reencrypt(rng, previous_seal_key, new_seal_key)?),
         };
         Ok(maybe)
     }
@@ -481,7 +462,6 @@ mod tests {
             )),
             _ => panic!("bad maybeprivate given"),
         };
-        let maybe3: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("zing")).unwrap();
 
         assert_eq!(maybe1.open(&seal_key).unwrap(), String::from("hello"));
         // fake key can open public data, nobody cares
@@ -491,9 +471,6 @@ mod tests {
         assert_eq!(maybe2_tampered.open(&seal_key), Err(Error::CryptoHmacVerificationFailed));
         // fake key cannot open
         assert_eq!(maybe2.open(&fake_key), Err(Error::CryptoOpenFailed));
-
-        assert_eq!(maybe3.open(&seal_key), Ok(String::from("zing")));
-        assert_eq!(maybe3.open(&fake_key), Err(Error::CryptoOpenFailed));
     }
 
     #[test]
@@ -509,7 +486,6 @@ mod tests {
 
         let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private_verifiable(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("wtfwtf")).unwrap();
         let maybe4: MaybePrivate<Public, String> = MaybePrivate::PrivateVerifiable(PrivateWithHmac::new(
             Hmac::new(&fake_mac_key, Vec::new().as_slice()).unwrap(),
             Private::<Public, DataWithHmacKey<String>>::blank(),
@@ -517,7 +493,6 @@ mod tests {
 
         assert_eq!(maybe1.open_public().unwrap(), "hello");
         assert_eq!(maybe2.open_public(), None);
-        assert_eq!(maybe3.open_public(), None);
         assert_eq!(maybe4.open_public(), None);
     }
 
@@ -530,7 +505,6 @@ mod tests {
 
         let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private_verifiable(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("HELP")).unwrap();
 
         assert_eq!(maybe1.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("hello")));
         // fake key works too because who gives a crap if it's public. grind me up
@@ -538,8 +512,6 @@ mod tests {
         assert_eq!(maybe1.clone().into_public(&fake_key).unwrap(), MaybePrivate::Public(String::from("hello")));
         assert_eq!(maybe2.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("omg")));
         assert_eq!(maybe2.clone().into_public(&fake_key), Err(Error::CryptoOpenFailed));
-        assert_eq!(maybe3.clone().into_public(&seal_key).unwrap(), MaybePrivate::Public(String::from("HELP")));
-        assert_eq!(maybe3.clone().into_public(&fake_key), Err(Error::CryptoOpenFailed));
     }
 
     #[test]
@@ -550,26 +522,21 @@ mod tests {
 
         let maybe1: MaybePrivate<Full, String> = MaybePrivate::Public(String::from("hello"));
         let maybe2: MaybePrivate<Full, String> = MaybePrivate::new_private_verifiable(&mut rng, &seal_key, String::from("omg")).unwrap();
-        let maybe3: MaybePrivate<Full, String> = MaybePrivate::new_private(&mut rng, &seal_key, String::from("LOOOOL")).unwrap();
 
         let maybe1_2 = maybe1.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
         let maybe2_2 = maybe2.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
-        let maybe3_2 = maybe3.clone().reencrypt(&mut rng, &seal_key, &seal_key2).unwrap();
 
         // should fail, kinda
         assert_eq!(maybe1_2.open(&seal_key), Ok(String::from("hello")));
         assert_eq!(maybe2_2.open(&seal_key), Err(Error::CryptoOpenFailed));
-        assert_eq!(maybe3_2.open(&seal_key), Err(Error::CryptoOpenFailed));
 
         // should work, mostly
         assert_eq!(maybe1_2.open(&seal_key2), Ok(String::from("hello")));
         assert_eq!(maybe2_2.open(&seal_key2), Ok(String::from("omg")));
-        assert_eq!(maybe3_2.open(&seal_key2), Ok(String::from("LOOOOL")));
 
         // make sure the HMAC stays the same, if present
         assert_eq!(maybe1.hmac(), None);
         assert_eq!(maybe1_2.hmac(), None);
-        assert_eq!(maybe3_2.hmac(), None);
     }
 
     #[test]
@@ -606,7 +573,6 @@ mod tests {
         let ser1 = ser::serialize(&packet).unwrap();
         let ser2 = ser::serialize(&seal_key.seal(&mut rng, &ser1).unwrap()).unwrap();
         let ser3 = ser::serialize(&MaybePrivate::<Full, _>::Public(packet.clone())).unwrap();
-        let ser4 = ser::serialize(&MaybePrivate::new_private(&mut rng, &seal_key, packet.clone()).unwrap()).unwrap();
         let ser5 = ser::serialize(&MaybePrivate::new_private_verifiable(&mut rng, &seal_key, packet.clone()).unwrap()).unwrap();
 
         assert_eq!(ser::base64_encode(&ser1), "MB2gFgwUL3N0YW1wL25ldC92MS9wYWNrZXShAwIBRQ");
@@ -615,10 +581,6 @@ mod tests {
             "MFGgHKAaBBhY2IluUNgNFIoGEzjuXmX76BZ7VZ_MsDShMQQv1za1Eg9_vjPPTG8VnKn6CO8rweNjF_VAXQOtKnIITr8McBxmC9NtbFhHeUbI9P4",
         );
         assert_eq!(ser::base64_encode(&ser3), "oB8wHaAWDBQvc3RhbXAvbmV0L3YxL3BhY2tldKEDAgFF");
-        assert_eq!(
-            ser::base64_encode(&ser4),
-            "olMwUaAcoBoEGIdb1XYvWYqehYT1DQfbmT03ESR0qrnGFaExBC8UPoA1rhFm_zRT34Ma_9qbDAU_wldnTcguiO7P3rqzVZvMqx7xoRbdosU7NxxySw",
-        );
-        assert_eq!(ser::base64_encode(&ser5), "oYGoMIGloCSgIgQgFJlpF1hKHxgk1K4WnVjUFtItn7QXl6JBMwKB_jKDNkahfTB7oBygGgQYLHlQYq5zM4d-0_h990YsagfFsXkZdgVkoVsEWdtFv6e9kq89bwF0_3mRolmy6ym8eBmi_AfxNCJy7G5OCjYfyziRCZaI3GRmdPbEXxMVem0IUryTQsaWrakY6-AgQZ_fZ2WDzUsK0f76wjL7Kim28faJZpqC",);
+        assert_eq!(ser::base64_encode(&ser5), "oYGoMIGloCSgIgQguNuj9liIkKJm9a-6rncQbgbZNo7bX0SXM4N7xHcPF-yhfTB7oBygGgQYj_glWiuNDErFqchb28_mNau7plBBhvwzoVsEWdGjKb1LHpehyZXQ2XeWLQ3t3s5VMSncIpWzgpms3ocQdpKJNlc86kZYt1fxYHXT6Q7Q86EqFgCQQUY9TMMmSsJ25F4w9Z-UbDNyIQAHx0pCBWVYqkMuqvq4");
     }
 }

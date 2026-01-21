@@ -22,7 +22,7 @@ use crate::{
 use getset;
 use private_parts::{Full, PrivacyMode, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Decode, Decoder, Encode};
+use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
