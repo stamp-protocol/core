@@ -351,6 +351,12 @@ impl<K, V> KeyValEntry<K, V> {
 #[derive(Clone, Debug)]
 pub struct HashMapAsn1<K, V>(BTreeMap<K, V>);
 
+impl<K, V> Default for HashMapAsn1<K, V> {
+    fn default() -> Self {
+        Self(BTreeMap::new())
+    }
+}
+
 impl<K, V> Deref for HashMapAsn1<K, V> {
     type Target = BTreeMap<K, V>;
     fn deref(&self) -> &Self::Target {
@@ -418,6 +424,16 @@ impl<'de, K: Deserialize<'de> + Ord, V: Deserialize<'de>> serde::Deserialize<'de
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
         let map = BTreeMap::<K, V>::deserialize(deserializer)?;
         Ok(Self(map))
+    }
+}
+
+impl<const A: usize, const B: usize, const N: usize> From<[(&[u8; A], &[u8; B]); N]> for HashMapAsn1<BinaryVec, BinaryVec> {
+    fn from(map: [(&[u8; A], &[u8; B]); N]) -> Self {
+        let mut hash = BTreeMap::new();
+        for (key, val) in map.into_iter() {
+            hash.insert(BinaryVec::from(Vec::from(key)), BinaryVec::from(Vec::from(val)));
+        }
+        Self(hash)
     }
 }
 
