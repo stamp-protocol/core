@@ -28,11 +28,172 @@ use crate::{
 use getset;
 use private_parts::{Full, PrivacyMode, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
+use rasn::{
+    types::{
+        fields::{Field, Fields},
+        Constructed, Tag,
+    },
+    AsnType, Decode, Decoder, Encode, Encoder,
+};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::hash::{Hash as StdHash, Hasher};
 use std::ops::{Deref, DerefMut};
+
+/// A type that exists just for serializing [`Ext`] efficiently
+#[derive(Debug, Clone, Encode, Decode)]
+struct ExtSer<'a> {
+    #[rasn(tag(explicit(0)))]
+    creator: Cow<'a, IdentityID>,
+    #[rasn(tag(explicit(1)))]
+    ty: Option<Cow<'a, BinaryVec>>,
+    #[rasn(tag(explicit(2)))]
+    previous_transactions: Option<Cow<'a, Vec<TransactionID>>>,
+    #[rasn(tag(explicit(3)))]
+    context: Option<Cow<'a, HashMapAsn1<BinaryVec, BinaryVec>>>,
+    #[rasn(tag(explicit(4)))]
+    payload: Option<Cow<'a, BinaryVec>>,
+}
+
+impl<'a> AsnType for ExtSer<'a> {
+    const TAG: Tag = Tag::SEQUENCE;
+}
+
+impl<'a> Constructed<5, 0> for ExtSer<'a> {
+    const FIELDS: Fields<5> = Fields::from_static([
+        Field::new_required_type::<Cow<'a, IdentityID>>(0, "creator"),
+        Field::new_optional_type::<Cow<'a, BinaryVec>>(1, "ty"),
+        Field::new_optional_type::<Cow<'a, Vec<TransactionID>>>(2, "previous_transaction"),
+        Field::new_optional_type::<Cow<'a, HashMapAsn1<BinaryVec, BinaryVec>>>(3, "context"),
+        Field::new_optional_type::<Cow<'a, BinaryVec>>(4, "payload"),
+    ]);
+}
+
+/// A type that holds the fields for "external" transactions, ie custom transactions that can be
+/// used in other systems but still adhere to the rules of the Stamp protocol. For more into, see
+/// [`TransactionBody::ExtV1`].
+#[derive(Debug, Clone, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct Ext {
+    /// The identity that created this transaction
+    creator: IdentityID,
+    /// The optional transaction type. Can be used to segment different transactions
+    /// from each other in mixed networks.
+    ty: Option<BinaryVec>,
+    /// Tells us which *external* transaction(s) came before. This is distinct from
+    /// [`TransactionEntry.previous_transactions`][TransactionEntry], which for external
+    /// transactions stores the previous transaction IDs *of the identity that issued the
+    /// external transaction*, whereas this field allows listing previous transactions
+    /// for the external transactions.
+    ///
+    /// The distinction is important: keeping `TransactionEntry.previous_transactions`
+    /// scoped to the identity means that external transactions can be verified against
+    /// an identity at a point-in-time.
+    previous_transactions: Vec<TransactionID>,
+    /// The context allows setting arbitrary, binary key-value pairs in this transaction
+    /// which can be used for policy matching, routing in p2p networks, etc.
+    context: HashMapAsn1<BinaryVec, BinaryVec>,
+    /// The actual transaction body, serialized however you like.
+    payload: BinaryVec,
+}
+
+impl Ext {
+    /// Create a new `Ext` from *scratch* (!!) using basic household items!!1
+    pub fn new(
+        creator: IdentityID,
+        ty: Option<BinaryVec>,
+        previous_transactions: Vec<TransactionID>,
+        context: HashMapAsn1<BinaryVec, BinaryVec>,
+        payload: BinaryVec,
+    ) -> Self {
+        Self {
+            creator,
+            ty,
+            previous_transactions,
+            context,
+            payload,
+        }
+    }
+}
+
+impl<'a> From<ExtSer<'a>> for Ext {
+    fn from(value: ExtSer<'a>) -> Self {
+        let ExtSer {
+            creator,
+            ty,
+            previous_transactions,
+            context,
+            payload,
+        } = value;
+        let previous_transactions = previous_transactions.map(|x| x.into_owned()).unwrap_or_else(|| Vec::new());
+        let context = context.map(|x| x.into_owned()).unwrap_or_else(|| HashMapAsn1::default());
+        let payload = payload.map(|x| x.into_owned()).unwrap_or_else(|| BinaryVec::from(Vec::new()));
+        Self {
+            creator: creator.into_owned(),
+            ty: ty.map(|x| x.into_owned()),
+            previous_transactions,
+            context,
+            payload,
+        }
+    }
+}
+
+impl<'a> From<&'a Ext> for ExtSer<'a> {
+    fn from(value: &'a Ext) -> Self {
+        let ty = value.ty().as_ref().map(Cow::Borrowed);
+        let previous_transactions = if value.previous_transactions().is_empty() {
+            None
+        } else {
+            Some(Cow::Borrowed(value.previous_transactions()))
+        };
+        let context = if value.context().is_empty() {
+            None
+        } else {
+            Some(Cow::Borrowed(value.context()))
+        };
+        let payload = if value.payload().is_empty() {
+            None
+        } else {
+            Some(Cow::Borrowed(value.payload()))
+        };
+        Self {
+            creator: Cow::Borrowed(value.creator()),
+            ty,
+            previous_transactions,
+            context,
+            payload,
+        }
+    }
+}
+
+impl AsnType for Ext {
+    const TAG: Tag = ExtSer::TAG;
+}
+
+impl Encode for Ext {
+    fn encode_with_tag_and_constraints<'encoder, E: Encoder<'encoder>>(
+        &self,
+        encoder: &mut E,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+        identifier: rasn::types::Identifier,
+    ) -> std::result::Result<(), E::Error> {
+        let ser = ExtSer::from(self);
+        ser.encode_with_tag_and_constraints(encoder, tag, constraints, identifier)
+    }
+}
+
+impl Decode for Ext {
+    fn decode_with_tag_and_constraints<D: Decoder>(
+        decoder: &mut D,
+        tag: Tag,
+        constraints: rasn::types::constraints::Constraints,
+    ) -> std::result::Result<Self, D::Error> {
+        let ser = ExtSer::decode_with_tag_and_constraints(decoder, tag, constraints)?;
+        Ok(Self::from(ser))
+    }
+}
 
 /// This is all of the possible transactions that can be performed on an
 /// identity, including the data they require.
@@ -231,33 +392,7 @@ pub enum TransactionBody<M: PrivacyMode> {
     /// Note that `Ext` transactions cannot be applied to the identity...Stamp allows
     /// their creation but provides no methods for executing them.
     #[rasn(tag(explicit(21)))]
-    ExtV1 {
-        /// The identity that created this transaction
-        #[rasn(tag(explicit(0)))]
-        creator: IdentityID,
-        /// The optional transaction type. Can be used to segment different transactions
-        /// from each other in mixed networks.
-        #[rasn(tag(explicit(1)))]
-        ty: Option<BinaryVec>,
-        /// Tells us which *external* transaction(s) came before. This is distinct from
-        /// [`TransactionEntry.previous_transactions`][TransactionEntry], which for external
-        /// transactions stores the previous transaction IDs *of the identity that issued the
-        /// external transaction*, whereas this field allows listing previous transactions
-        /// for the external transactions.
-        ///
-        /// The distinction is important: keeping `TransactionEntry.previous_transactions`
-        /// scoped to the identity means that external transactions can be verified against
-        /// an identity at a point-in-time.
-        #[rasn(tag(explicit(2)))]
-        previous_transactions: Vec<TransactionID>,
-        /// The context allows setting arbitrary, binary key-value pairs in this transaction
-        /// which can be used for policy matching, routing in p2p networks, etc.
-        #[rasn(tag(explicit(3)))]
-        context: Option<HashMapAsn1<BinaryVec, BinaryVec>>,
-        /// The actual transaction body, serialized however you like.
-        #[rasn(tag(explicit(4)))]
-        payload: BinaryVec,
-    },
+    ExtV1(Ext),
 }
 
 impl ReEncrypt for TransactionBody<Full> {
@@ -318,19 +453,7 @@ impl ReEncrypt for TransactionBody<Full> {
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
             Self::PublishV1 { identity } => Self::PublishV1 { identity },
             Self::SignV1 { creator, body_hash } => Self::SignV1 { creator, body_hash },
-            Self::ExtV1 {
-                creator,
-                ty,
-                previous_transactions,
-                context,
-                payload,
-            } => Self::ExtV1 {
-                creator,
-                ty,
-                previous_transactions,
-                context,
-                payload,
-            },
+            Self::ExtV1(ext) => Self::ExtV1(ext),
         };
         Ok(new_self)
     }
@@ -695,11 +818,8 @@ where
 
     fn try_mod_ext_previous_transaction(&mut self, new_ext_previous_transactions: Vec<Self::ID>) -> Result<()> {
         match self.entry_mut().body_mut() {
-            TransactionBody::ExtV1 {
-                ref mut previous_transactions,
-                ..
-            } => {
-                *previous_transactions = new_ext_previous_transactions;
+            TransactionBody::ExtV1(ref mut ext) => {
+                ext.set_previous_transactions(new_ext_previous_transactions);
                 Ok(())
             }
             _ => Err(Error::TransactionMismatch),
@@ -938,44 +1058,9 @@ pub struct ExtTransaction(Transaction<Public>);
 define_wrapper_tx!(ExtTransaction, TransactionBody::ExtV1);
 
 impl ExtTransaction {
-    /// If this is an Ext transaction, grab the `creator` field.
-    pub fn get_creator(&self) -> Result<&IdentityID> {
+    pub fn get_ext(&self) -> Result<&Ext> {
         match self.entry().body() {
-            TransactionBody::ExtV1 { ref creator, .. } => Ok(creator),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `ty` field.
-    pub fn get_ty(&self) -> Result<&Option<BinaryVec>> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref ty, .. } => Ok(ty),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `previous_transactions` field.
-    pub fn get_previous_transactions(&self) -> Result<&Vec<TransactionID>> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 {
-                ref previous_transactions, ..
-            } => Ok(previous_transactions),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `context` field.
-    pub fn get_context(&self) -> Result<&Option<HashMapAsn1<BinaryVec, BinaryVec>>> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref context, .. } => Ok(context),
-            _ => Err(Error::TransactionMismatch),
-        }
-    }
-
-    /// If this is an Ext transaction, grab the `payload` field.
-    pub fn get_payload(&self) -> Result<&BinaryVec> {
-        match self.entry().body() {
-            TransactionBody::ExtV1 { ref payload, .. } => Ok(payload),
+            TransactionBody::ExtV1(ref ext) => Ok(ext),
             _ => Err(Error::TransactionMismatch),
         }
     }
@@ -997,13 +1082,13 @@ mod tests {
 
     #[test]
     fn trans_create_raw() {
-        let body = TransactionBody::<Full>::ExtV1 {
-            creator: IdentityID::from(TransactionID::from(Hash::new_blake3(b"owwww my head").unwrap())),
-            ty: Some(Vec::from(b"/stamp/test/raw").into()),
-            previous_transactions: vec![TransactionID::from(Hash::new_blake3(b"i like your hat").unwrap())],
-            context: Some([("create", "raw")].into()),
-            payload: Vec::from(b"who's this...Steve?").into(),
-        };
+        let body = TransactionBody::<Full>::ExtV1(Ext::new(
+            IdentityID::from(TransactionID::from(Hash::new_blake3(b"owwww my head").unwrap())),
+            Some(Vec::from(b"/stamp/test/raw").into()),
+            vec![TransactionID::from(Hash::new_blake3(b"i like your hat").unwrap())],
+            [("create", "raw")].into(),
+            Vec::from(b"who's this...Steve?").into(),
+        ));
         let trans1 = Transaction::<Full>::create_raw(
             &HashAlgo::Blake3,
             crate::util::Timestamp::from_str("2028-09-30T06:34:22Z").unwrap(),
@@ -1181,29 +1266,10 @@ mod tests {
             admin_keys: vec![admin_key1.clone(), admin_key2.clone()],
             policies: vec![policy1, policy2],
         };
-        let ser_check = ser::serialize(&trans).unwrap();
-        let ser = [
-            160, 130, 1, 228, 48, 130, 1, 224, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160,
-            34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46,
-            150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17,
-            36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203,
-            142, 148, 84, 206, 16, 28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191,
-            181, 136, 133, 189, 166, 11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108,
-            108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 151, 40, 118, 117,
-            50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88,
-            161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 126, 211, 248, 125, 247, 70, 44, 106, 7, 197, 177, 121, 25, 118, 5, 100, 96,
-            210, 7, 49, 214, 133, 140, 43, 161, 52, 4, 50, 50, 61, 176, 253, 193, 203, 151, 105, 21, 18, 9, 43, 235, 225, 118, 44, 149,
-            110, 145, 115, 98, 235, 65, 219, 156, 13, 170, 216, 244, 198, 121, 156, 250, 36, 176, 190, 92, 116, 212, 140, 193, 73, 68, 13,
-            184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 157, 48, 129, 154, 48,
-            65, 160, 6, 48, 4, 160, 2, 5, 0, 161, 55, 162, 53, 48, 51, 160, 3, 2, 1, 1, 161, 44, 48, 42, 160, 40, 48, 38, 161, 36, 160, 34,
-            4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150,
-            172, 28, 121, 47, 92, 109, 48, 85, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169,
-            4, 161, 2, 5, 0, 161, 55, 162, 53, 48, 51, 160, 3, 2, 1, 1, 161, 44, 48, 42, 160, 40, 48, 38, 161, 36, 160, 34, 4, 32, 151, 40,
-            118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11,
-            177, 81, 88,
-        ];
-        assert_eq!(ser_check, ser);
-        let trans_deser: TransactionBody<Full> = ser::deserialize(&ser).unwrap();
+        let ser_check = ser::base64_encode(&ser::serialize(&trans).unwrap());
+        let ser_expected = "oIIB6jCCAeagggE2MIIBMjCBm6CBgKB-MHygIgQg4loRcTZf5eL0Y-p7h-hj1tXjIX8Y-YnyLpasHHkvXG2hVjBUoBygGgQYhYT1DQfbmT03ESR0qrnGFSb8M0TCQRDkoTQEMvqNpjiXHb4Zi8uOlFTOEBynpbJdJVMMHn7cIGV7NAHfjLGw4ga_tYiFvaYLTXKg7_C2oQcMBWFscGhhog0MC2hlbGxvIHRoZXJlMIGRoIGAoH4wfKAiBCCXKHZ1MpTVGlCB_NV0XsZEIqsTLGO56ImQ0VKDC7FRWKFWMFSgHKAaBBh-0_h990YsagfFsXkZdgVkYNIHMdaFjCuhNAQyMj2w_cHLl2kVEgkr6-F2LJVukXNi60HbnA2q2PTGeZz6JLC-XHTUjMFJRA24Z-m5R4qhDAwKbmFtZS1jbGFpbaGBqTCBpjBHoAYwBKACBQChPaI7MDmgAwIBAaEyMDCgLjAsoSqgKDAmoCIEIOJaEXE2X-Xi9GPqe4foY9bV4yF_GPmJ8i6WrBx5L1xtoQAwW6AaMBihFjAUoAYwBKgCBQChCqAIMAapBKECBQChPaI7MDmgAwIBAaEyMDCgLjAsoSqgKDAmoCIEIJcodnUylNUaUIH81XRexkQiqxMsY7noiZDRUoMLsVFYoQA";
+        assert_eq!(ser_check, ser_expected);
+        let trans_deser: TransactionBody<Full> = ser::deserialize(&ser::base64_decode(&ser_expected).unwrap()).unwrap();
 
         match (trans, trans_deser) {
             (
@@ -1266,33 +1332,14 @@ mod tests {
             admin_keys: None,
             policies: None,
         };
-        let ser1_check = ser::serialize(&trans1).unwrap();
-        let ser2_check = ser::serialize(&trans2).unwrap();
-        let ser1 = [
-            161, 130, 1, 228, 48, 130, 1, 224, 160, 130, 1, 60, 48, 130, 1, 56, 48, 129, 158, 160, 129, 131, 160, 129, 128, 48, 126, 160,
-            34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46,
-            150, 172, 28, 121, 47, 92, 109, 161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 133, 132, 245, 13, 7, 219, 153, 61, 55, 17,
-            36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 52, 4, 50, 250, 141, 166, 56, 151, 29, 190, 25, 139, 203,
-            142, 148, 84, 206, 16, 28, 167, 165, 178, 93, 37, 83, 12, 30, 126, 220, 32, 101, 123, 52, 1, 223, 140, 177, 176, 226, 6, 191,
-            181, 136, 133, 189, 166, 11, 77, 114, 160, 239, 240, 182, 161, 7, 12, 5, 97, 108, 112, 104, 97, 162, 13, 12, 11, 104, 101, 108,
-            108, 111, 32, 116, 104, 101, 114, 101, 48, 129, 148, 160, 129, 131, 160, 129, 128, 48, 126, 160, 34, 4, 32, 151, 40, 118, 117,
-            50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11, 177, 81, 88,
-            161, 88, 48, 86, 160, 84, 160, 28, 160, 26, 4, 24, 126, 211, 248, 125, 247, 70, 44, 106, 7, 197, 177, 121, 25, 118, 5, 100, 96,
-            210, 7, 49, 214, 133, 140, 43, 161, 52, 4, 50, 50, 61, 176, 253, 193, 203, 151, 105, 21, 18, 9, 43, 235, 225, 118, 44, 149,
-            110, 145, 115, 98, 235, 65, 219, 156, 13, 170, 216, 244, 198, 121, 156, 250, 36, 176, 190, 92, 116, 212, 140, 193, 73, 68, 13,
-            184, 103, 233, 185, 71, 138, 161, 12, 12, 10, 110, 97, 109, 101, 45, 99, 108, 97, 105, 109, 161, 129, 157, 48, 129, 154, 48,
-            65, 160, 6, 48, 4, 160, 2, 5, 0, 161, 55, 162, 53, 48, 51, 160, 3, 2, 1, 1, 161, 44, 48, 42, 160, 40, 48, 38, 161, 36, 160, 34,
-            4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214, 213, 227, 33, 127, 24, 249, 137, 242, 46, 150,
-            172, 28, 121, 47, 92, 109, 48, 85, 160, 26, 48, 24, 161, 22, 48, 20, 160, 6, 48, 4, 167, 2, 5, 0, 161, 10, 160, 8, 48, 6, 169,
-            4, 161, 2, 5, 0, 161, 55, 162, 53, 48, 51, 160, 3, 2, 1, 1, 161, 44, 48, 42, 160, 40, 48, 38, 161, 36, 160, 34, 4, 32, 151, 40,
-            118, 117, 50, 148, 213, 26, 80, 129, 252, 213, 116, 94, 198, 68, 34, 171, 19, 44, 99, 185, 232, 137, 144, 209, 82, 131, 11,
-            177, 81, 88,
-        ];
-        let ser2 = [161, 2, 48, 0];
-        assert_eq!(ser1_check, ser1);
-        assert_eq!(ser2_check, ser2);
-        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
-        let trans_deser2: TransactionBody<Full> = ser::deserialize(&ser2).unwrap();
+        let ser1_check = ser::base64_encode(&ser::serialize(&trans1).unwrap());
+        let ser2_check = ser::base64_encode(&ser::serialize(&trans2).unwrap());
+        let ser1_expected = "oYIB6jCCAeagggE2MIIBMjCBm6CBgKB-MHygIgQg4loRcTZf5eL0Y-p7h-hj1tXjIX8Y-YnyLpasHHkvXG2hVjBUoBygGgQYhYT1DQfbmT03ESR0qrnGFSb8M0TCQRDkoTQEMvqNpjiXHb4Zi8uOlFTOEBynpbJdJVMMHn7cIGV7NAHfjLGw4ga_tYiFvaYLTXKg7_C2oQcMBWFscGhhog0MC2hlbGxvIHRoZXJlMIGRoIGAoH4wfKAiBCCXKHZ1MpTVGlCB_NV0XsZEIqsTLGO56ImQ0VKDC7FRWKFWMFSgHKAaBBh-0_h990YsagfFsXkZdgVkYNIHMdaFjCuhNAQyMj2w_cHLl2kVEgkr6-F2LJVukXNi60HbnA2q2PTGeZz6JLC-XHTUjMFJRA24Z-m5R4qhDAwKbmFtZS1jbGFpbaGBqTCBpjBHoAYwBKACBQChPaI7MDmgAwIBAaEyMDCgLjAsoSqgKDAmoCIEIOJaEXE2X-Xi9GPqe4foY9bV4yF_GPmJ8i6WrBx5L1xtoQAwW6AaMBihFjAUoAYwBKgCBQChCqAIMAapBKECBQChPaI7MDmgAwIBAaEyMDCgLjAsoSqgKDAmoCIEIJcodnUylNUaUIH81XRexkQiqxMsY7noiZDRUoMLsVFYoQA";
+        let ser2_expected = "oQIwAA";
+        assert_eq!(ser1_check, ser1_expected);
+        assert_eq!(ser2_check, ser2_expected);
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser::base64_decode(&ser1_expected).unwrap()).unwrap();
+        let trans_deser2: TransactionBody<Full> = ser::deserialize(&ser::base64_decode(&ser2_expected).unwrap()).unwrap();
 
         match (trans1, trans_deser1) {
             (
@@ -1382,20 +1429,16 @@ mod tests {
         let trans2 = TransactionBody::<Full>::EditAdminKeyV1 {
             id: admin_key1.key_id(),
             name: Some("admin/all".to_string()),
-            description: Some(Some("fun times".to_string())),
+            description: Some(Some("good times".to_string())), // great trucks
         };
-        let ser1 = [
-            163, 57, 48, 55, 160, 38, 160, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214,
-            213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108,
-            108, 162, 0,
-        ];
-        let ser2 = [
-            163, 68, 48, 66, 160, 38, 160, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214,
-            213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 11, 12, 9, 97, 100, 109, 105, 110, 47, 97, 108,
-            108, 162, 11, 12, 9, 102, 117, 110, 32, 116, 105, 109, 101, 115,
-        ];
-        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
-        let trans_deser2: TransactionBody<Full> = ser::deserialize(&ser2).unwrap();
+        let ser1 = ser::base64_encode(ser::serialize(&trans1).unwrap());
+        let ser2 = ser::base64_encode(ser::serialize(&trans2).unwrap());
+        let ser1_expected = "pD8wPaAsoCqgKDAmoCIEIOJaEXE2X-Xi9GPqe4foY9bV4yF_GPmJ8i6WrBx5L1xtoQChCwwJYWRtaW4vYWxsogA";
+        let ser2_expected = "pEswSaAsoCqgKDAmoCIEIOJaEXE2X-Xi9GPqe4foY9bV4yF_GPmJ8i6WrBx5L1xtoQChCwwJYWRtaW4vYWxsogwMCmdvb2QgdGltZXM";
+        assert_eq!(ser1, ser1_expected);
+        assert_eq!(ser2, ser2_expected);
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser::base64_decode(&ser1_expected).unwrap()).unwrap();
+        let trans_deser2: TransactionBody<Full> = ser::deserialize(&ser::base64_decode(&ser2_expected).unwrap()).unwrap();
 
         match (trans1, trans_deser1) {
             (
@@ -1451,12 +1494,10 @@ mod tests {
             reason: RevocationReason::Compromised,
             new_name: Some("admin/no-more".to_string()),
         };
-        let ser1 = [
-            164, 65, 48, 63, 160, 38, 160, 36, 160, 34, 4, 32, 226, 90, 17, 113, 54, 95, 229, 226, 244, 99, 234, 123, 135, 232, 99, 214,
-            213, 227, 33, 127, 24, 249, 137, 242, 46, 150, 172, 28, 121, 47, 92, 109, 161, 4, 162, 2, 5, 0, 162, 15, 12, 13, 97, 100, 109,
-            105, 110, 47, 110, 111, 45, 109, 111, 114, 101,
-        ];
-        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
+        let ser1 = ser::base64_encode(&ser::serialize(&trans1).unwrap());
+        let ser1_expected = "pUcwRaAsoCqgKDAmoCIEIOJaEXE2X-Xi9GPqe4foY9bV4yF_GPmJ8i6WrBx5L1xtoQChBKICBQCiDwwNYWRtaW4vbm8tbW9yZQ";
+        assert_eq!(ser1, ser1_expected);
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser::base64_decode(&ser1_expected).unwrap()).unwrap();
 
         match (trans1, trans_deser1) {
             (
@@ -1519,11 +1560,10 @@ mod tests {
     fn trans_serde_delete_policy_v1() {
         let policy_id1 = PolicyID::from(TransactionID::from(Hash::new_blake3(&[55, 66, 42, 17, 0, 9]).unwrap()));
         let trans1 = TransactionBody::<Full>::DeletePolicyV1 { id: policy_id1 };
-        let ser1 = [
-            166, 42, 48, 40, 160, 38, 48, 36, 160, 34, 4, 32, 2, 52, 247, 192, 86, 41, 53, 236, 142, 72, 7, 209, 104, 10, 19, 55, 211, 110,
-            35, 148, 193, 106, 201, 79, 182, 100, 227, 110, 29, 175, 128, 162,
-        ];
-        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
+        let ser1 = ser::base64_encode(&ser::serialize(&trans1).unwrap());
+        let ser1_expected = "pygwJqAkoCIEIAI098BWKTXsjkgH0WgKEzfTbiOUwWrJT7Zk424dr4Ci";
+        assert_eq!(ser1, ser1_expected);
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser::base64_decode(&ser1).unwrap()).unwrap();
 
         match (trans1, trans_deser1) {
             (TransactionBody::<Full>::DeletePolicyV1 { id: id1 }, TransactionBody::<Full>::DeletePolicyV1 { id: id2 }) => {
@@ -1549,22 +1589,14 @@ mod tests {
             name: Some("my-old-id".to_string()),
         };
         let trans2 = TransactionBody::<Full>::MakeClaimV1 { spec: claim2, name: None };
-        let ser1 = [
-            167, 59, 48, 57, 160, 42, 160, 40, 160, 38, 48, 36, 160, 34, 4, 32, 2, 79, 103, 192, 66, 90, 61, 192, 47, 186, 245, 140, 185,
-            61, 229, 19, 46, 61, 117, 197, 25, 250, 160, 186, 218, 33, 73, 29, 136, 201, 112, 87, 161, 11, 12, 9, 109, 121, 45, 111, 108,
-            100, 45, 105, 100,
-        ];
-        let ser2 = [
-            167, 129, 172, 48, 129, 169, 160, 129, 164, 172, 129, 161, 48, 129, 158, 160, 6, 4, 4, 2, 4, 6, 8, 161, 129, 147, 161, 129,
-            144, 48, 129, 141, 160, 36, 160, 34, 4, 32, 216, 38, 14, 63, 6, 105, 24, 215, 247, 128, 138, 208, 100, 48, 185, 147, 137, 79,
-            58, 139, 216, 1, 48, 218, 42, 87, 252, 65, 221, 233, 175, 90, 161, 101, 48, 99, 160, 97, 160, 28, 160, 26, 4, 24, 133, 132,
-            245, 13, 7, 219, 153, 61, 55, 17, 36, 116, 170, 185, 198, 21, 38, 252, 51, 68, 194, 65, 16, 228, 161, 65, 4, 63, 206, 128, 94,
-            229, 26, 112, 231, 200, 143, 126, 32, 50, 101, 242, 222, 26, 26, 215, 52, 27, 134, 11, 135, 88, 200, 251, 159, 208, 240, 39,
-            213, 110, 16, 84, 172, 181, 199, 215, 19, 103, 85, 216, 234, 141, 75, 132, 214, 7, 6, 83, 29, 38, 23, 15, 183, 78, 239, 100,
-            217, 4, 176, 122, 149, 161, 0,
-        ];
-        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser1).unwrap();
-        let trans_deser2: TransactionBody<Full> = ser::deserialize(&ser2).unwrap();
+        let ser1 = ser::base64_encode(ser::serialize(&trans1).unwrap());
+        let ser2 = ser::base64_encode(ser::serialize(&trans2).unwrap());
+        let ser1_expected = "qDkwN6AooCagJKAiBCACT2fAQlo9wC-69Yy5PeUTLj11xRn6oLraIUkdiMlwV6ELDAlteS1vbGQtaWQ";
+        let ser2_expected = "qIGoMIGloIGirIGfMIGcoAYEBAIEBgihgZGhgY4wgYugJKAiBCDYJg4_BmkY1_eAitBkMLmTiU86i9gBMNoqV_xB3emvWqFjMGGgHKAaBBiFhPUNB9uZPTcRJHSqucYVJvwzRMJBEOShQQQ_zoBe5Rpw58iPfiAyZfLeGhrXNBuGC4dYyPuf0PAn1W4QVKy1x9cTZ1XY6o1LhNYHBlMdJhcPt07vZNkEsHqV";
+        assert_eq!(ser1, ser1_expected);
+        assert_eq!(ser2, ser2_expected);
+        let trans_deser1: TransactionBody<Full> = ser::deserialize(&ser::base64_decode(&ser1).unwrap()).unwrap();
+        let trans_deser2: TransactionBody<Full> = ser::deserialize(&ser::base64_decode(&ser2).unwrap()).unwrap();
 
         match (trans1, trans_deser1) {
             (
@@ -1670,28 +1702,101 @@ mod tests {
 
     #[test]
     fn trans_serde_ext_v1() {
+        let mut rng = test::rng_seeded(b"no thank you");
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::from_str("2024-01-01T00:00:06Z").unwrap());
         {
-            let ext = TransactionBody::<Full>::ExtV1 {
-                creator: IdentityID::from(TransactionID::from(Hash::new_blake3(b"yo").unwrap())),
-                ty: None,
-                previous_transactions: vec![TransactionID::from(Hash::new_blake3(b"hi").unwrap())],
-                context: Some([("name", "barry")].into()),
-                payload: BinaryVec::from(Vec::from(b"test")),
-            };
-            assert_eq!(ser::base64_encode(&ser::serialize(&ext).unwrap()), "tW8wbaAkoCIEIMFm-HUKgqGTf2NTJY1zQiAUVEZKdBKIAYYpw8ysvK1boiYwJKAiBCCFBS6aqxtntmItlKCEQbCf1besph7jYEFtcN5dpn2GyqMVMBMwEaAGBARuYW1loQcEBWJhcnJ5pAYEBHRlc3Q");
-        }
-        {
-            let ext = TransactionBody::<Full>::ExtV1 {
-                creator: IdentityID::from(TransactionID::from(Hash::new_blake3(b"yo").unwrap())),
-                ty: None,
-                previous_transactions: vec![],
-                context: Some([("name", "barry"); 0].into()),
-                payload: BinaryVec::from(Vec::new()),
-            };
+            let ext = TransactionBody::<Full>::ExtV1(Ext::new(
+                IdentityID::from(TransactionID::from(Hash::new_blake3(b"yo").unwrap())),
+                Some(Vec::from(b"/stamp/net/test").into()),
+                vec![TransactionID::from(Hash::new_blake3(b"hi").unwrap())],
+                [("name", "barry")].into(),
+                BinaryVec::from(Vec::from(b"test")),
+            ));
             assert_eq!(
                 ser::base64_encode(&ser::serialize(&ext).unwrap()),
-                "tTQwMqAkoCIEIMFm-HUKgqGTf2NTJY1zQiAUVEZKdBKIAYYpw8ysvK1bogIwAKMCMACkAgQA"
+                "tYGDMIGAoCSgIgQgwWb4dQqCoZN_Y1MljXNCIBRURkp0EogBhinDzKy8rVuhEQQPL3N0YW1wL25ldC90ZXN0oiYwJKAiBCCFBS6aqxtntmItlKCEQbCf1besph7jYEFtcN5dpn2GyqMVMBMwEaAGBARuYW1loQcEBWJhcnJ5pAYEBHRlc3Q",
             );
+        }
+        {
+            let ext = TransactionBody::<Full>::ExtV1(Ext::new(
+                IdentityID::from(TransactionID::from(Hash::new_blake3(b"yo").unwrap())),
+                Some(Vec::from(b"/stamp/net/test").into()),
+                vec![TransactionID::from(Hash::new_blake3(b"hi").unwrap())],
+                [(b"name", b"barry")].into(),
+                BinaryVec::from(Vec::from(b"test")),
+            ));
+            assert_eq!(
+                ser::base64_encode(&ser::serialize(&ext).unwrap()),
+                "tYGDMIGAoCSgIgQgwWb4dQqCoZN_Y1MljXNCIBRURkp0EogBhinDzKy8rVuhEQQPL3N0YW1wL25ldC90ZXN0oiYwJKAiBCCFBS6aqxtntmItlKCEQbCf1besph7jYEFtcN5dpn2GyqMVMBMwEaAGBARuYW1loQcEBWJhcnJ5pAYEBHRlc3Q",
+            );
+        }
+        {
+            let ext = TransactionBody::<Full>::ExtV1(Ext::new(
+                IdentityID::from(TransactionID::from(Hash::new_blake3(b"yo").unwrap())),
+                None,
+                vec![TransactionID::from(Hash::new_blake3(b"hi").unwrap())],
+                [("", ""); 0].into(),
+                BinaryVec::from(Vec::from(b"test")),
+            ));
+            assert_eq!(
+                ser::base64_encode(&ser::serialize(&ext).unwrap()),
+                "tVgwVqAkoCIEIMFm-HUKgqGTf2NTJY1zQiAUVEZKdBKIAYYpw8ysvK1boiYwJKAiBCCFBS6aqxtntmItlKCEQbCf1besph7jYEFtcN5dpn2GyqQGBAR0ZXN0",
+            );
+        }
+        {
+            let ext = TransactionBody::<Full>::ExtV1(Ext::new(
+                IdentityID::from(TransactionID::from(Hash::new_blake3(b"yo").unwrap())),
+                None,
+                vec![],
+                [("name", "barry"); 0].into(),
+                BinaryVec::from(Vec::new()),
+            ));
+            assert_eq!(
+                ser::base64_encode(&ser::serialize(&ext).unwrap()),
+                "tSgwJqAkoCIEIMFm-HUKgqGTf2NTJY1zQiAUVEZKdBKIAYYpw8ysvK1b"
+            );
+        }
+        {
+            let mut ext = identity
+                .ext(
+                    &HashAlgo::Blake3,
+                    Timestamp::from_str("2026-01-01T00:00:00Z").unwrap(),
+                    vec![TransactionID::from(Hash::new_blake3(b"gffft").unwrap())],
+                    Some(Vec::from(b"/stamp/net/packet/v1").into()),
+                    Some([(b"topic_id", &[12u8; 32])]),
+                    Vec::from(b"hi everyone how's it going?").into(),
+                )
+                .unwrap();
+            ext.sign_mut(&master_key, &admin_key).unwrap();
+            let ser = ser::base64_encode(&ser::serialize(&ext).unwrap());
+            let ser_expected = "MIIBnKAkoCIEID_MQFeHDzdOBmrsaS8u3I3NZxNo4YOjW2b9xMnXHlPUoYH5MIH2oAgCBgGbdtqoAKEmMCSgIgQgbz8J8TzquNt-_7axKHqQnM43rY2UFNOpg4Lw80TO4oSigcG1gb4wgbugJKAiBCBvPwnxPOq4237_trEoepCczjetjZQU06mDgvDzRM7ihKEWBBQvc3RhbXAvbmV0L3BhY2tldC92MaImMCSgIgQgBoUxL_1rgBdcG8K_FqvgQHRuSRhBM6yEFdXE5q6kh76jNDAyMDCgCgQIdG9waWNfaWShIgQgDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAykHQQbaGkgZXZlcnlvbmUgaG93J3MgaXQgZ29pbmc_ongwdqB0MHKgKqAoMCagIgQgb-Hl_fWltlU1yhhQHc_miEqrDQ09Vi414wjHr_rhlkOhAKFEoEIEQBk6cOzAZyTa2pMc6bs6lIAMseQpNxmMDN1xRARhrZHPxXSEZAP5v7F1zbjqqyjjT9tUFXk7s96TFxL1mplKfAU";
+            assert_eq!(ser, ser_expected);
+            {
+                let ext_des: ExtTransaction = ser::deserialize(&ser::base64_decode(&ser_expected).unwrap()).unwrap();
+                ext_des.verify_hash_and_signatures().unwrap();
+                assert_eq!(ext.id(), ext_des.id());
+            }
+        }
+        {
+            let mut ext = identity
+                .ext(
+                    &HashAlgo::Blake3,
+                    Timestamp::from_str("2026-01-01T00:00:00Z").unwrap(),
+                    vec![],
+                    None,
+                    None::<HashMapAsn1<_, _>>,
+                    Vec::from(b"").into(),
+                )
+                .unwrap();
+            ext.sign_mut(&master_key, &admin_key).unwrap();
+            let ser = ser::base64_encode(&ser::serialize(&ext).unwrap());
+            let ser_expected = "MIIBAqAkoCIEIKDQJSMFcGMRK-U13wdlXyb3eGbpv4snbtP9dx9VfASDoWAwXqAIAgYBm3baqAChJjAkoCIEIG8_CfE86rjbfv-2sSh6kJzON62NlBTTqYOC8PNEzuKEoiq1KDAmoCSgIgQgbz8J8TzquNt-_7axKHqQnM43rY2UFNOpg4Lw80TO4oSieDB2oHQwcqAqoCgwJqAiBCBv4eX99aW2VTXKGFAdz-aISqsNDT1WLjXjCMev-uGWQ6EAoUSgQgRA3HnvFcFpcdGhxkLl3tYFVNTbd-a5l0Equf_hRUlwWFUgQ7u_k7hwItSLCuWEJD554Smx_Tvz35TPULYimVtjAQ";
+            assert_eq!(ser, ser_expected);
+            {
+                let ext_des: ExtTransaction = ser::deserialize(&ser::base64_decode(&ser_expected).unwrap()).unwrap();
+                ext_des.verify_hash_and_signatures().unwrap();
+                assert_eq!(ext.id(), ext_des.id());
+            }
         }
     }
 
@@ -1710,7 +1815,7 @@ mod tests {
         let publish_tx_sertxt = publish_tx_pub.serialize_text().unwrap();
         let publish_tx_expected = r#"---
 id:
-  Blake3: nmbluJFKdMX6m4FLbgQracK9ymU2X6aDGXgEueJci7k
+  Blake3: D9m-Yf-23dykPCmur2GoCt8SrGNnMuYyvFJPExwHYME
 entry:
   created: "2068-12-31T23:59:59.999Z"
   previous_transactions:
@@ -1789,7 +1894,7 @@ entry:
                 MakeClaimV1:
                   spec:
                     Address:
-                      Private:
+                      PrivateVerifiable:
                         hmac:
                           Blake3: 3e_KLNBgoDpsne6q1SH9dgwRhXDv9PMG4oLBy2KVlus
                         data:
@@ -1830,7 +1935,7 @@ signatures: []
 
         let publish_tx_tampered = r#"---
 id:
-  Blake3: nmbluJFKdMX6m4FLbgQracK9ymU2X6aDGXgEueJci7k
+  Blake3: D9m-Yf-23dykPCmur2GoCt8SrGNnMuYyvFJPExwHYME
 entry:
   created: "2068-12-31T23:59:59.999Z"
   previous_transactions:
@@ -1909,7 +2014,7 @@ entry:
                 MakeClaimV1:
                   spec:
                     Address:
-                      Private:
+                      PrivateVerifiable:
                         hmac:
                           Blake3: 3e_KLNBgoDpsne6q1SH9dgwRhXDv9PMG4oLBy2KVlus
                         data:
@@ -1958,7 +2063,7 @@ signatures: []
             .unwrap();
 
         let stamp_tx_ser = ser::base64_encode(&stamp_tx.serialize_binary().unwrap());
-        let stamp_tx_ser_expected = r#"MIHeoCIEIEBDHr0yqZGAK1zQS1u1a8hLW9bCDUnUhkFSpBBxu4t0MIG1oAgCBgLXakL__6EmMCSgIgQgt0HAWVY92E0nWJ9gF4UFZpF2F9jCOJucQ4T_zNve4NOigYCrfjB8oHoweKAkoCIEILdBwFlWPdhNJ1ifYBeFBWaRdhfYwjibnEOE_8zb3uDToSSgIgQg_Fg3XH0pkltWhWXaIB0DKH42jeXjNq18stIrUdSeLxCiJKAiBCBp1Plmj9pPZ7AF17hqKw90Mos2b4ig4BUXHAge9CqfZqMEowIFADAA"#;
+        let stamp_tx_ser_expected = r#"MIHloCSgIgQgQEMevTKpkYArXNBLW7VryEtb1sINSdSGQVKkEHG7i3ShgbgwgbWgCAIGAtdqQv__oSYwJKAiBCC3QcBZVj3YTSdYn2AXhQVmkXYX2MI4m5xDhP_M297g06KBgKt-MHygejB4oCSgIgQgt0HAWVY92E0nWJ9gF4UFZpF2F9jCOJucQ4T_zNve4NOhJKAiBCD8WDdcfSmSW1aFZdogHQMofjaN5eM2rXyy0itR1J4vEKIkoCIEIGnU-WaP2k9nsAXXuGorD3QyizZviKDgFRccCB70Kp9mowSjAgUAogIwAA"#;
         assert_eq!(stamp_tx_ser, stamp_tx_ser_expected);
 
         let stamp_tx_des = StampTransaction::deserialize_binary(&ser::base64_decode(stamp_tx_ser).unwrap()).unwrap();

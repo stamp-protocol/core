@@ -16,7 +16,7 @@ pub use crate::{
     dag::{
         identity::{tx_chain, Identity},
         transaction::{
-            ExtTransaction, PublishTransaction, SignTransaction, StampTransaction, Transaction, TransactionBody, TransactionEntry,
+            Ext, ExtTransaction, PublishTransaction, SignTransaction, StampTransaction, Transaction, TransactionBody, TransactionEntry,
             TransactionID,
         },
     },

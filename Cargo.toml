@@ -22,7 +22,7 @@ hmac = "0.12"
 private-parts = { path = "./private-parts" }
 rand = { version = "0.8", features = ["getrandom"] }
 rand_chacha = "0.3"
-rasn = "0.28.3"
+rasn = "0.28.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 subtle = "2.5.0"

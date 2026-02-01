@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 private-parts-derive = { path = "./derive" }
-rasn = "0.28.3"
+rasn = "0.28.7"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1"
 

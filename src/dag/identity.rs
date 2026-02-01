@@ -5,7 +5,7 @@ use crate::{
         base::{Hash, HashAlgo, KeyID, SecretKey},
         private::{PrivateContainer, ReEncrypt},
     },
-    dag::{Dag, StampTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID},
+    dag::{Dag, Ext, StampTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID},
     error::{Error, Result},
     identity::{
         claim::{ClaimID, ClaimSpec},
@@ -19,35 +19,17 @@ use crate::{
         Timestamp,
     },
 };
-use getset;
 use private_parts::{Full, PrivacyMode, PrivateParts, Public};
 use rand::{CryptoRng, RngCore};
-use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
+use rasn::{AsnType, Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 /// A container that holds a set of transactions.
-#[derive(
-    Debug,
-    Default,
-    Clone,
-    PrivateParts,
-    AsnType,
-    Encode,
-    Decode,
-    Serialize,
-    Deserialize,
-    getset::Getters,
-    getset::MutGetters,
-    getset::Setters,
-)]
+#[derive(Debug, Default, Clone, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[parts(private_data = "PrivateContainer")]
-#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
-pub struct Identity<M: PrivacyMode> {
-    /// The actual transactions.
-    #[rasn(tag(explicit(0)))]
-    transactions: Vec<Transaction<M>>,
-}
+#[rasn(delegate)]
+pub struct Identity<M: PrivacyMode>(Vec<Transaction<M>>);
 
 impl<M> Identity<M>
 where
@@ -56,7 +38,22 @@ where
 {
     /// Create a new, empty transaction set.
     pub fn new() -> Self {
-        Self { transactions: Vec::new() }
+        Self(Vec::new())
+    }
+
+    /// Transaction list getter
+    pub fn transactions(&self) -> &Vec<Transaction<M>> {
+        &self.0
+    }
+
+    /// Return the mutable transaction list
+    pub fn transactions_mut(&mut self) -> &mut Vec<Transaction<M>> {
+        &mut self.0
+    }
+
+    /// Set the transaction list
+    pub fn set_transactions(&mut self, value: Vec<Transaction<M>>) {
+        self.0 = value
     }
 
     /// Returns an iterator over these transactions
@@ -719,13 +716,14 @@ impl Identity<Full> {
             Err(Error::IdentityRevoked)?;
         }
         let creator = identity_instance.id().clone();
-        let body = TransactionBody::ExtV1 {
+        let ext = Ext::new(
             creator,
             ty,
             previous_transactions,
-            context: context.map(|x| x.into()),
+            context.map(|x| x.into()).unwrap_or_else(|| HashMapAsn1::default()),
             payload,
-        };
+        );
+        let body = TransactionBody::ExtV1(ext);
         self.prepare_transaction(hash_with, now, body)
     }
 }
@@ -744,7 +742,7 @@ impl<M: PrivacyMode> IntoIterator for Identity<M> {
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
-        let Identity { transactions } = self;
+        let Identity(transactions) = self;
         transactions.into_iter()
     }
 }
@@ -935,7 +933,7 @@ mod tests {
         },
         policy::{Capability, Context, MultisigPolicy, MultisigPolicySignature, Policy, PolicyContainer, TransactionBodyType},
         util::{
-            ser::BinaryVec,
+            ser::{self, BinaryVec},
             test::{self, sign_and_push},
             Date, Url,
         },
@@ -2138,9 +2136,8 @@ mod tests {
 
         let mut ext_mod = ext.clone();
         match ext_mod.entry_mut().body_mut() {
-            TransactionBody::ExtV1 { payload: ref mut body, .. } => {
-                // NICE TRY, SALLY. UGH.
-                *body = BinaryVec::from(Vec::from("SEND $6 TO SALLY".as_bytes()));
+            TransactionBody::ExtV1(ref mut ext) => {
+                ext.set_payload(BinaryVec::from(Vec::from("SEND $6 TO SALLY".as_bytes())));
             }
             _ => panic!("Unexpected transaction: {ext_mod:?}"),
         }
@@ -2578,14 +2575,14 @@ mod tests {
         let datas = identity
             .iter()
             .map(|t| match t.entry().body() {
-                TransactionBody::ExtV1 { payload, .. } => payload.clone(),
+                TransactionBody::ExtV1(ext) => ext.payload().clone(),
                 _ => panic!("oh no"),
             })
             .collect::<Vec<_>>();
         let contexts = identity
             .iter()
             .map(|t| match t.entry().body() {
-                TransactionBody::ExtV1 { context, .. } => context.as_ref().unwrap().get(&BinaryVec::from(Vec::from(b"ref"))).unwrap(),
+                TransactionBody::ExtV1(ext) => ext.context().get(&BinaryVec::from(Vec::from(b"ref"))).unwrap(),
                 _ => panic!("oh no"),
             })
             .map(|b| String::from_utf8(b.to_vec()).unwrap())
@@ -2601,13 +2598,55 @@ mod tests {
             contexts,
             vec![
                 "",
-                "QQjsFIrZqq32tqU2J1a2HigHhGb9J1s2MGXTs-Z7Q28A,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                "QQjsFIrZqq32tqU2J1a2HigHhGb9J1s2MGXTs-Z7Q28A,7lyT5n_HwdgYO1bqGGPdHZfcMV-VWXregeMt40LJQ2wA",
+                "6LEQnTkjyRox3k1rdGgOwo7hPfccJsVzFeqoT2hQ0GAA,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "6LEQnTkjyRox3k1rdGgOwo7hPfccJsVzFeqoT2hQ0GAA,8qZUtltk76ieMRtk771REN8NPmVxtdBqUMpByRhbeIQA",
                 "",
                 "",
                 "",
-                "QQjsFIrZqq32tqU2J1a2HigHhGb9J1s2MGXTs-Z7Q28A,xxPikBFzLau1096-TxORogxu8RovyfjWULCiubYAB4UA"
+                "6LEQnTkjyRox3k1rdGgOwo7hPfccJsVzFeqoT2hQ0GAA,CiPzMZtg0ByUgL7dAAP8wV7pSvAvmNPQFjPAeABffO8A"
             ],
         );
+    }
+
+    #[test]
+    fn identity_serde() {
+        let mut rng = crate::util::test::rng_seeded(b"beans");
+        let (master_key, identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::from_str("2026-01-22T00:00:00Z").unwrap());
+        let crypto_key = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
+        let identity2 = sign_and_push! { &master_key, &admin_key, identity.clone(),
+            [ make_claim, Timestamp::from_str("2026-01-22T00:00:00Z").unwrap(), ClaimSpec::Name(MaybePrivate::new_public("Kay".into())), None::<String> ]
+            [ make_claim, Timestamp::from_str("2026-01-22T00:00:01Z").unwrap(), ClaimSpec::Url(MaybePrivate::new_public(Url::parse("https://corpophagia.com").unwrap())), None::<String> ]
+            [ add_subkey, Timestamp::from_str("2026-01-22T00:00:02Z").unwrap(), Key::new_crypto(crypto_key), "email", None::<&str> ]
+        };
+
+        let ser1 = ser::base64_encode(&ser::serialize(&identity).unwrap());
+        let ser2 = ser::base64_encode(&ser::serialize(&identity2).unwrap());
+
+        let ser1_expected = "MIIBozCCAZ-gJKAiBCBx0wGhMEpiydDAebeks8SkJNox8X6FmC-Tfauywkx9jaGB_DCB-aAIAgYBm-MANAChAjAAooHooIHlMIHioIGSMIGPMIGMoIGAoH4wfKAiBCDqwobkyCMMiGa3b96sdbDH2oxENmSry2MrLCbhuUCGo6FWMFSgHKAaBBg-u3LN6iMBLGPp3nikzhSeyvWOIPEmvHihNAQyyzdamgrpU4TLdJb_sTQ7bsm5RcrCP0dEBGqelrTqQP9TAg7ZDmk9N_LMjI0YhJs00FChBwwFQWxwaGGhSzBJMEegBjAEoAIFAKE9ojswOaADAgEBoTIwMKAuMCyhKqAoMCagIgQg6sKG5MgjDIhmt2_erHWwx9qMRDZkq8tjKywm4blAhqOhAKJ4MHagdDByoCqgKDAmoCIEIOrChuTIIwyIZrdv3qx1sMfajEQ2ZKvLYyssJuG5QIajoQChRKBCBEAQbMib1Fz9lGTTmDtxg9w1wz1Ywnd93oZDqXX6dn_Fz5HcO8grjJWZfmC3ZFlisNZRlD1NY3NU9HOfTCGRAIkH";
+        let ser2_expected = "MIIFADCCAZ-gJKAiBCBx0wGhMEpiydDAebeks8SkJNox8X6FmC-Tfauywkx9jaGB_DCB-aAIAgYBm-MANAChAjAAooHooIHlMIHioIGSMIGPMIGMoIGAoH4wfKAiBCDqwobkyCMMiGa3b96sdbDH2oxENmSry2MrLCbhuUCGo6FWMFSgHKAaBBg-u3LN6iMBLGPp3nikzhSeyvWOIPEmvHihNAQyyzdamgrpU4TLdJb_sTQ7bsm5RcrCP0dEBGqelrTqQP9TAg7ZDmk9N_LMjI0YhJs00FChBwwFQWxwaGGhSzBJMEegBjAEoAIFAKE9ojswOaADAgEBoTIwMKAuMCyhKqAoMCagIgQg6sKG5MgjDIhmt2_erHWwx9qMRDZkq8tjKywm4blAhqOhAKJ4MHagdDByoCqgKDAmoCIEIOrChuTIIwyIZrdv3qx1sMfajEQ2ZKvLYyssJuG5QIajoQChRKBCBEAQbMib1Fz9lGTTmDtxg9w1wz1Ywnd93oZDqXX6dn_Fz5HcO8grjJWZfmC3ZFlisNZRlD1NY3NU9HOfTCGRAIkHMIHnoCSgIgQgLeEVX77MsWHt1rjuT3NH5W9sTK1sYgaccsyQliNCAH6hRTBDoAgCBgGb4wA0AKEmMCSgIgQgcdMBoTBKYsnQwHm3pLPEpCTaMfF-hZgvk32rssJMfY2iD6gNMAugCaEHoAUMA0theaJ4MHagdDByoCqgKDAmoCIEIOrChuTIIwyIZrdv3qx1sMfajEQ2ZKvLYyssJuG5QIajoQChRKBCBECssN_HaigVNbQlSsOGAujpVk7V1kujrSomrOasyrUbc7sr9AEY28FdIlmqsgHPEk-VZ10ruhDKNOPLUVUkFlwOMIH8oCSgIgQgKJa4jQQebaSWL58XVh454SeVJ5fKdxq62OehgwRhd96hWjBYoAgCBgGb4wA36KEmMCSgIgQgLeEVX77MsWHt1rjuT3NH5W9sTK1sYgaccsyQliNCAH6iJKgiMCCgHqccoBoMGGh0dHBzOi8vY29ycG9waGFnaWEuY29tL6J4MHagdDByoCqgKDAmoCIEIOrChuTIIwyIZrdv3qx1sMfajEQ2ZKvLYyssJuG5QIajoQChRKBCBECwIqlzxS7LhNRAnJYtCJcIoZujpewpEdvNj3JO-gTmlJBc0TGgLLk2XAn0Scpdro6QDlpiqQ8T_noKnfhTcVkAMIIBcKAkoCIEIPRn7DvE8_oSgzVN4Y0ZuHGNTygWb5FA9ueL2wSpW9yOoYHNMIHKoAgCBgGb4wA70KEmMCSgIgQgKJa4jQQebaSWL58XVh454SeVJ5fKdxq62OehgwRhd96igZWvgZIwgY-ggYOhgYCgfjB8oCIEIGOz8cefZOg_SYgmjcEr1jb8Rajl9EKWVBAixSa13uMgoVYwVKAcoBoEGONZTcpG2EYP3hH1RQ-qRzNRpfBSHC7cLKE0BDK0IkwA5zSZwE7xy_jpAJuhxIX4ikLlipy7AnUA93yUwj0N65m_AT9sX2KljIb3Z3byZqEHDAVlbWFpbKJ4MHagdDByoCqgKDAmoCIEIOrChuTIIwyIZrdv3qx1sMfajEQ2ZKvLYyssJuG5QIajoQChRKBCBEAZFrJHX7rAII-zA5m-WLef_8EGEZL20-n8ie3Dx9UgDei_rNCHYDKujepjVOu7j0uKlqxEo0R31tIPADmopvkC";
+
+        assert_eq!(ser1, ser1_expected);
+        assert_eq!(ser2, ser2_expected);
+
+        {
+            let identity_deser: Identity<Full> = ser::deserialize(&ser::base64_decode(&ser1_expected).unwrap()).unwrap();
+            for tx in identity_deser.iter() {
+                tx.verify_hash_and_signatures().unwrap();
+            }
+            assert_eq!(
+                identity.transactions().iter().map(|x| x.id()).collect::<Vec<_>>(),
+                identity_deser.transactions().iter().map(|x| x.id()).collect::<Vec<_>>(),
+            );
+        }
+        {
+            let identity_deser: Identity<Full> = ser::deserialize(&ser::base64_decode(&ser2_expected).unwrap()).unwrap();
+            for tx in identity_deser.iter() {
+                tx.verify_hash_and_signatures().unwrap();
+            }
+            assert_eq!(
+                identity2.transactions().iter().map(|x| x.id()).collect::<Vec<_>>(),
+                identity_deser.transactions().iter().map(|x| x.id()).collect::<Vec<_>>(),
+            );
+        }
     }
 }

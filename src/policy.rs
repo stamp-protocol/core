@@ -401,17 +401,15 @@ impl Context {
             }
             TransactionBody::PublishV1 { .. } => {}
             TransactionBody::SignV1 { .. } => {}
-            TransactionBody::ExtV1 { ty, context, .. } => {
-                if let Some(t) = ty.as_ref() {
+            TransactionBody::ExtV1(ext) => {
+                if let Some(t) = ext.ty().as_ref() {
                     contexts.push(Self::ExtType(t.clone()));
                 }
-                if let Some(exists) = context.as_ref() {
-                    for (k, v) in exists.iter() {
-                        contexts.push(Self::ExtContext {
-                            key: k.clone(),
-                            val: v.clone(),
-                        });
-                    }
+                for (k, v) in ext.context().iter() {
+                    contexts.push(Self::ExtContext {
+                        key: k.clone(),
+                        val: v.clone(),
+                    });
                 }
             }
         }
