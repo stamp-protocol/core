@@ -31,7 +31,7 @@ pub enum MergeError {
 /// Marks a type as "private" which allowed converting it to/from `Option`.
 pub trait PrivateData {}
 
-/// Allows converting an type into an `Option`. This is mostly useful because our [`Full`] type
+/// Allows converting a type into an `Option`. This is mostly useful because our [`Full`] type
 /// will return the full type (ie, `Some(T)`) and our [`Public`] type will return `None`, which
 /// serializes succinctly.
 pub trait AsOption: Sized {
@@ -281,6 +281,7 @@ where
         public.map(|val| <T as PrivateParts>::merge(val, private)).transpose()
     }
 }
+
 impl<T> PrivateParts for Vec<T>
 where
     T: PrivateParts,

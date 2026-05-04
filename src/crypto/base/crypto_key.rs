@@ -45,6 +45,30 @@ impl CryptoKeypairMessage {
     }
 }
 
+/// A message we encrypt with their pubkey that's signed with an ephemeral key. Meant to
+/// anonymously send a message to a recipient such that they can verify the integrity of the
+/// message but not the sender's identity.
+#[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize, getset::Getters, getset::MutGetters, getset::Setters)]
+#[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
+pub struct CryptoKeypairMessageAnonymous {
+    /// Our ephemeral public key
+    #[rasn(tag(explicit(0)))]
+    ephemeral_key: CryptoKeypair<Public>,
+    /// The message ciphertext
+    #[rasn(tag(explicit(1)))]
+    ciphertext: BinaryVec,
+}
+
+impl CryptoKeypairMessageAnonymous {
+    /// Create a new nonymous message
+    fn new(ephemeral_key: CryptoKeypair<Public>, ciphertext: Vec<u8>) -> Self {
+        Self {
+            ephemeral_key,
+            ciphertext: BinaryVec::from(ciphertext),
+        }
+    }
+}
+
 /// An asymmetric signing keypair.
 #[derive(Clone, Debug, PrivateParts, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[parts(private_data = "PrivateContainer")]
@@ -96,7 +120,7 @@ impl<M: PrivacyMode> CryptoKeypair<M> {
     }
 
     /// Anonymously encrypt a message using the recipient's public key.
-    pub fn seal_anonymous<R: RngCore + CryptoRng>(&self, rng: &mut R, data: &[u8]) -> Result<Vec<u8>> {
+    pub fn seal_anonymous<R: RngCore + CryptoRng>(&self, rng: &mut R, data: &[u8]) -> Result<CryptoKeypairMessageAnonymous> {
         match self {
             Self::Curve25519XChaCha20Poly1305 { public: ref pubkey, .. } => {
                 let ephemeral_secret = crypto_box::SecretKey::generate(rng);
@@ -108,10 +132,12 @@ impl<M: PrivacyMode> CryptoKeypair<M> {
                 let nonce_vec = Vec::from(blake.finalize().as_bytes());
                 let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into().map_err(|_| Error::CryptoSealFailed)?;
                 let nonce = nonce_arr.into();
-                let mut enc = cardboard_box.encrypt(&nonce, data).map_err(|_| Error::CryptoSealFailed)?;
-                let mut pubvec = Vec::from(ephemeral_pubkey.as_ref());
-                pubvec.append(&mut enc);
-                Ok(pubvec)
+                let enc = cardboard_box.encrypt(&nonce, data).map_err(|_| Error::CryptoSealFailed)?;
+                let ephemeral_key = CryptoKeypair::Curve25519XChaCha20Poly1305 {
+                    public: Binary::new(ephemeral_pubkey.to_bytes()),
+                    secret: Private::blank(),
+                };
+                Ok(CryptoKeypairMessageAnonymous::new(ephemeral_key, enc))
             }
         }
     }
@@ -134,30 +160,34 @@ impl CryptoKeypair<Full> {
         let secret = crypto_box::SecretKey::generate(rng);
         let public = secret.public_key();
         Ok(Self::Curve25519XChaCha20Poly1305 {
-            public: Binary::new(*public.as_bytes()),
+            public: Binary::new(public.to_bytes()),
             secret: Private::seal(rng, master_key, &BinarySecret::new(secret.to_bytes()))?,
         })
     }
 
     /// Open an anonymous message encrypted with our public key. Requires our
     /// master key to open.
-    pub fn open_anonymous(&self, master_key: &SecretKey, data: &[u8]) -> Result<Vec<u8>> {
-        match self {
-            Self::Curve25519XChaCha20Poly1305 {
-                public: ref pubkey,
-                secret: ref seckey_sealed,
-            } => {
+    pub fn open_anonymous(&self, master_key: &SecretKey, message: &CryptoKeypairMessageAnonymous) -> Result<Vec<u8>> {
+        match (self, message.ephemeral_key()) {
+            (
+                Self::Curve25519XChaCha20Poly1305 {
+                    public: ref pubkey,
+                    secret: ref seckey_sealed,
+                },
+                CryptoKeypair::<Public>::Curve25519XChaCha20Poly1305 {
+                    public: ref ephemeral_public_bin,
+                    ..
+                },
+            ) => {
                 let seckey = crypto_box::SecretKey::from(*seckey_sealed.open(master_key)?.expose_secret());
-                let ephemeral_pubkey_slice = &data[0..32];
-                let ephemeral_pubkey_arr: [u8; 32] = ephemeral_pubkey_slice.try_into().map_err(|_| Error::CryptoOpenFailed)?;
-                let ephemeral_pubkey = crypto_box::PublicKey::from(ephemeral_pubkey_arr);
-                let ciphertext = &data[32..];
+                let ephemeral_pubkey = crypto_box::PublicKey::from_bytes(ephemeral_public_bin.deref().clone());
+                let ciphertext = message.ciphertext().as_slice();
                 let cardboard_box = crypto_box::ChaChaBox::new(&ephemeral_pubkey, &seckey);
                 let mut blake = blake3::Hasher::new();
                 blake.update(ephemeral_pubkey.as_ref());
                 blake.update(pubkey.as_ref());
                 let nonce_vec = Vec::from(blake.finalize().as_bytes());
-                let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into().map_err(|_| Error::CryptoSealFailed)?;
+                let nonce_arr: [u8; 24] = nonce_vec[0..24].try_into().map_err(|_| Error::CryptoOpenFailed)?;
                 let nonce = nonce_arr.into();
                 cardboard_box.decrypt(&nonce, ciphertext).map_err(|_| Error::CryptoOpenFailed)
             }

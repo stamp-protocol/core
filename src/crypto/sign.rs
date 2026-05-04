@@ -57,6 +57,9 @@ pub fn sign_detached(master_key: &SecretKey, signing_key: &Subkey<Full>, message
 
 /// Verify a detached signature.
 pub fn verify<M: PrivacyMode>(signing_key: &Subkey<M>, signature: &Signature, message: &[u8]) -> Result<()> {
+    if *signature.key_id() != signing_key.key().key_id() {
+        Err(Error::CryptoSignatureVerificationFailed)?;
+    }
     let sign_key = signing_key.key().as_signkey().ok_or(Error::KeychainSubkeyWrongType)?;
     sign_key.verify(signature.sig(), message)
 }

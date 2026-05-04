@@ -81,6 +81,9 @@ impl TryFrom<&str> for Hash {
 
     fn try_from(string: &str) -> std::result::Result<Self, Self::Error> {
         let dec = ser::base64_decode(string)?;
+        if dec.len() < 2 {
+            Err(Error::BadLength)?;
+        }
         let tag = dec[dec.len() - 1];
         let bytes = &dec[0..dec.len() - 1];
         let hash = match tag {

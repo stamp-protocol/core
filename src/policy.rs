@@ -81,6 +81,8 @@ pub enum TransactionBodyType {
     #[rasn(tag(explicit(20)))]
     SignV1,
     #[rasn(tag(explicit(21)))]
+    StampRequestV1,
+    #[rasn(tag(explicit(22)))]
     ExtV1,
 }
 
@@ -110,6 +112,7 @@ impl<M: PrivacyMode> From<&TransactionBody<M>> for TransactionBodyType {
             TransactionBody::DeleteSubkeyV1 { .. } => Self::DeleteSubkeyV1,
             TransactionBody::PublishV1 { .. } => Self::PublishV1,
             TransactionBody::SignV1 { .. } => Self::SignV1,
+            TransactionBody::StampRequestV1 { .. } => Self::StampRequestV1,
             TransactionBody::ExtV1 { .. } => Self::ExtV1,
         }
     }
@@ -401,6 +404,9 @@ impl Context {
             }
             TransactionBody::PublishV1 { .. } => {}
             TransactionBody::SignV1 { .. } => {}
+            TransactionBody::StampRequestV1 { claim, .. } => {
+                contexts.push(Self::ObjectID(claim.id().deref().clone()));
+            }
             TransactionBody::ExtV1(ext) => {
                 if let Some(t) = ext.ty().as_ref() {
                     contexts.push(Self::ExtType(t.clone()));
@@ -1438,87 +1444,70 @@ mod tests {
         );
     }
 
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_revoke_admin_key_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_add_policy_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_delete_policy_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_make_claim_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_edit_claim_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_delete_claim_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_make_stamp_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_revoke_stamp_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_accept_stamp_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_delete_stamp_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_add_subkey_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_edit_subkey_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_revoke_subkey_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_delete_subkey_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_publish_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_sign_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn contexts_from_transaction_body_ext_v1() {
         todo!();

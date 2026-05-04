@@ -2,13 +2,13 @@
 
 use crate::{
     crypto::{
-        base::{Hash, HashAlgo, KeyID, SecretKey},
+        base::{CryptoKeypairMessageAnonymous, Hash, HashAlgo, KeyID, SecretKey},
         private::{PrivateContainer, ReEncrypt},
     },
     dag::{Dag, Ext, StampTransaction, Transaction, TransactionBody, TransactionEntry, TransactionID},
     error::{Error, Result},
     identity::{
-        claim::{ClaimID, ClaimSpec},
+        claim::{Claim, ClaimID, ClaimSpec},
         instance::{IdentityID, IdentityInstance},
         keychain::{AdminKey, AdminKeyID, Key, RevocationReason},
         stamp::{RevocationReason as StampRevocationReason, Stamp, StampEntry, StampID},
@@ -212,6 +212,13 @@ where
                     "Sign transactions cannot be applied to identities".into(),
                 ))
             }
+            TransactionBody::StampRequestV1 { .. } => {
+                // NOPE
+                Err(Error::TransactionInvalid(
+                    transaction.id().clone(),
+                    "StampRequest transactions cannot be applied to identities".into(),
+                ))
+            }
             TransactionBody::ExtV1 { .. } => {
                 // NOPE
                 Err(Error::TransactionInvalid(
@@ -409,6 +416,14 @@ where
         let remove_tx = find_tx_to_rm(self.transactions(), txid);
         self.transactions_mut().retain(|t| !remove_tx.contains(t.id()));
         Ok(self)
+    }
+
+    pub fn check_revoked(&self) -> Result<()> {
+        let identity_instance = self.build_identity_instance()?;
+        if *identity_instance.revoked() {
+            Err(Error::IdentityRevoked)?;
+        }
+        Ok(())
     }
 }
 
@@ -670,6 +685,7 @@ impl Identity<Full> {
 
     /// Delete a subkey.
     pub fn delete_subkey<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, id: KeyID) -> Result<Transaction<Full>> {
+        self.check_revoked()?;
         let body = TransactionBody::DeleteSubkeyV1 { id };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -689,15 +705,38 @@ impl Identity<Full> {
         body_hash_with: &HashAlgo,
         body: &[u8],
     ) -> Result<Transaction<Full>> {
+        self.check_revoked()?;
         let identity_instance = self.build_identity_instance()?;
-        if *identity_instance.revoked() {
-            Err(Error::IdentityRevoked)?;
-        }
         let creator = identity_instance.id().clone();
         let body_hash = match body_hash_with {
             HashAlgo::Blake3 => Hash::new_blake3(body)?,
         };
         let body = TransactionBody::SignV1 { creator, body_hash };
+        self.prepare_transaction(hash_with, now, body)
+    }
+
+    /// Create a stamp request.
+    ///
+    /// Takes a claim that contains either public data (which would be silly because the purpose of
+    /// this transaction is for *private* claims) or a private claim that has been re-encrypted
+    /// with an ephemeral [`SecretKey`], and an encrypted message to the intended recipient which
+    /// contains the ephemeral secret key when decrypted by the recipient (allowing the decryption
+    /// of the claim, which can then be verified and stamped).
+    pub fn stamp_request<T: Into<Timestamp> + Clone>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        claim: Claim<Full>,
+        decrypt_key_ciphertext: Option<CryptoKeypairMessageAnonymous>,
+    ) -> Result<Transaction<Full>> {
+        self.check_revoked()?;
+        if claim.has_private() && decrypt_key_ciphertext.is_none() {
+            Err(Error::KeyRequired)?;
+        }
+        let body = TransactionBody::StampRequestV1 {
+            claim,
+            decrypt_key_ciphertext,
+        };
         self.prepare_transaction(hash_with, now, body)
     }
 
@@ -711,10 +750,8 @@ impl Identity<Full> {
         context: Option<K>,
         payload: BinaryVec,
     ) -> Result<Transaction<Full>> {
+        self.check_revoked()?;
         let identity_instance = self.build_identity_instance()?;
-        if *identity_instance.revoked() {
-            Err(Error::IdentityRevoked)?;
-        }
         let creator = identity_instance.id().clone();
         let ext = Ext::new(
             creator,
@@ -2109,6 +2146,11 @@ mod tests {
             _ => panic!("Unexpected transaction: {sig_mod:?}"),
         }
         assert!(matches!(sig_mod.authorize(Some(&identity)).unwrap_err(), Error::TransactionIDMismatch(..)));
+    }
+
+    #[test]
+    fn identity_stamp_request() {
+        todo!();
     }
 
     #[test]

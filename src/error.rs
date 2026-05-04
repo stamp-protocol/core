@@ -138,6 +138,10 @@ pub enum Error {
     #[error("io error {0:?}")]
     IoError(#[from] std::io::Error),
 
+    /// A key was not provided by was required for an operation
+    #[error("key required")]
+    KeyRequired,
+
     /// Key not found in [Keychain][crate::identity::keychain::Keychain].
     #[error("keychain key not found: {0}")]
     KeychainKeyNotFound(crate::crypto::base::KeyID),

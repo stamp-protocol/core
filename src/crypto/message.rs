@@ -2,38 +2,33 @@
 //! manner.
 
 use crate::{
-    crypto::{
-        base::{CryptoKeypairMessage, SecretKey},
-        SignedObject,
-    },
+    crypto::base::{CryptoKeypairMessage, CryptoKeypairMessageAnonymous, SecretKey},
     error::{Error, Result},
-    identity::{instance::IdentityID, keychain::Subkey},
-    util::ser::{self, BinaryVec},
+    identity::keychain::Subkey,
+    util::ser::{self},
 };
 use private_parts::{Full, Public};
 use rand::{CryptoRng, RngCore};
 use rasn::{AsnType, Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-/// A wrapper around some encrypted message data, allowing us to provide easy
-/// serialization/deserialization methods.
-///
-/// TODO: rebuild this type. it should NOT use `SignedObject`
+/// A wrapper around encrypted message types, allowing a single container to be sent for either
+/// authentication messages or anonymous messages.
 #[derive(Debug, Clone, AsnType, Encode, Decode, Serialize, Deserialize)]
 #[rasn(choice)]
 pub enum Message {
     /// An anonymous message without any signature information.
     #[rasn(tag(explicit(0)))]
-    Anonymous(BinaryVec),
+    Anonymous(CryptoKeypairMessageAnonymous),
     /// A message signed by the sender that the recipient can use to verify the
     /// message came from where they think it came from.
     #[rasn(tag(explicit(1)))]
-    Signed(SignedObject<CryptoKeypairMessage>),
+    Signed(CryptoKeypairMessage),
 }
 
 impl Message {
     /// If this message is anonymous, returns the data of the anonymous message.
-    pub fn anonymous(&self) -> Option<&[u8]> {
+    pub fn anonymous(&self) -> Option<&CryptoKeypairMessageAnonymous> {
         match self {
             Self::Anonymous(anon) => Some(anon),
             _ => None,
@@ -41,7 +36,7 @@ impl Message {
     }
 
     /// IF this message is signed, returns the data of the signed message.
-    pub fn signed(&self) -> Option<&SignedObject<CryptoKeypairMessage>> {
+    pub fn signed(&self) -> Option<&CryptoKeypairMessage> {
         match self {
             Self::Signed(signed) => Some(signed),
             _ => None,
@@ -59,7 +54,6 @@ impl ser::SerdeBinary for Message {}
 pub fn seal<R: RngCore + CryptoRng>(
     rng: &mut R,
     sender_master_key: &SecretKey,
-    sender_identity_id: &IdentityID,
     sender_key: &Subkey<Full>,
     recipient_key: &Subkey<Public>,
     message: &[u8],
@@ -67,9 +61,7 @@ pub fn seal<R: RngCore + CryptoRng>(
     let sender_crypto = sender_key.key().as_cryptokey().ok_or(Error::KeychainSubkeyWrongType)?;
     let recipient_crypto = recipient_key.key().as_cryptokey().ok_or(Error::KeychainSubkeyWrongType)?;
     let sealed = recipient_crypto.seal(rng, sender_master_key, sender_crypto, message)?;
-    let sender_key_id = sender_key.key_id();
-    let signed_msg = SignedObject::new(sender_identity_id.clone(), sender_key_id, sealed);
-    Ok(Message::Signed(signed_msg))
+    Ok(Message::Signed(sealed))
 }
 
 /// Open a message sent with [seal].
@@ -85,7 +77,7 @@ pub fn open(
     let sender_crypto = sender_key.key().as_cryptokey().ok_or(Error::KeychainSubkeyWrongType)?;
     let recipient_crypto = recipient_key.key().as_cryptokey().ok_or(Error::KeychainSubkeyWrongType)?;
     let signed_message = match sealed {
-        Message::Signed(SignedObject { ref body, .. }) => body,
+        Message::Signed(body) => body,
         _ => Err(Error::CryptoWrongMessageType)?,
     };
     recipient_crypto.open(recipient_master_key, sender_crypto, signed_message)
@@ -114,35 +106,7 @@ pub fn open_anonymous(recipient_master_key: &SecretKey, recipient_key: &Subkey<F
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        crypto::base::{CryptoKeypair, KeyID},
-        identity::keychain::Key,
-        util::test,
-    };
-
-    #[test]
-    fn message_anonymous_signed_maybe() {
-        let mut rng = crate::util::test::rng();
-        let master_key = SecretKey::new_xchacha20poly1305(&mut rng).unwrap();
-        let sender_key = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
-        let recipient_key = CryptoKeypair::new_curve25519xchacha20poly1305(&mut rng, &master_key).unwrap();
-
-        let sealed = recipient_key
-            .seal(&mut rng, &master_key, &sender_key, b"'I KNOW!' SAID THE BOY, AS HE LEAPT TO HIS FEET")
-            .unwrap();
-        let msg1 = Message::Signed(SignedObject::new(IdentityID::blank(), KeyID::random_crypto(), sealed));
-        let msg2 = Message::Anonymous(BinaryVec::from(vec![1, 2, 3, 42]));
-
-        assert_eq!(msg1.anonymous(), None);
-        match msg1.signed() {
-            Some(signed) => {
-                assert_eq!(signed.signed_by_identity(), &IdentityID::blank());
-            }
-            _ => panic!("Invalid return for signed"),
-        }
-        assert_eq!(msg2.anonymous(), Some(vec![1, 2, 3, 42].as_slice()));
-        assert!(msg2.signed().is_none());
-    }
+    use crate::{crypto::base::CryptoKeypair, identity::keychain::Key, util::test};
 
     #[test]
     fn msg_send_open() {
@@ -154,15 +118,7 @@ mod tests {
         let recipient_subkey = recipient_identity.keychain().subkey_by_name("cryptololol").unwrap();
 
         let msg = b"And if you ever put your goddamn hands on my wife again, I will...";
-        let sealed = seal(
-            &mut rng,
-            &sender_master_key,
-            sender_identity.id(),
-            sender_subkey,
-            &recipient_subkey.clone().into(),
-            msg,
-        )
-        .unwrap();
+        let sealed = seal(&mut rng, &sender_master_key, sender_subkey, &recipient_subkey.clone().into(), msg).unwrap();
         match sealed {
             Message::Signed(_) => {}
             _ => panic!("Bad message format returned"),
@@ -175,7 +131,7 @@ mod tests {
         // modify the stinkin' message and verify it fails
         let mut sealed2 = sealed.clone();
         match &mut sealed2 {
-            Message::Signed(SignedObject { body: ref mut cm, .. }) => {
+            Message::Signed(ref mut cm) => {
                 let cipher = cm.ciphertext_mut();
                 let len = cipher.len();
                 let val = &mut cipher[len - 3];
@@ -226,9 +182,9 @@ mod tests {
         // modify the stinkin' message and verify it fails
         let mut sealed2 = sealed.clone();
         match &mut sealed2 {
-            Message::Anonymous(ref mut cipher) => {
-                let len = cipher.len();
-                let val = &mut cipher[len - 3];
+            Message::Anonymous(ref mut msg) => {
+                let len = msg.ciphertext().len();
+                let val = &mut msg.ciphertext_mut()[len - 3];
                 // modify the ciphertext
                 if val == &mut 42 {
                     *val = 17;

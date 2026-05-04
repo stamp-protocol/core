@@ -353,6 +353,11 @@ impl<T: Clone, M: PrivacyMode> MaybePrivate<M, T> {
             _ => None,
         }
     }
+
+    /// Returns if this `MaybePrivate` contains private data.
+    pub fn is_private(&self) -> bool {
+        matches!(self, MaybePrivate::PrivateVerifiable(_))
+    }
 }
 
 impl<T: Encode + Decode + Clone> MaybePrivate<Full, T> {

@@ -123,6 +123,9 @@ impl SecretKey {
     pub fn make_nonce(&self, bytes: &[u8]) -> Result<SecretKeyNonce> {
         match self {
             SecretKey::XChaCha20Poly1305(_) => {
+                if bytes.len() < 24 {
+                    Err(Error::BadLength)?;
+                }
                 let nonce_bytes: [u8; 24] = bytes[0..24].try_into().map_err(|_| Error::BadLength)?;
                 Ok(SecretKeyNonce::XChaCha20Poly1305(Binary::new(nonce_bytes)))
             }

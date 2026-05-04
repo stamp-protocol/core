@@ -8,13 +8,13 @@
 
 use crate::{
     crypto::{
-        base::{Hash, HashAlgo, KeyID, SecretKey},
+        base::{CryptoKeypairMessageAnonymous, Hash, HashAlgo, KeyID, SecretKey},
         private::{PrivateContainer, ReEncrypt},
     },
     dag::{DagNode, DagTamperUtil, Identity},
     error::{Error, Result},
     identity::{
-        claim::{ClaimID, ClaimSpec},
+        claim::{Claim, ClaimID, ClaimSpec},
         instance::{IdentityID, IdentityInstance},
         keychain::{AdminKey, AdminKeyID, AdminKeypair, Key, RevocationReason},
         stamp::{Confidence, RevocationReason as StampRevocationReason, StampEntry, StampID},
@@ -377,6 +377,27 @@ pub enum TransactionBody<M: PrivacyMode> {
         #[rasn(tag(explicit(1)))]
         body_hash: Hash,
     },
+    /// A request for a claim to be stamped (basically a CSR, in the parlance of our
+    /// times).
+    ///
+    /// Generally this only needs to be created for *private* claims where you wish
+    /// to decrypt the private data then immediately encrypt it with a private key
+    /// from the stamper's keychain, thus giving the stamper and only the stamper
+    /// access to the claim's private data.
+    ///
+    /// In the case of public claims, a simple "hey, can you stamp claim X" would
+    /// suffice because the data is public.
+    ///
+    /// `StampRequest` transactions cannot be applied to the identity!
+    #[rasn(tag(explicit(21)))]
+    StampRequestV1 {
+        /// The claim we wish to have stamped
+        #[rasn(tag(explicit(0)))]
+        claim: Claim<Full>,
+        /// The (optional) decrypting key for the claim.
+        #[rasn(tag(explicit(1)))]
+        decrypt_key_ciphertext: Option<CryptoKeypairMessageAnonymous>,
+    },
     /// Create a transaction for use in an external network. This allows Stamp to act
     /// as a transactional medium for other networks. If the members of that network
     /// can speak Stamp, they can use it to create and sign custom transactions.
@@ -391,7 +412,7 @@ pub enum TransactionBody<M: PrivacyMode> {
     ///
     /// Note that `Ext` transactions cannot be applied to the identity...Stamp allows
     /// their creation but provides no methods for executing them.
-    #[rasn(tag(explicit(21)))]
+    #[rasn(tag(explicit(22)))]
     ExtV1(Ext),
 }
 
@@ -453,6 +474,13 @@ impl ReEncrypt for TransactionBody<Full> {
             Self::DeleteSubkeyV1 { id } => Self::DeleteSubkeyV1 { id },
             Self::PublishV1 { identity } => Self::PublishV1 { identity },
             Self::SignV1 { creator, body_hash } => Self::SignV1 { creator, body_hash },
+            Self::StampRequestV1 {
+                claim,
+                decrypt_key_ciphertext,
+            } => Self::StampRequestV1 {
+                claim,
+                decrypt_key_ciphertext,
+            },
             Self::ExtV1(ext) => Self::ExtV1(ext),
         };
         Ok(new_self)
@@ -590,10 +618,10 @@ impl<M: PrivacyMode> TransactionEntry<M> {
 #[parts(private_data = "PrivateContainer")]
 #[getset(get = "pub", get_mut = "pub(crate)", set = "pub(crate)")]
 pub struct Transaction<M: PrivacyMode> {
-    /// This is a hash of the transaction's `entry`
+    /// This is a hash of the (ASN1-DER) serialized form of this transaction's `entry`
     #[rasn(tag(explicit(0)))]
     id: TransactionID,
-    /// This holds our serialized [`TransactionEntry`]
+    /// This holds our [`TransactionEntry`]
     #[rasn(tag(explicit(1)))]
     entry: TransactionEntry<M>,
     /// The signatures on this transaction's ID.
@@ -1015,10 +1043,9 @@ impl PublishTransaction {
         // do a verification of the full published identity.
         match self.entry().body() {
             TransactionBody::PublishV1 { identity } => {
-                let identity_pub = Identity::<Public>::from(identity.clone());
-                let identity = identity_pub.build_identity_instance()?;
-                self.authorize(Some(&identity))?;
-                Ok((identity_pub, identity))
+                let instance = identity.build_identity_instance()?;
+                self.authorize(Some(&instance))?;
+                Ok((identity.clone(), instance))
             }
             _ => Err(Error::TransactionMismatch)?,
         }
@@ -1045,6 +1072,34 @@ impl SignTransaction {
     pub fn get_body_hash(&self) -> Result<&Hash> {
         match self.entry().body() {
             TransactionBody::SignV1 { ref body_hash, .. } => Ok(body_hash),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+}
+
+/// A wrapper around `StampRequest` transactions
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, AsnType, Serialize, Deserialize)]
+#[rasn(delegate)]
+pub struct StampRequestTransaction(Transaction<Public>);
+
+define_wrapper_tx!(StampRequestTransaction, TransactionBody::StampRequestV1);
+
+impl StampRequestTransaction {
+    /// If this is an Sign transaction, grab the `creator` field.
+    pub fn get_claim(&self) -> Result<&Claim<Full>> {
+        match self.entry().body() {
+            TransactionBody::StampRequestV1 { ref claim, .. } => Ok(claim),
+            _ => Err(Error::TransactionMismatch),
+        }
+    }
+
+    /// If this is a Sign transaction, grab the `body_hash` field
+    pub fn get_decrypt_key(&self) -> Result<&Option<CryptoKeypairMessageAnonymous>> {
+        match self.entry().body() {
+            TransactionBody::StampRequestV1 {
+                ref decrypt_key_ciphertext,
+                ..
+            } => Ok(decrypt_key_ciphertext),
             _ => Err(Error::TransactionMismatch),
         }
     }
@@ -1174,13 +1229,11 @@ mod tests {
         assert!(!identity.transactions()[0].is_signed_by(&admin_key2.clone().into()));
     }
 
-    #[ignore]
     #[test]
     fn trans_validate_publish_transaction() {
         todo!();
     }
 
-    #[ignore]
     #[test]
     fn trans_validate_and_open_publish_transaction() {
         todo!();
@@ -1200,7 +1253,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn trans_ord() {
         todo!("make sure transaction orders by created asc then id asc");
     }
@@ -1639,64 +1691,57 @@ mod tests {
         }
     }
 
-    #[ignore]
     #[test]
     fn trans_serde_edit_claim_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_delete_claim_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_make_stamp_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_revoke_stamp_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_accept_stamp_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_delete_stamp_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_add_subkey_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_edit_subkey_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_revoke_subkey_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_delete_subkey_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_publish_v1() {
         todo!();
     }
-    #[ignore]
     #[test]
     fn trans_serde_sign_v1() {
+        todo!();
+    }
+
+    #[test]
+    fn trans_serde_stamp_request_v1() {
         todo!();
     }
 

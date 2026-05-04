@@ -244,6 +244,27 @@ pub enum ClaimSpec<M: PrivacyMode> {
     },
 }
 
+impl<M: PrivacyMode> ClaimSpec<M> {
+    /// Determine if this spec has private data (ie, [`MaybePrivate::PrivateVerifiable`])
+    pub fn has_private(&self) -> bool {
+        match self {
+            Self::Identity(maybe) => maybe.is_private(),
+            Self::Name(maybe) => maybe.is_private(),
+            Self::Birthday(maybe) => maybe.is_private(),
+            Self::Email(maybe) => maybe.is_private(),
+            Self::Photo(maybe) => maybe.is_private(),
+            Self::Pgp(maybe) => maybe.is_private(),
+            Self::Domain(maybe) => maybe.is_private(),
+            Self::Url(maybe) => maybe.is_private(),
+            Self::Address(maybe) => maybe.is_private(),
+            Self::PhoneNumber(maybe) => maybe.is_private(),
+            Self::Relation(maybe) => maybe.is_private(),
+            Self::RelationExtension(maybe) => maybe.is_private(),
+            Self::Extension { value, .. } => value.is_private(),
+        }
+    }
+}
+
 impl ClaimSpec<Full> {
     fn into_public(self, open_key: &SecretKey) -> Result<Self> {
         let public = match self {
@@ -267,6 +288,7 @@ impl ClaimSpec<Full> {
         Ok(public)
     }
 }
+
 impl ReEncrypt for ClaimSpec<Full> {
     fn reencrypt<R: RngCore + CryptoRng>(self, rng: &mut R, current_key: &SecretKey, new_key: &SecretKey) -> Result<Self> {
         let spec = match self {
@@ -321,6 +343,11 @@ impl<M: PrivacyMode> Claim<M> {
             stamps: Vec::new(),
             name,
         }
+    }
+
+    /// Determine if this claim contains private data.
+    pub fn has_private(&self) -> bool {
+        self.spec().has_private()
     }
 
     /// Given a claim we want to "instant verify" (ie, any claim type that can

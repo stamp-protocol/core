@@ -147,6 +147,9 @@ impl std::fmt::Display for KeyID {
 /// Generate a secret key from a passphrase/salt
 pub fn derive_secret_key(passphrase: &[u8], salt_bytes: &[u8], ops: u32, mem: u32) -> Result<SecretKey> {
     const LEN: usize = 32;
+    if salt_bytes.len() < 16 {
+        Err(Error::CryptoBadSalt)?
+    }
     let salt: &[u8; 16] = salt_bytes[0..16].try_into().map_err(|_| Error::CryptoBadSalt)?;
     let mut key = [0u8; 32];
     let argon2_ctx = argon2::Argon2::new(
