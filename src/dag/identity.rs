@@ -11,7 +11,7 @@ use crate::{
         claim::{Claim, ClaimID, ClaimSpec},
         instance::{IdentityID, IdentityInstance},
         keychain::{AdminKey, AdminKeyID, Key, RevocationReason},
-        stamp::{RevocationReason as StampRevocationReason, Stamp, StampEntry, StampID},
+        stamp::{Confidence, RevocationReason as StampRevocationReason, Stamp, StampEntry, StampID},
     },
     policy::{Policy, PolicyContainer, PolicyID},
     util::{
@@ -579,11 +579,22 @@ impl Identity<Full> {
     }
 
     /// Make a transaction that stamps a claim. This transaction can be saved
-    /// with the stemping identity (stamper) in order to advertise it as a public
+    /// with the stamping identity (stamper) in order to advertise it as a public
     /// stamp.
     ///
     /// It can also not be added to the identity and sent directly to the stampee.
-    pub fn make_stamp<T: Into<Timestamp> + Clone>(&self, hash_with: &HashAlgo, now: T, stamp: StampEntry) -> Result<Transaction<Full>> {
+    pub fn make_stamp<T: Into<Timestamp> + Clone>(
+        &self,
+        hash_with: &HashAlgo,
+        now: T,
+        stampee: IdentityID,
+        claim_id: ClaimID,
+        confidence: Confidence,
+        expires: Option<Timestamp>,
+    ) -> Result<Transaction<Full>> {
+        self.check_revoked()?;
+        let identity_id = self.identity_id().ok_or_else(|| Error::DagMissingIdentity)?;
+        let stamp = StampEntry::new(identity_id, stampee, claim_id, confidence, expires);
         let body = TransactionBody::MakeStampV1 { stamp };
         self.prepare_transaction(hash_with, now, body)
     }
@@ -1700,16 +1711,15 @@ mod tests {
         let identity_stamper1 = identity_stamper.build_identity_instance().unwrap();
         assert_eq!(identity_stamper1.stamps().len(), 0);
 
-        let entry = StampEntry::new(
-            IdentityID::from(identity_stamper.transactions()[0].id().clone()),
-            identity_instance.id().clone(),
-            claim.id().clone(),
-            Confidence::Low,
-            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
-        );
-
         let make_stamp_trans = identity_stamper
-            .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry)
+            .make_stamp(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                identity_instance.id().clone(),
+                claim.id().clone(),
+                Confidence::Low,
+                Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
+            )
             .unwrap()
             .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();
@@ -1734,16 +1744,15 @@ mod tests {
 
         let identity_stampee2_instance = identity2.build_identity_instance().unwrap();
         let claim = identity_stampee2_instance.claims()[0].clone();
-        let entry = StampEntry::new(
-            IdentityID::from(identity_stamper.transactions()[0].id().clone()),
-            identity_stampee2_instance.id().clone(),
-            claim.id().clone(),
-            Confidence::Low,
-            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
-        );
-
         let make_stamp_trans = identity_stamper
-            .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry)
+            .make_stamp(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                identity_stampee2_instance.id().clone(),
+                claim.id().clone(),
+                Confidence::Low,
+                Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
+            )
             .unwrap()
             .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();
@@ -1791,14 +1800,16 @@ mod tests {
         let claim = identity_instance.claims()[0].clone();
 
         let (master_key_stamper, identity_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let entry = StampEntry::new(
-            IdentityID::from(identity_stamper.transactions()[0].id().clone()),
-            identity_instance.id().clone(),
-            claim.id().clone(),
-            Confidence::Low,
-            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
-        );
-        let stamp_transaction_unsigned = identity_stamper.make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry).unwrap();
+        let stamp_transaction_unsigned = identity_stamper
+            .make_stamp(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                identity_instance.id().clone(),
+                claim.id().clone(),
+                Confidence::Low,
+                Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
+            )
+            .unwrap();
         let stamp_transaction = stamp_transaction_unsigned
             .clone()
             .sign(&master_key_stamper, &admin_key_stamper)
@@ -1868,15 +1879,15 @@ mod tests {
         let claim = identity_instance.claims()[0].clone();
 
         let (master_key_stamper, identity_stamper, admin_key_stamper) = test::create_fake_identity(&mut rng, Timestamp::now());
-        let entry = StampEntry::new(
-            IdentityID::from(identity_stamper.transactions()[0].id().clone()),
-            identity_instance.id().clone(),
-            claim.id().clone(),
-            Confidence::Low,
-            Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
-        );
         let stamp_transaction = identity_stamper
-            .make_stamp(&HashAlgo::Blake3, Timestamp::now(), entry)
+            .make_stamp(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                identity_instance.id().clone(),
+                claim.id().clone(),
+                Confidence::Low,
+                Some(Timestamp::from_str("2060-01-01T06:59:00Z").unwrap()),
+            )
             .unwrap()
             .sign(&master_key_stamper, &admin_key_stamper)
             .unwrap();

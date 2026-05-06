@@ -191,6 +191,9 @@ impl<M: PrivacyMode> IdentityInstance<M> {
 
     /// Accept a stamp on one of our claims.
     pub(crate) fn accept_stamp(mut self, stamp: Stamp) -> Result<Self> {
+        if stamp.entry().stampee() != self.id() {
+            Err(Error::StampIdentityMismatch)?;
+        }
         let claim_id = stamp.entry().claim_id();
         let claim = self
             .claims_mut()

@@ -2102,7 +2102,14 @@ signatures: []
         );
 
         let stamp_tx: StampTransaction = identity_stamper
-            .make_stamp(&HashAlgo::Blake3, now.clone(), stamp_entry.clone())
+            .make_stamp(
+                &HashAlgo::Blake3,
+                now.clone(),
+                identity_claimer.identity_id().unwrap(),
+                identity_claimer_instance.claims().last().unwrap().id().clone(),
+                Confidence::High,
+                None::<Timestamp>,
+            )
             .unwrap()
             .try_into()
             .unwrap();

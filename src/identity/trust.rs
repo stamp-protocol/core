@@ -251,10 +251,20 @@ impl<'a> Network<'a> {
 
     fn add_node(&mut self, identity: &'a IdentityInstance<Public>) {
         for stamp in identity.stamps() {
+            // check that the stamps actually belong to this identity. i can't imagine how they
+            // wouldn't but let's make sure it's hard to game trust
+            if stamp.entry().stamper() != identity.id() {
+                continue;
+            }
             self.index_stamp(identity.id(), stamp);
         }
         for claim in identity.claims() {
             for stamp in claim.stamps() {
+                // check that the stamps actually belong to this identity. i can't imagine how they
+                // wouldn't but let's make sure it's hard to game trust
+                if stamp.entry().stampee() != identity.id() {
+                    continue;
+                }
                 self.index_stamp(stamp.entry().stamper(), stamp);
             }
         }
@@ -642,7 +652,12 @@ mod tests {
                     let now = Timestamp::from_str("2016-04-04T02:00:00-0700").unwrap();
                     let trans = self
                         .identity
-                        .make_stamp(&HashAlgo::Blake3, now, entry)
+                        .make_stamp(&HashAlgo::Blake3, now,
+                            entry.stampee().clone(),
+                            entry.claim_id().clone(),
+                            entry.confidence().clone(),
+                            entry.expires().clone(),
+                        )
                         .unwrap()
                         .sign(&self.master, &self.admin)
                         .unwrap();

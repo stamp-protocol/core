@@ -175,6 +175,10 @@ pub enum Error {
     #[error("yaml serialization error")]
     SerializeYaml(#[from] serde_yaml::Error),
 
+    /// We're trying to add a stamp to an identity the stamp wasn't made for
+    #[error("stamp is node for this identity")]
+    StampIdentityMismatch,
+
     /// The hash of a transaction's body does not match its ID. He's tampered
     /// with it.
     #[error("transaction ID mismatch: {0}")]
