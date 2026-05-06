@@ -325,6 +325,10 @@ mod tests {
     };
     use std::collections::VecDeque;
 
+    mod private_parts_reexport {
+        pub use crate::{Full, MergeError, PrivateParts, Public};
+    }
+
     #[derive(Debug)]
     pub enum PrivateValue {
         Octets(Vec<u8>),
@@ -667,6 +671,34 @@ mod tests {
         assert_eq!(keychain_rebuilt.keys[1].secret, &[1u8; 32]);
         assert_eq!(keychain_rebuilt.admin_key.as_ref().unwrap().name, "jerry".as_bytes());
         assert_eq!(keychain_rebuilt.admin_key.as_ref().unwrap().secret, &[3u8; 32]);
+    }
+
+    #[test]
+    fn derive_supports_reexported_crate_path() {
+        #[derive(Debug, PrivateParts)]
+        #[parts(crate = "crate::tests::private_parts_reexport", private_data = "PrivateContainer")]
+        struct ReexportedKeychain<M: PrivacyMode> {
+            user_id: u32,
+            keys: Vec<Key<M>>,
+        }
+
+        let keychain = ReexportedKeychain::<Full> {
+            user_id: 7,
+            keys: vec![Key {
+                name: b"seven".to_vec(),
+                secret: vec![7u8; 32],
+            }],
+        };
+
+        let (public, mut private) = keychain.strip();
+        assert_eq!(public.user_id, 7);
+        assert_eq!(public.keys[0].name, b"seven");
+        assert_eq!(public.keys[0].secret, ());
+
+        let merged = ReexportedKeychain::<Full>::merge(public, &mut private).unwrap();
+        assert_eq!(merged.user_id, 7);
+        assert_eq!(merged.keys[0].name, b"seven");
+        assert_eq!(merged.keys[0].secret, vec![7u8; 32]);
     }
 
     #[test]

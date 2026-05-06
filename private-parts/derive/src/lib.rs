@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
+use syn::ext::IdentExt;
 use syn::fold::Fold;
 use syn::parse::ParseStream;
 use syn::punctuated::Punctuated;
@@ -22,8 +23,9 @@ pub fn derive_private_parts(input: TokenStream) -> TokenStream {
 }
 
 fn expand_private_parts(input: DeriveInput) -> Result<TokenStream2> {
-    let crate_path = crate_path();
-    let parts = PartsAttr::from_attrs(&input.attrs, &crate_path)?;
+    let default_crate_path = crate_path();
+    let parts = PartsAttr::from_attrs(&input.attrs, &default_crate_path)?;
+    let crate_path = parts.crate_path.clone();
     let privacy_param = find_privacy_param(&input)?;
     let private_replacements = vec![ModeReplacement {
         ident: privacy_param.clone(),
@@ -845,13 +847,14 @@ fn matches_privacy_mode(bound: &TypeParamBound) -> bool {
 }
 
 struct PartsAttr {
+    crate_path: TokenStream2,
     private_mode: Type,
     public_mode: Type,
     private_data_ty: Type,
 }
 
 impl PartsAttr {
-    fn from_attrs(attrs: &[Attribute], crate_path: &TokenStream2) -> Result<Self> {
+    fn from_attrs(attrs: &[Attribute], default_crate_path: &TokenStream2) -> Result<Self> {
         let mut found = None;
         for attr in attrs {
             if attr.path().is_ident("parts") {
@@ -864,9 +867,11 @@ impl PartsAttr {
         }
         let parsed =
             found.ok_or_else(|| syn::Error::new(Span::call_site(), "#[derive(PrivateParts)] requires a #[parts(...)] attribute"))?;
+        let crate_path = parsed.crate_path.unwrap_or_else(|| default_crate_path.clone());
         let default_private = syn::parse2::<Type>(quote!(#crate_path::Full)).expect("Full type");
         let default_public = syn::parse2::<Type>(quote!(#crate_path::Public)).expect("Public type");
         Ok(Self {
+            crate_path,
             private_mode: parsed.private_mode.unwrap_or(default_private),
             public_mode: parsed.public_mode.unwrap_or(default_public),
             private_data_ty: parsed
@@ -877,6 +882,7 @@ impl PartsAttr {
 }
 
 struct PartsAttrArgs {
+    crate_path: Option<TokenStream2>,
     private_mode: Option<Type>,
     public_mode: Option<Type>,
     private_data_ty: Option<Type>,
@@ -884,36 +890,46 @@ struct PartsAttrArgs {
 
 impl PartsAttrArgs {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
+        let mut crate_path = None;
         let mut private_mode = None;
         let mut public_mode = None;
         let mut private_data_ty = None;
 
         while !input.is_empty() {
-            let ident: Ident = input.parse()?;
+            let ident: Ident = input.call(Ident::parse_any)?;
             input.parse::<syn::Token![=]>()?;
             let lit: LitStr = input.parse()?;
-            let ty: Type = syn::parse_str(&lit.value()).map_err(|err| syn::Error::new(lit.span(), err))?;
 
             match ident.to_string().as_str() {
+                "crate" | "crate_path" => {
+                    if crate_path.is_some() {
+                        return Err(syn::Error::new(ident.span(), "duplicate crate entry"));
+                    }
+                    let path: syn::Path = syn::parse_str(&lit.value()).map_err(|err| syn::Error::new(lit.span(), err))?;
+                    crate_path = Some(quote!(#path));
+                }
                 "private" => {
+                    let ty: Type = syn::parse_str(&lit.value()).map_err(|err| syn::Error::new(lit.span(), err))?;
                     if private_mode.is_some() {
                         return Err(syn::Error::new(ident.span(), "duplicate private entry"));
                     }
                     private_mode = Some(ty);
                 }
                 "public" => {
+                    let ty: Type = syn::parse_str(&lit.value()).map_err(|err| syn::Error::new(lit.span(), err))?;
                     if public_mode.is_some() {
                         return Err(syn::Error::new(ident.span(), "duplicate public entry"));
                     }
                     public_mode = Some(ty);
                 }
                 "private_data" => {
+                    let ty: Type = syn::parse_str(&lit.value()).map_err(|err| syn::Error::new(lit.span(), err))?;
                     if private_data_ty.is_some() {
                         return Err(syn::Error::new(ident.span(), "duplicate private_data entry"));
                     }
                     private_data_ty = Some(ty);
                 }
-                _ => return Err(syn::Error::new(ident.span(), "expected keys: private, public, private_data")),
+                _ => return Err(syn::Error::new(ident.span(), "expected keys: crate, crate_path, private, public, private_data")),
             }
 
             if input.peek(syn::Token![,]) {
@@ -922,6 +938,7 @@ impl PartsAttrArgs {
         }
 
         Ok(Self {
+            crate_path,
             private_mode,
             public_mode,
             private_data_ty,
