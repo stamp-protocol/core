@@ -9,6 +9,10 @@ use thiserror::Error;
 /// which an expectation is not met or a problem occurs.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// The given `AdminKey` being used to sign a transaction has been revoked.
+    #[error("admin key is revoked and cannot be used for signing")]
+    AdminKeyRevoked(crate::identity::keychain::AdminKeyID),
+
     /// An error while engaging in deserialization.
     #[error("ASN.1 deserialization error")]
     ASNDeserialize(rasn::error::DecodeErrorKind),

@@ -659,8 +659,11 @@ impl<M: PrivacyMode> Transaction<M> {
     }
 
     /// Sign this transaction in-place.
-    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<()> {
-        let admin_key_pub: AdminKeypair<Public> = admin_key.clone().into();
+    pub fn sign_mut(&mut self, master_key: &SecretKey, admin_key: &AdminKey<Full>) -> Result<()> {
+        if admin_key.revocation().is_some() {
+            Err(Error::AdminKeyRevoked(admin_key.key_id()))?;
+        }
+        let admin_key_pub: AdminKeypair<Public> = admin_key.key().clone().into();
         let sig_exists = self.signatures().iter().find(|sig| match sig {
             MultisigPolicySignature::Key { key, .. } => key == &admin_key_pub,
         });
@@ -670,7 +673,7 @@ impl<M: PrivacyMode> Transaction<M> {
         let serialized = ser::serialize(self.id().deref())?;
         let sig = admin_key.sign(master_key, &serialized[..])?;
         let policy_sig = MultisigPolicySignature::Key {
-            key: admin_key.clone().into(),
+            key: admin_key_pub,
             signature: sig,
         };
         self.signatures_mut().push(policy_sig);
@@ -679,7 +682,7 @@ impl<M: PrivacyMode> Transaction<M> {
 
     /// Sign this transaction. This consumes the transaction, adds the signature
     /// to the `signatures` list, then returns the new transaction.
-    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKeypair<Full>) -> Result<Self> {
+    pub fn sign(mut self, master_key: &SecretKey, admin_key: &AdminKey<Full>) -> Result<Self> {
         self.sign_mut(master_key, admin_key)?;
         Ok(self)
     }
