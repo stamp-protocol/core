@@ -365,13 +365,19 @@ where
             Err(e) => Err(e)?,
         };
         let identity_instance = Self::apply_transaction(identity_instance_maybe, &transaction)?;
-        self.transactions_mut().push(transaction);
+        // clone the tx list so if our check fails we don't poison our working identity with a
+        // broken tx
+        let mut transactions_clone = self.clone();
+        transactions_clone.transactions_mut().push(transaction);
         // build it again
-        let _identity_maybe = match self.build_identity_instance() {
+        let _identity_maybe = match transactions_clone.build_identity_instance() {
             Ok(id) => Some(id),
             Err(Error::DagEmpty) => None,
             Err(e) => Err(e)?,
         };
+        // success! set the cloned list into our real list.
+        let Self(transactions) = transactions_clone;
+        self.set_transactions(transactions);
         Ok(identity_instance)
     }
 
@@ -2217,6 +2223,50 @@ mod tests {
         claim_trans.signatures_mut().push(policy_sig);
         let res = identity.clone().push_transaction(claim_trans);
         assert!(matches!(res.err(), Some(Error::TransactionSignatureInvalid(_, _))));
+    }
+
+    #[test]
+    fn identity_push_failed_does_not_mutate_identity() {
+        let mut rng = crate::util::test::rng();
+        let (master_key, mut identity, admin_key) = test::create_fake_identity(&mut rng, Timestamp::now());
+        let starting_len = identity.transactions().len();
+        identity.build_identity_instance().unwrap();
+
+        let mut claim_trans = identity
+            .make_claim(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                ClaimSpec::Name(MaybePrivate::new_public("Mr. Larry Johnson".into())),
+                None::<String>,
+            )
+            .unwrap()
+            .sign(&master_key, &admin_key)
+            .unwrap();
+        match claim_trans.entry_mut().body_mut() {
+            TransactionBody::MakeClaimV1 { ref mut name, .. } => {
+                *name = Some("tampered".into());
+            }
+            _ => panic!("Unexpected transaction: {claim_trans:?}"),
+        }
+
+        let res = identity.push_transaction_mut(claim_trans);
+        assert!(matches!(res, Err(Error::TransactionIDMismatch(..))));
+        assert_eq!(identity.transactions().len(), starting_len);
+        identity.build_identity_instance().unwrap();
+
+        let valid_claim = identity
+            .make_claim(
+                &HashAlgo::Blake3,
+                Timestamp::now(),
+                ClaimSpec::Name(MaybePrivate::new_public("Actually Valid".into())),
+                None::<String>,
+            )
+            .unwrap()
+            .sign(&master_key, &admin_key)
+            .unwrap();
+        identity.push_transaction_mut(valid_claim).unwrap();
+        assert_eq!(identity.transactions().len(), starting_len + 1);
+        assert_eq!(identity.build_identity_instance().unwrap().claims().len(), 1);
     }
 
     #[test]
