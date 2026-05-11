@@ -517,12 +517,12 @@ where
                 if node.prev().len() > 1 {
                     // ok, we're merging a set of transactions together.
                     //
-                    // we first need to verify this transaction is valid. the best way to do this is to
-                    // find the branch that all the to-be-merged transactions have in common, pull out
-                    // the identity for that branch, and use it to verify our merge transaction.
+                    // grab the branch heads from all the branches being merged and validate our
+                    // merge transaction against each one. this makes sure our merge is valid per
+                    // the state of each branch being merged.
 
-                    // so first, grab all the ancestors from our previous transactions, and put them
-                    // into BTreeSets so they're pre-sorted for us.
+                    // so first, grab the ancestry from our previous transactions, and put them into
+                    // BTreeSets so they're pre-sorted for us.
                     let ancestry_sets = node
                         .prev()
                         .iter()
@@ -535,6 +535,29 @@ where
                                 })
                         })
                         .collect::<core::result::Result<Vec<BTreeSet<&I>>, E>>()?;
+                    let validation_branches = node
+                        .prev()
+                        .iter()
+                        .map(|tid| {
+                            branch_tracker
+                                .get(tid)
+                                .and_then(|ancestors| ancestors.last().copied())
+                                .ok_or_else(|| {
+                                    Error::DagBuildError(format!(
+                                        "apply() -- {:?} merge: missing parent branch state anchor: {:?}",
+                                        node.id(),
+                                        tid
+                                    ))
+                                    .into()
+                                })
+                        })
+                        .collect::<core::result::Result<BTreeSet<&I>, E>>()?;
+                    for branch in validation_branches {
+                        let branch_state = branch_state.get(branch).ok_or_else(|| {
+                            Error::DagBuildError(format!("apply() -- {:?} merge: missing parent branch state {:?}", node.id(), branch))
+                        })?;
+                        validate_fn(branch_state, node)?;
+                    }
                     // now we're going to run the intersection of all the ancestry sets...
                     let intersected = match ancestry_sets.len() {
                         0 => BTreeSet::new(),
@@ -555,11 +578,6 @@ where
                         .rev()
                         .find(|tid| intersected.contains(*tid))
                         .ok_or_else(|| Error::DagBuildError(format!("apply() -- {:?} merge: no nearest common ancestor", node.id())))?;
-                    // now grab the identity associated with this common branch and verify...
-                    let most_recent_common_ancestor_state = branch_state.get(most_recent_common_branch).ok_or_else(|| {
-                        Error::DagBuildError(format!("apply() -- {:?} merge: missing nearest common ancestor", node.id()))
-                    })?;
-                    validate_fn(most_recent_common_ancestor_state, node)?;
 
                     // verified!
                     //
@@ -1440,6 +1458,33 @@ mod tests {
     }
 
     #[test]
+    fn dag_apply_merge_validates_against_each_parent_branch() {
+        let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch and I merge correctly.");
+        let trans_a = Trans::new(&mut rng, "2047-12-01T00:00:00Z", vec![], TransOp::AllowEven);
+        let trans_b = Trans::new(&mut rng, "2047-12-01T00:00:01Z", vec![&trans_a], TransOp::BlockEven);
+        let trans_c = Trans::new(&mut rng, "2047-12-01T00:00:02Z", vec![&trans_a], TransOp::AllowEven);
+        let trans_d = Trans::new(&mut rng, "2047-12-01T00:00:03Z", vec![&trans_b, &trans_c], TransOp::Inc(2));
+
+        let transactions = vec![trans_a, trans_b, trans_c, trans_d.clone()];
+        let nodes = transactions.iter().map(|x| x.into()).collect::<Vec<_>>();
+        let dag: Dag<TransactionID, Trans> = Dag::from_nodes(&[&nodes]);
+        let mut state_tracker: HashMap<TransactionID, State> = HashMap::new();
+        let res = dag.apply(
+            &mut state_tracker,
+            |node| Ok(State::from_trans(node.node())),
+            |_| false,
+            |state, node| state.validate(node.node()),
+            |state, node| state.apply(node.node()),
+        );
+        match res {
+            Err(Error::TransactionInvalid(ref id, ..)) => {
+                assert_eq!(id, &trans_d.id);
+            }
+            _ => panic!("unexpected error: {res:?}"),
+        }
+    }
+
+    #[test]
     fn dag_apply_skip() {
         let mut rng = crate::util::test::rng_seeded(b"Hi I'm Butch");
         let trans_a = Trans::new(&mut rng, "2047-12-01T00:00:00Z", vec![], TransOp::BlockEven);
@@ -1478,6 +1523,9 @@ mod tests {
             // ran above as skips. we also use the same state object as the last run, so we
             // build onto our existing state. this lets us stream in new transactions to a saved
             // state without having to re-run/re-build our entire state front the back.
+            //
+            // merge transactions validate once per parent branch state, so the number of
+            // validation calls can exceed the number of non-skipped nodes.
             let nodes = transactions.iter().map(|x| x.into()).collect::<Vec<_>>();
             let skip = transactions[0..4].iter().map(|x| x.id.clone()).collect::<HashSet<_>>();
             let dag: Dag<TransactionID, Trans> = Dag::from_nodes(&[&nodes]);
@@ -1495,7 +1543,7 @@ mod tests {
                 )
                 .expect("dag applies properly");
             assert_eq!(state.val, 17);
-            assert_eq!(num_validate.take(), 3);
+            assert_eq!(num_validate.take(), 5);
         }
     }
 
