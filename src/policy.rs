@@ -236,7 +236,7 @@ pub enum Context {
     /// ```
     #[rasn(tag(explicit(11)))]
     ExtTypePrefix(BinaryVec),
-    /// Allows actions on external transactions containing a key/value pair
+    /// Allows actions on external transactions containing an exact-match key/value pair.
     #[rasn(tag(explicit(12)))]
     ExtContext {
         #[rasn(tag(explicit(0)))]
@@ -244,7 +244,7 @@ pub enum Context {
         #[rasn(tag(explicit(1)))]
         val: BinaryVec,
     },
-    /// Allows actions on external transactions matching a key and *prefix* of a value.
+    /// Allows actions on external transactions matching an *exact* key and *prefix* of a value.
     ///
     /// For instance:
     ///
@@ -531,7 +531,8 @@ pub enum Capability {
     #[rasn(tag(explicit(0)))]
     Permissive,
     /// The ability to perform a transaction in a given context. Allows specifying
-    /// multiple transaction body types, of which *ANY* can match (an OR gate).
+    /// multiple transaction body types of which *ANY* can match (an OR gate), as well as the
+    /// [context(s)][Context] under which this capability will match.
     #[rasn(tag(explicit(1)))]
     Transaction {
         #[rasn(tag(explicit(0)))]
@@ -632,7 +633,7 @@ pub enum MultisigPolicy {
     #[rasn(tag(explicit(1)))]
     Any(Vec<MultisigPolicy>),
     /// Of the given public keys, N many must produce a valid signature in order
-    /// for the policy to be ratified.
+    /// for the policy to ratify the transaction.
     #[rasn(tag(explicit(2)))]
     MOfN {
         /// Must have at least this many signatures.

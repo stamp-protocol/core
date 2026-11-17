@@ -10,7 +10,8 @@
 //! the type system of which view of the object is needed for various uses.
 //!
 //! Although this is built in support of the Stamp ecosystem, it is built in a generic way that
-//! allows for anyone needing to define data with public/private boundaries to implement it.
+//! allows for anyone needing to define data with public/private boundaries to implement it. In
+//! theory, anyway.
 
 pub use private_parts_derive::PrivateParts;
 use rasn::{AsnType, Decode, Encode};
@@ -28,7 +29,7 @@ pub enum MergeError {
     TypeMismatch,
 }
 
-/// Marks a type as "private" which allowed converting it to/from `Option`.
+/// Marks a type as "private" which allows converting it to/from `Option`.
 pub trait PrivateData {}
 
 /// Allows converting a type into an `Option`. This is mostly useful because our [`Full`] type

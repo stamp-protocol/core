@@ -44,6 +44,15 @@ pub enum SignKeypair<M: PrivacyMode> {
 }
 
 impl<M: PrivacyMode> SignKeypair<M> {
+    pub fn new_ed25519_public_from_bytes(secret_key_bytes: [u8; 32]) -> Result<SignKeypair<Public>> {
+        let secret = ed25519_consensus::SigningKey::from(secret_key_bytes);
+        let public = secret.verification_key();
+        Ok(SignKeypair::<Public>::Ed25519 {
+            public: Binary::new(public.to_bytes()),
+            secret: Private::blank(),
+        })
+    }
+
     /// Verify a value with a detached signature given the public key of the
     /// signer.
     pub fn verify(&self, signature: &SignKeypairSignature, data: &[u8]) -> Result<()> {
@@ -118,6 +127,16 @@ impl SignKeypair<Full> {
                 Ok(sig)
             }
         }
+    }
+
+    /// If you have a raw ed25519 private key and just need to sign something without going through
+    /// the rigamarole of creating a [`SignKeypair`] (including its [`Private`] inner secret) then
+    /// this is for you.
+    pub fn sign_ed25519_from_bytes(secret_key_bytes: [u8; 32], data: &[u8]) -> Result<SignKeypairSignature> {
+        let seckey = ed25519_consensus::SigningKey::from(secret_key_bytes);
+        let sig_obj = seckey.sign(data);
+        let sig = SignKeypairSignature::Ed25519(Binary::new(sig_obj.to_bytes()));
+        Ok(sig)
     }
 }
 
@@ -278,5 +297,46 @@ pub(crate) mod tests {
         assert_eq!(keypair1, keypair2);
         let keypair3 = SignKeypair::new_ed25519(&mut rng, &master_key).unwrap();
         assert!(keypair1 != keypair3);
+    }
+
+    #[test]
+    fn signkeypair_ed25519_sign_from_bytes() {
+        let secret_key_bytes = [99; 32];
+        let data = b"nothing makes me happier than an unfinished";
+        let sig = SignKeypair::sign_ed25519_from_bytes(secret_key_bytes, data).unwrap();
+        assert_eq!(
+            sig.as_ref(),
+            [
+                73, 207, 112, 116, 137, 139, 94, 43, 178, 222, 162, 74, 168, 149, 70, 5, 51, 191, 253, 174, 137, 186, 61, 196, 59, 179,
+                168, 171, 46, 255, 208, 40, 65, 136, 251, 149, 224, 156, 112, 175, 95, 210, 162, 223, 183, 194, 100, 165, 29, 144, 81, 81,
+                133, 191, 119, 253, 249, 163, 186, 207, 9, 118, 243, 0
+            ]
+        );
+    }
+
+    #[test]
+    fn signkeypair_ed25519_public_from_bytes() {
+        let secret_key_bytes = [99; 32];
+        let pubkey = SignKeypair::<Public>::new_ed25519_public_from_bytes(secret_key_bytes).unwrap();
+        let data = b"nothing makes me happier than an unfinished";
+        {
+            let sig = SignKeypairSignature::Ed25519(Binary::new([
+                73, 207, 112, 116, 137, 139, 94, 43, 178, 222, 162, 74, 168, 149, 70, 5, 51, 191, 253, 174, 137, 186, 61, 196, 59, 179,
+                168, 171, 46, 255, 208, 40, 65, 136, 251, 149, 224, 156, 112, 175, 95, 210, 162, 223, 183, 194, 100, 165, 29, 144, 81, 81,
+                133, 191, 119, 253, 249, 163, 186, 207, 9, 118, 243, 0,
+            ]));
+            pubkey.verify(&sig, data).unwrap();
+        }
+        {
+            let sig = SignKeypairSignature::Ed25519(Binary::new([
+                73, 207, 112, 116, 137, 139, 94, 43, 178, 222, 162, 74, 168, 149, 70, 5, 51, 191, 253, 174, 137, 186, 61, 196, 59, 179,
+                168, 171, 46, 255, 208, 40, 65, 136, 251, 149, 224, 156, 112, 175, 95, 210, 162, 223, 183, 194, 100, 165, 29, 144, 81, 81,
+                133, 191, 119, 253, 249, 163, 186, 207, 9, 118, 243, 3, // changed a byte oh nooo
+            ]));
+            match pubkey.verify(&sig, data) {
+                Err(Error::CryptoSignatureVerificationFailed) => {}
+                _ => panic!("should have gotten verification error"),
+            }
+        }
     }
 }

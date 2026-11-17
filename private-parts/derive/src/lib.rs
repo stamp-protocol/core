@@ -1,3 +1,6 @@
+//! This is vibe coded. I hate writing procedural macros. Give me lisp macros or give me death (or
+//! an LLM that jams out procmacros for me while I do actual important stuff). So, sorry not sorry.
+
 use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::{Span, TokenStream as TokenStream2};

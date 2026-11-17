@@ -78,7 +78,7 @@ pub mod rng {
     }
 
     /// Use this if you need a CSRNG with fast performance. This is not as secure as [`chacha20`]
-    /// but is still very secure.
+    /// but is still very secure. Great for grandparents.
     pub fn chacha8() -> rand_chacha::ChaCha8Rng {
         let mut seed_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut seed_bytes);

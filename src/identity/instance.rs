@@ -17,7 +17,7 @@ use crate::{
         stamp::{RevocationReason as StampRevocationReason, Stamp, StampID},
     },
     policy::{PolicyContainer, PolicyID},
-    util::{SerText, Timestamp, Url},
+    util::{SerText, Timestamp, Url, SerdeBinary},
 };
 use getset;
 use private_parts::{Full, PrivacyMode, PrivateDataContainer, PrivateParts, Public};
@@ -30,6 +30,8 @@ object_id! {
     /// [initial transaction][crate::dag::TransactionBody::CreateIdentityV1].
     IdentityID
 }
+
+impl SerdeBinary for IdentityID {}
 
 /// An identity.
 #[derive(

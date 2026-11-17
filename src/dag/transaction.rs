@@ -1149,28 +1149,28 @@ mod tests {
         ));
         let trans1 = Transaction::<Full>::create_raw(
             &HashAlgo::Blake3,
-            crate::util::Timestamp::from_str("2028-09-30T06:34:22Z").unwrap(),
+            crate::util::Timestamp::from_str("1992-02-01T18:37:00.420Z").unwrap(),
             vec![TransactionID::from(Hash::new_blake3(b"toot").unwrap())],
             body.clone(),
         )
         .unwrap();
         let trans2 = Transaction::<Full>::create_raw(
             &HashAlgo::Blake3,
-            crate::util::Timestamp::from_str("3028-09-30T06:34:22Z").unwrap(),
-            vec![TransactionID::from(Hash::new_blake3(b"toot").unwrap())],
+            crate::util::Timestamp::from_str("1992-02-01T18:41:36.969Z").unwrap(),
+            vec![TransactionID::from(Hash::new_blake3(b"reee").unwrap())],
             body.clone(),
         )
         .unwrap();
         let trans3 = Transaction::<Full>::create_raw(
             &HashAlgo::Blake3,
-            crate::util::Timestamp::from_str("3028-09-30T06:34:22Z").unwrap(),
+            crate::util::Timestamp::from_str("4178-08-10T21:21:36.969Z").unwrap(),
             vec![TransactionID::from(Hash::new_blake3(b"zing").unwrap())],
             body.clone(),
         )
         .unwrap();
-        assert_eq!(format!("{}", trans1.id()), "QV8clS17HVt_Wo4NzHFLWJfbHg86sKHydSZySK2WrCkA");
-        assert_eq!(format!("{}", trans2.id()), "2Kxq6FKEO2o1OVM7FYx8JFoGuJwm5UOqOz4mIZzOlRsA");
-        assert_eq!(format!("{}", trans3.id()), "mxxmsc1m2hvyQlukGCNliF1MDqME-FGOBr4DYV1fz-MA");
+        assert_eq!(format!("{}", trans1.id()), "c36A36AuaV87hz1VhVEKuPFQHmgFD0aP93oLFHnue44A");
+        assert_eq!(format!("{}", trans2.id()), "Fhfpr6h9XE8dtlxoVEfNTG0f9xlSJfgVXB7pPIRdL9kA");
+        assert_eq!(format!("{}", trans3.id()), "EX6VQ4iQT0Gn3yN3IsEdc9f0fmNj4bBbfwLwz-0ZZiAA");
     }
 
     #[test]

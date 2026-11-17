@@ -24,7 +24,7 @@ pub use crate::{
 };
 use crate::{error::Error, util::Timestamp};
 use getset::{Getters, MutGetters};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
 /// Defines a node in a DAG. Each node can have multiple previous nodes and multiple next nodes.
@@ -733,26 +733,24 @@ where
     }
 
     /// Given the id of a node in this DAG, find all the ancestor nodes within the node's causal
-    /// chain. This order of nodes returned cannot be relied upon.
+    /// chain. The order of nodes returned cannot be relied upon.
     pub fn get_causal_chain(&'a self, node_id: &'a I) -> HashSet<&'a I> {
-        let mut walk_queue = VecDeque::new();
+        let mut walk_queue = Vec::new();
         let mut seen = HashSet::new();
-        walk_queue.push_back(node_id);
-        while let Some(id) = walk_queue.pop_front() {
-            if seen.contains(id) {
-                continue;
-            }
+        walk_queue.push(node_id);
+        while let Some(id) = walk_queue.pop() {
             let tx = if let Some(x) = self.index().get(id) {
                 x
             } else {
                 continue;
             };
-            seen.insert(id);
+            if !seen.insert(id) {
+                continue;
+            }
             for prev in tx.prev() {
-                if seen.contains(prev) {
-                    continue;
+                if !seen.contains(prev) {
+                    walk_queue.push(prev);
                 }
-                walk_queue.push_back(prev);
             }
         }
         seen
